@@ -36,15 +36,16 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      - uses: jdx/mr-boxington-action@v1
       - name: Check formatting
         run: |
           cargo fmt --check
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           rustfmt --edition 2024 --check tests/support/fixture.rs
       - name: Run clippy
-        run: cargo clippy --locked --all-targets -- -D warnings
+        run: mbx clippy --locked --all-targets -- -D warnings
       - name: Run unit and integration tests
-        run: cargo test --locked --no-fail-fast
+        run: mbx test --locked --no-fail-fast
       - name: Install tmux
         if: runner.os == 'Linux'
         run: |
@@ -53,9 +54,9 @@ jobs:
           sudo apt-get install --yes tmux
       - name: Install psmux
         if: runner.os == 'Windows'
-        run: cargo install psmux --version 3.3.8 --locked
+        run: mbx install psmux --version 3.3.8 --locked
       - name: Run real tmux integration test
-        run: cargo test --locked --test integration real_tmux -- --ignored
+        run: mbx test --locked --test integration real_tmux -- --ignored
       - name: Upload failure diagnostics
         if: failure()
         uses: actions/upload-artifact@v4
@@ -86,6 +87,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
+      - uses: jdx/mr-boxington-action@v1
       - name: Install client
         run: |
           switch ($env:AGENT_BERTH_TEST_CLIENT) {
@@ -114,7 +116,7 @@ jobs:
             }
           }
       - name: Run mock LLM client test
-        run: cargo test --locked --test integration mock_llm -- --ignored
+        run: mbx test --locked --test integration mock_llm -- --ignored
       - name: Upload failure diagnostics
         if: failure()
         uses: actions/upload-artifact@v4
