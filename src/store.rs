@@ -438,10 +438,10 @@ fn touch_session(session: &mut AgentSession, payload: &Value, provider: &str) {
     if let Some(pid) = u32_field(payload, &["pid"]) {
         session.pid = Some(pid);
     }
-    if session.cmdline.is_empty() {
-        if let Some(sid) = crate::status::session_key(payload) {
-            session.cmdline = providers::resume_cmd(provider, &sid);
-        }
+    if session.cmdline.is_empty()
+        && let Some(sid) = crate::status::session_key(payload)
+    {
+        session.cmdline = providers::resume_cmd(provider, &sid);
     }
     let name = string_field(payload, &["hook_event_name", "hookEventName"]).unwrap_or("");
     if name.eq_ignore_ascii_case("SessionEnd") {

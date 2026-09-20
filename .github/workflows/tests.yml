@@ -35,12 +35,14 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt
+          components: rustfmt, clippy
       - name: Check formatting
         run: |
           cargo fmt --check
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           rustfmt --edition 2024 --check tests/support/fixture.rs
+      - name: Run clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
       - name: Run unit and integration tests
         run: cargo test --locked --no-fail-fast
       - name: Install tmux

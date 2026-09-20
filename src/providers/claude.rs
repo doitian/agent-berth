@@ -83,10 +83,10 @@ pub fn apply_hook(sessions: &mut BTreeMap<String, AgentSession>, event: &Value) 
 }
 
 fn source_for(event: &Value) -> Source {
-    if let Some(entry) = string_field(event, &["entrypoint"]) {
-        if entry.to_ascii_lowercase().contains("desktop") {
-            return Source::Desktop;
-        }
+    if let Some(entry) = string_field(event, &["entrypoint"])
+        && entry.to_ascii_lowercase().contains("desktop")
+    {
+        return Source::Desktop;
     }
     Source::Cli
 }
@@ -173,10 +173,10 @@ fn desktop_index(ctx: &Context) -> DesktopIndex {
 }
 
 fn desktop_session_dirs(ctx: &Context) -> Vec<PathBuf> {
-    if let Ok(override_dir) = std::env::var("CLAUDE_DESKTOP_SESSIONS") {
-        if !override_dir.is_empty() {
-            return vec![PathBuf::from(override_dir)];
-        }
+    if let Ok(override_dir) = std::env::var("CLAUDE_DESKTOP_SESSIONS")
+        && !override_dir.is_empty()
+    {
+        return vec![PathBuf::from(override_dir)];
     }
     let mut dirs = vec![
         ctx.xdg_config_home
@@ -257,29 +257,29 @@ pub fn apply_agents(
         let pid = u32_field(row, &["pid"]);
         let cwd = string_field(row, &["cwd"]).map(str::to_string);
         let desktop = desktop_ids.contains(&sid);
-        if let Some(existing) = sessions.get_mut(&sid) {
-            if status == AgentStatus::Idle {
-                if pid.is_some() {
-                    existing.pid = pid;
-                }
-                if existing.background_only
-                    && existing.status != AgentStatus::Waiting
-                    && matches!(string_field(row, &["status", "state"]), Some("idle"))
-                {
-                    existing.status = AgentStatus::Done;
-                    existing.background_only = false;
-                }
-                if desktop {
-                    existing.source = Source::Desktop;
-                }
-                if let Some(cwd) = cwd {
-                    existing.cwd = Some(cwd);
-                }
-                if let Some(title) = string_field(row, &["name", "title"]).map(str::to_string) {
-                    existing.title = Some(title);
-                }
-                continue;
+        if let Some(existing) = sessions.get_mut(&sid)
+            && status == AgentStatus::Idle
+        {
+            if pid.is_some() {
+                existing.pid = pid;
             }
+            if existing.background_only
+                && existing.status != AgentStatus::Waiting
+                && matches!(string_field(row, &["status", "state"]), Some("idle"))
+            {
+                existing.status = AgentStatus::Done;
+                existing.background_only = false;
+            }
+            if desktop {
+                existing.source = Source::Desktop;
+            }
+            if let Some(cwd) = cwd {
+                existing.cwd = Some(cwd);
+            }
+            if let Some(title) = string_field(row, &["name", "title"]).map(str::to_string) {
+                existing.title = Some(title);
+            }
+            continue;
         }
         let item = sessions.entry(sid.clone()).or_insert_with(|| AgentSession {
             discovered: true,

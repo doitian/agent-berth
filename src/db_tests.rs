@@ -69,8 +69,10 @@ fn persists_plugin_snapshot_and_heartbeats() {
     let ctx = Context::for_test(root.path(), &root.path().join("agent-berth"));
     std::fs::create_dir_all(&ctx.state_dir).unwrap();
     let db = open(&ctx).unwrap();
-    let mut store = Store::default();
-    store.last_heartbeat_ms = 42;
+    let mut store = Store {
+        last_heartbeat_ms: 42,
+        ..Default::default()
+    };
     let change = store
         .update(
             "opencode",

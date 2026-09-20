@@ -90,10 +90,10 @@ fn wait_running(ctx: &AppContext) -> Result<()> {
 }
 
 fn cleanup(ctx: &AppContext) {
-    if let Ok(pid_text) = std::fs::read_to_string(ctx.pid_path()) {
-        if let Ok(pid) = pid_text.trim().parse::<u32>() {
-            kill_pid(pid);
-        }
+    if let Ok(pid_text) = std::fs::read_to_string(ctx.pid_path())
+        && let Ok(pid) = pid_text.trim().parse::<u32>()
+    {
+        kill_pid(pid);
     }
     let _ = std::fs::remove_file(ctx.pid_path());
     #[cfg(unix)]

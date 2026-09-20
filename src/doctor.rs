@@ -43,13 +43,14 @@ pub fn run(ctx: &Context) -> Result<()> {
 }
 
 fn collect(ctx: &Context) -> Vec<Check> {
-    let mut checks = Vec::new();
-    checks.push(binary(ctx));
-    checks.push(server(ctx));
-    checks.push(service_check(ctx));
-    checks.push(state(ctx));
-    checks.push(tmux_check());
-    checks.push(fzf_check());
+    let mut checks = vec![
+        binary(ctx),
+        server(ctx),
+        service_check(ctx),
+        state(ctx),
+        tmux_check(),
+        fzf_check(),
+    ];
     for provider in ProviderKind::ALL {
         checks.push(provider_check(ctx, provider));
     }

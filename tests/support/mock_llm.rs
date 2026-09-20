@@ -15,7 +15,6 @@ use serde_json::{Value, json};
 /// [`MockLlm::requests`] for diagnostics.
 pub struct MockLlm {
     url: String,
-    delay: Duration,
     completions: Arc<AtomicUsize>,
     requests: Arc<Mutex<Vec<String>>>,
 }
@@ -41,7 +40,6 @@ impl MockLlm {
         });
         Self {
             url,
-            delay,
             completions,
             requests,
         }

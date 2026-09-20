@@ -32,10 +32,10 @@ fn init_log(ctx: &AppContext) {
 }
 
 fn log(args: std::fmt::Arguments<'_>) {
-    if let Some(file) = SERVER_LOG.get() {
-        if let Ok(mut file) = file.lock() {
-            let _ = writeln!(file, "{args}");
-        }
+    if let Some(file) = SERVER_LOG.get()
+        && let Ok(mut file) = file.lock()
+    {
+        let _ = writeln!(file, "{args}");
     }
     if std::io::stderr().is_terminal() {
         eprintln!("{args}");

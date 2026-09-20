@@ -87,12 +87,11 @@ pub fn run(
         }
     }
 
-    if !dry_run {
-        if let Some(name) = first_tmux {
-            if std::io::IsTerminal::is_terminal(&std::io::stdout()) {
-                tmux::attach_or_switch(&name)?;
-            }
-        }
+    if !dry_run
+        && let Some(name) = first_tmux
+        && std::io::IsTerminal::is_terminal(&std::io::stdout())
+    {
+        tmux::attach_or_switch(&name)?;
     }
     Ok(())
 }

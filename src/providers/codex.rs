@@ -114,18 +114,17 @@ fn collect_session_ids(root: &Path, ids: &mut HashSet<String>) {
 }
 
 fn session_id_from_rollout(path: &Path) -> Option<String> {
-    if let Ok(text) = std::fs::read_to_string(path) {
-        if let Some(line) = text.lines().next() {
-            if let Ok(data) = serde_json::from_str::<Value>(line) {
-                let payload = if data.get("type").and_then(Value::as_str) == Some("session_meta") {
-                    data.get("payload").cloned().unwrap_or(data)
-                } else {
-                    data
-                };
-                if let Some(id) = string_field(&payload, &["session_id", "id"]) {
-                    return Some(id.to_string());
-                }
-            }
+    if let Ok(text) = std::fs::read_to_string(path)
+        && let Some(line) = text.lines().next()
+        && let Ok(data) = serde_json::from_str::<Value>(line)
+    {
+        let payload = if data.get("type").and_then(Value::as_str) == Some("session_meta") {
+            data.get("payload").cloned().unwrap_or(data)
+        } else {
+            data
+        };
+        if let Some(id) = string_field(&payload, &["session_id", "id"]) {
+            return Some(id.to_string());
         }
     }
     let stem = path.file_stem()?.to_str()?;
