@@ -24,6 +24,18 @@ fn reports_ok_after_install() {
 }
 
 #[test]
+fn fzf_check_matches_path() {
+    let check = fzf_check();
+    assert_eq!(check.name, "fzf");
+    let expected = if crate::paths::on_path("fzf") {
+        Level::Ok
+    } else {
+        Level::Warn
+    };
+    assert_eq!(check.level, expected);
+}
+
+#[test]
 fn skips_agents_without_binary_or_config() {
     let root = tempdir().unwrap();
     let ctx = AppContext::for_test(root.path(), &root.path().join("agent-berth"));

@@ -49,6 +49,7 @@ fn collect(ctx: &Context) -> Vec<Check> {
     checks.push(service_check(ctx));
     checks.push(state(ctx));
     checks.push(tmux_check());
+    checks.push(fzf_check());
     for provider in ProviderKind::ALL {
         checks.push(provider_check(ctx, provider));
     }
@@ -165,6 +166,22 @@ fn tmux_check() -> Check {
             level: Level::Warn,
             name: "tmux",
             detail: "not on PATH (needed to resume CLI sessions)".into(),
+        }
+    }
+}
+
+fn fzf_check() -> Check {
+    if crate::paths::on_path("fzf") {
+        Check {
+            level: Level::Ok,
+            name: "fzf",
+            detail: "found".into(),
+        }
+    } else {
+        Check {
+            level: Level::Warn,
+            name: "fzf",
+            detail: "not on PATH (needed to attach to agents)".into(),
         }
     }
 }
