@@ -166,7 +166,7 @@ where
 
 /// fzf preview command for `{1}`, the pane id, including the active socket and config.
 pub fn preview_command() -> String {
-    let mut parts = vec!["tmux".to_string()];
+    let mut parts = vec!["tmux".to_string(), "-u".to_string()];
     if let Some(socket) = crate::paths::env_path("AGENT_BERTH_TMUX_SOCKET") {
         parts.push("-L".into());
         parts.push(quote_arg(&socket.display().to_string()));
@@ -238,6 +238,9 @@ where
 
 fn command() -> Command {
     let mut command = Command::new("tmux");
+    // Force UTF-8 output; a non-UTF-8 locale makes tmux replace the tabs in
+    // format output with underscores.
+    command.arg("-u");
     if let Some(socket) = crate::paths::env_path("AGENT_BERTH_TMUX_SOCKET") {
         command.arg("-L").arg(socket);
     }

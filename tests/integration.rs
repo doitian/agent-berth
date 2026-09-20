@@ -1,12 +1,48 @@
 mod support;
 
+use std::ffi::OsStr;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 use support::mock_llm::MockLlm;
 use support::{Sandbox, success};
+
+/// Locate an agent client on PATH, honoring Windows shim extensions such as
+/// the `.cmd` wrappers npm installs for JavaScript clients.
+fn client_executable(name: &str, path: &OsStr) -> Option<PathBuf> {
+    let extensions: Vec<String> = if cfg!(windows) {
+        std::env::var("PATHEXT")
+            .unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".into())
+            .split(';')
+            .map(|ext| ext.trim().to_ascii_lowercase())
+            .filter(|ext| !ext.is_empty())
+            .collect()
+    } else {
+        vec![String::new()]
+    };
+    std::env::split_paths(path).find_map(|dir| {
+        extensions.iter().find_map(|ext| {
+            let candidate = dir.join(format!("{name}{ext}"));
+            candidate.is_file().then_some(candidate)
+        })
+    })
+}
+
+fn client_command(sandbox: &Sandbox, executable: &Path) -> std::process::Command {
+    #[cfg(windows)]
+    if executable
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("cmd") || ext.eq_ignore_ascii_case("bat"))
+    {
+        let mut command = sandbox.command("cmd.exe");
+        command.arg("/c").arg(executable);
+        return command;
+    }
+    sandbox.command(executable)
+}
 
 #[test]
 fn hook_clients_report_lifecycle_over_ipc() {
@@ -183,7 +219,7 @@ fn resume_passes_namespace_and_config_to_every_tmux_command() {
         .collect();
     assert_eq!(logs.len(), 4, "{logs:?}");
     let prefix = format!(
-        "-L\n{}\n-f\n{}\n",
+        "-u\n-L\n{}\n-f\n{}\n",
         sandbox.namespace,
         sandbox.root.path().join("tmux.conf").display()
     );
@@ -745,10 +781,8 @@ fn live_client_emits_hooks_and_reaches_berth() {
         .expect("set AGENT_BERTH_TEST_CLIENT to claude, codex, grok, opencode, or pi");
     assert!(["claude", "codex", "grok", "opencode", "pi"].contains(&provider.as_str()));
     let original_path = std::env::var_os("PATH").unwrap();
-    let executable = std::env::split_paths(&original_path)
-        .map(|dir| dir.join(format!("{provider}{}", std::env::consts::EXE_SUFFIX)))
-        .find(|path| path.is_file())
-        .expect("selected client must be installed");
+    let executable =
+        client_executable(&provider, &original_path).expect("selected client must be installed");
     let mut sandbox = Sandbox::new();
     success(sandbox.berth().args(["setup", "--no-service"]));
     install_recorder(&mut sandbox, &provider);
@@ -767,7 +801,7 @@ fn live_client_emits_hooks_and_reaches_berth() {
         .insert("PATH".into(), std::env::join_paths(paths).unwrap());
     sandbox.start();
 
-    let mut command = sandbox.command(executable);
+    let mut command = client_command(&sandbox, &executable);
     for key in [
         "ANTHROPIC_API_KEY",
         "CODEX_API_KEY",
@@ -930,10 +964,8 @@ fn mock_llm_client_completes_and_reports_terminal_state() {
         .expect("set AGENT_BERTH_TEST_CLIENT to claude, codex, grok, opencode, or pi");
     assert!(["claude", "codex", "grok", "opencode", "pi"].contains(&provider.as_str()));
     let original_path = std::env::var_os("PATH").unwrap();
-    let executable = std::env::split_paths(&original_path)
-        .map(|dir| dir.join(format!("{provider}{}", std::env::consts::EXE_SUFFIX)))
-        .find(|path| path.is_file())
-        .expect("selected client must be installed");
+    let executable =
+        client_executable(&provider, &original_path).expect("selected client must be installed");
     let mut sandbox = Sandbox::new();
     success(sandbox.berth().args(["setup", "--no-service"]));
     install_recorder(&mut sandbox, &provider);
@@ -961,7 +993,7 @@ fn mock_llm_client_completes_and_reports_terminal_state() {
     configure_mock_provider(&mut sandbox, &provider, &mock);
     sandbox.start();
 
-    let mut command = sandbox.command(executable);
+    let mut command = client_command(&sandbox, &executable);
     command.args(headless_args(&provider, TEST_PROMPT));
     match provider.as_str() {
         "claude" => {

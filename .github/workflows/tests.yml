@@ -106,6 +106,9 @@ jobs:
               }[$env:AGENT_BERTH_TEST_CLIENT]
               npm install -g $package
               if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+              $prefix = npm prefix -g
+              $bin = $IsWindows ? $prefix : (Join-Path $prefix 'bin')
+              [IO.File]::AppendAllText($env:GITHUB_PATH, "$bin`n")
             }
           }
       - name: Run mock LLM client test
