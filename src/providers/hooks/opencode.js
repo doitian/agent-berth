@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process"
 
-const BRIDGE_BIN = __AGENT_BRIDGE_BIN__
+const BRIDGE_BIN = __AGENT_BERTH_BIN__
 
 export default () => {
   const seen = new Set()

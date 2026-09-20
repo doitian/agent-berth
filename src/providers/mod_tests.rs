@@ -151,13 +151,13 @@ fn claude_desktop_entrypoint_and_background_stop() {
 #[test]
 fn install_and_uninstall_are_idempotent() {
     let root = tempdir().unwrap();
-    let ctx = Context::for_test(root.path(), &root.path().join("agent-bridge"));
+    let ctx = Context::for_test(root.path(), &root.path().join("agent-berth"));
     for provider in ProviderKind::ALL {
         let path = provider.install(&ctx).unwrap();
         assert!(path.exists(), "{}", provider.name());
         let text = fs::read_to_string(&path).unwrap();
         assert!(
-            text.contains("notify --provider") || text.contains("agent-bridge"),
+            text.contains("notify --provider") || text.contains("agent-berth"),
             "{}",
             provider.name()
         );
@@ -168,17 +168,17 @@ fn install_and_uninstall_are_idempotent() {
     let claude =
         fs::read_to_string(ctx.claude_config_dir.join("settings.json")).unwrap_or_default();
     assert!(!claude.contains("notify --provider claude"));
-    assert!(!ctx.opencode_plugin_dir().join("agent-bridge.js").exists());
+    assert!(!ctx.opencode_plugin_dir().join("agent-berth.js").exists());
     assert!(
         !ctx.pi_dir
             .join("extensions")
-            .join("agent-bridge.ts")
+            .join("agent-berth.ts")
             .exists()
     );
     assert!(
         !ctx.grok_home
             .join("hooks")
-            .join("agent-bridge.json")
+            .join("agent-berth.json")
             .exists()
     );
 }

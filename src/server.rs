@@ -17,7 +17,7 @@ use crate::store::Store;
 
 pub fn run(ctx: &AppContext) -> Result<()> {
     if ipc::ping(ctx).is_ok() {
-        anyhow::bail!("agent-bridge server is already running");
+        anyhow::bail!("agent-berth server is already running");
     }
 
     let db = Arc::new(db::open(ctx)?);

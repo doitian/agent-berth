@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use interprocess::local_socket::prelude::*;
-use interprocess::local_socket::{Listener, ListenerOptions, Stream, ToNsName};
+use interprocess::local_socket::{Listener, ListenerOptions, Stream};
 
 use crate::paths::Context as AppContext;
 use crate::protocol::{Request, Response};
@@ -27,19 +27,19 @@ pub fn send_timeout(ctx: &AppContext, request: &Request, timeout: Duration) -> R
     payload.push(b'\n');
     stream
         .write_all(&payload)
-        .context("failed to write to agent-bridge IPC channel")?;
+        .context("failed to write to agent-berth IPC channel")?;
     stream
         .flush()
-        .context("failed to flush agent-bridge IPC channel")?;
+        .context("failed to flush agent-berth IPC channel")?;
     let mut reader = BufReader::new(stream);
     let mut line = String::new();
     reader
         .read_line(&mut line)
-        .context("failed to read agent-bridge IPC response")?;
+        .context("failed to read agent-berth IPC response")?;
     if line.trim().is_empty() {
-        bail!("agent-bridge server closed the IPC channel");
+        bail!("agent-berth server closed the IPC channel");
     }
-    serde_json::from_str(&line).context("invalid agent-bridge IPC response")
+    serde_json::from_str(&line).context("invalid agent-berth IPC response")
 }
 
 pub fn ping(ctx: &AppContext) -> Result<()> {
@@ -76,7 +76,7 @@ pub fn bind(ctx: &AppContext) -> Result<Listener> {
         }
         let _ = std::fs::remove_file(&path);
         let name = path
-            .to_ns_name::<GenericFilePath>()
+            .to_fs_name::<GenericFilePath>()
             .map_err(|err| anyhow::anyhow!("socket name: {err}"))?;
         ListenerOptions::new()
             .name(name)
@@ -108,8 +108,8 @@ fn connect(ctx: &AppContext, timeout: Duration) -> Result<Stream> {
     });
     match rx.recv_timeout(timeout) {
         Ok(Ok(stream)) => Ok(stream),
-        Ok(Err(err)) => Err(err).context("failed to connect to agent-bridge IPC channel"),
-        Err(_) => bail!("timed out connecting to agent-bridge IPC channel"),
+        Ok(Err(err)) => Err(err).context("failed to connect to agent-berth IPC channel"),
+        Err(_) => bail!("timed out connecting to agent-berth IPC channel"),
     }
 }
 
@@ -124,7 +124,7 @@ fn connect_owned(raw: String) -> Result<Stream> {
 #[cfg(unix)]
 fn connect_owned(raw: std::path::PathBuf) -> Result<Stream> {
     let name = raw
-        .to_ns_name::<GenericFilePath>()
+        .to_fs_name::<GenericFilePath>()
         .map_err(|err| anyhow::anyhow!("socket name: {err}"))?;
     Stream::connect(name).context("connect unix socket")
 }

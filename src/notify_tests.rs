@@ -5,7 +5,7 @@ use tempfile::tempdir;
 #[test]
 fn ipc_failure_is_success() {
     let root = tempdir().unwrap();
-    let ctx = Context::for_test(root.path(), &root.path().join("agent-bridge"));
+    let ctx = Context::for_test(root.path(), &root.path().join("agent-berth"));
     send_payload(
         &ctx,
         "claude".into(),

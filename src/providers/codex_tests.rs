@@ -6,7 +6,7 @@ use tempfile::tempdir;
 #[test]
 fn drops_sessions_moved_to_archived_sessions() {
     let root = tempdir().unwrap();
-    let ctx = AppContext::for_test(root.path(), &root.path().join("agent-bridge"));
+    let ctx = AppContext::for_test(root.path(), &root.path().join("agent-berth"));
     let dir = ctx.codex_home.join("archived_sessions");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(
@@ -28,7 +28,7 @@ fn drops_sessions_moved_to_archived_sessions() {
 #[test]
 fn drops_desktop_sessions_without_session_files() {
     let root = tempdir().unwrap();
-    let ctx = AppContext::for_test(root.path(), &root.path().join("agent-bridge"));
+    let ctx = AppContext::for_test(root.path(), &root.path().join("agent-berth"));
     let mut sessions = BTreeMap::new();
     sessions.insert(
         "test-desktop".into(),

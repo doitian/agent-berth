@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result};
 
-const APP: &str = "agent-bridge";
-const PIPE: &str = "agent-bridge";
+const APP: &str = "agent-berth";
+const PIPE: &str = "agent-berth";
 
 #[derive(Debug, Clone)]
 pub struct Context {
@@ -48,7 +48,7 @@ impl Context {
                 .unwrap_or_else(|| home.join(".pi").join("agent")),
             appdata: env_path("APPDATA"),
             bridge_bin: env::current_exe().unwrap_or_else(|_| PathBuf::from(APP)),
-            socket_override: env::var("AGENT_BRIDGE_SOCK").ok(),
+            socket_override: env::var("AGENT_BERTH_SOCK").ok(),
             home,
             xdg_config_home,
             xdg_runtime_dir,
@@ -72,7 +72,7 @@ impl Context {
         if let Some(value) = &self.socket_override {
             return PathBuf::from(value);
         }
-        self.xdg_runtime_dir.join("agent-bridge.sock")
+        self.xdg_runtime_dir.join("agent-berth.sock")
     }
 
     pub fn pipe_name(&self) -> String {
@@ -100,7 +100,7 @@ impl Context {
         self.xdg_config_home
             .join("systemd")
             .join("user")
-            .join("agent-bridge.service")
+            .join("agent-berth.service")
     }
 
     pub fn quote_bin(&self) -> String {
@@ -166,10 +166,10 @@ impl Context {
             bridge_bin: bin.to_path_buf(),
             socket_override: Some(
                 #[cfg(windows)]
-                format!("agent-bridge-test-{}", std::process::id()),
+                format!("agent-berth-test-{}", std::process::id()),
                 #[cfg(unix)]
                 root.join("run")
-                    .join("agent-bridge.sock")
+                    .join("agent-berth.sock")
                     .display()
                     .to_string(),
             ),

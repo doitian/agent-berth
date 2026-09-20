@@ -5,7 +5,7 @@ use tempfile::tempdir;
 #[test]
 fn heartbeat_does_not_rewrite_sessions() {
     let root = tempdir().unwrap();
-    let ctx = Context::for_test(root.path(), &root.path().join("agent-bridge"));
+    let ctx = Context::for_test(root.path(), &root.path().join("agent-berth"));
     std::fs::create_dir_all(&ctx.state_dir).unwrap();
     let db = open(&ctx).unwrap();
     let mut store = Store::default();
@@ -32,7 +32,7 @@ fn heartbeat_does_not_rewrite_sessions() {
 #[test]
 fn session_end_removes_only_that_hook() {
     let root = tempdir().unwrap();
-    let ctx = Context::for_test(root.path(), &root.path().join("agent-bridge"));
+    let ctx = Context::for_test(root.path(), &root.path().join("agent-berth"));
     std::fs::create_dir_all(&ctx.state_dir).unwrap();
     let db = open(&ctx).unwrap();
     let mut store = Store::default();
@@ -66,7 +66,7 @@ fn session_end_removes_only_that_hook() {
 #[test]
 fn persists_plugin_snapshot_and_heartbeats() {
     let root = tempdir().unwrap();
-    let ctx = Context::for_test(root.path(), &root.path().join("agent-bridge"));
+    let ctx = Context::for_test(root.path(), &root.path().join("agent-berth"));
     std::fs::create_dir_all(&ctx.state_dir).unwrap();
     let db = open(&ctx).unwrap();
     let mut store = Store::default();
@@ -98,7 +98,7 @@ fn persists_plugin_snapshot_and_heartbeats() {
 #[test]
 fn migrates_legacy_json_once() {
     let root = tempdir().unwrap();
-    let ctx = Context::for_test(root.path(), &root.path().join("agent-bridge"));
+    let ctx = Context::for_test(root.path(), &root.path().join("agent-berth"));
     std::fs::create_dir_all(&ctx.state_dir).unwrap();
     let mut store = Store::default();
     store

@@ -8,6 +8,18 @@ run = "cargo fmt --check"
 run = "cargo test --no-fail-fast --{% for f in usage.filters | default(value=[]) %} {{ f }}{% endfor %}"
 usage = 'arg "[filters]" var=#true'
 
+[tasks."test:integration"]
+description = "Run isolated bridge integration tests without model calls"
+run = "cargo test --test integration"
+
+[tasks."test:tmux"]
+description = "Test resume with real tmux/psmux in a disposable namespace"
+run = "cargo test --test integration real_tmux -- --ignored"
+
+[tasks."test:live"]
+description = "Test AGENT_BERTH_TEST_CLIENT with a real model call"
+run = "cargo test --test integration live_client -- --ignored"
+
 [tasks."pre-commit:typos"]
 run = "typos"
 

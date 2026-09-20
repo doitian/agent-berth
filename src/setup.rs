@@ -23,7 +23,7 @@ pub fn setup(ctx: &Context, no_service: bool) -> Result<()> {
     if service::running(ctx) {
         println!("server is running");
     } else {
-        eprintln!("server is not running yet; start it with: agent-bridge server");
+        eprintln!("server is not running yet; start it with: agent-berth server");
     }
     Ok(())
 }

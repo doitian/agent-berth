@@ -7,7 +7,7 @@ use crate::{doctor, list, notify, resume, server, setup};
 
 /// Monitor coding agents and resume their sessions.
 #[derive(Debug, Parser)]
-#[command(name = "agent-bridge", version, about, propagate_version = true)]
+#[command(name = "agent-berth", version, about, propagate_version = true)]
 struct Cli {
     #[command(subcommand)]
     command: Command,

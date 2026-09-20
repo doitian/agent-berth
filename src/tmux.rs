@@ -10,7 +10,7 @@ pub fn session_name(root: &Path) -> String {
     let mut session = root
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "agent-bridge".into());
+        .unwrap_or_else(|| "agent-berth".into());
     if session.starts_with('.') {
         session.remove(0);
     }
@@ -70,7 +70,7 @@ pub fn attach_or_switch(session: &str) -> Result<()> {
         }
         return Ok(());
     }
-    let status = Command::new("tmux")
+    let status = command()
         .args(["attach", "-t", &target])
         .status()
         .context("tmux attach")?;
@@ -98,7 +98,7 @@ fn apply_config(root: &Path, target: &str) -> Result<()> {
         format!("send '{editor}' Enter\nneww -n shell\nselectw -t 1\n\n")
     };
     commands.push_str("detach-client\n");
-    let mut child = Command::new("tmux")
+    let mut child = command()
         .args(["-C", "attach", "-t", target])
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
@@ -125,10 +125,21 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<std::ffi::OsStr>,
 {
-    Command::new("tmux")
+    command()
         .args(args)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
         .context("tmux is not available")
+}
+
+fn command() -> Command {
+    let mut command = Command::new("tmux");
+    if let Some(socket) = crate::paths::env_path("AGENT_BERTH_TMUX_SOCKET") {
+        command.arg("-L").arg(socket);
+    }
+    if let Some(config) = crate::paths::env_path("AGENT_BERTH_TMUX_CONFIG") {
+        command.arg("-f").arg(config);
+    }
+    command
 }

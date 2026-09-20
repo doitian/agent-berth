@@ -14,7 +14,10 @@ pub fn pid_alive(pid: u32) -> bool {
 
 #[cfg(unix)]
 fn unix_alive(pid: u32) -> bool {
-    let result = unsafe { libc::kill(pid as i32, 0) };
+    let Ok(pid) = libc::pid_t::try_from(pid) else {
+        return false;
+    };
+    let result = unsafe { libc::kill(pid, 0) };
     if result == 0 {
         return true;
     }

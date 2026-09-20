@@ -69,9 +69,9 @@ impl ProviderKind {
         match self {
             Self::Claude => ctx.claude_config_dir.join("settings.json"),
             Self::Codex => ctx.codex_home.join("hooks.json"),
-            Self::Grok => ctx.grok_home.join("hooks").join("agent-bridge.json"),
-            Self::Opencode => ctx.opencode_plugin_dir().join("agent-bridge.js"),
-            Self::Pi => ctx.pi_dir.join("extensions").join("agent-bridge.ts"),
+            Self::Grok => ctx.grok_home.join("hooks").join("agent-berth.json"),
+            Self::Opencode => ctx.opencode_plugin_dir().join("agent-berth.js"),
+            Self::Pi => ctx.pi_dir.join("extensions").join("agent-berth.ts"),
         }
     }
 

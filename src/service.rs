@@ -6,7 +6,7 @@ use crate::ipc;
 use crate::paths::Context as AppContext;
 
 #[cfg(windows)]
-const TASK_NAME: &str = "AgentBridge";
+const TASK_NAME: &str = "AgentBerth";
 
 pub fn install(ctx: &AppContext) -> Result<()> {
     #[cfg(windows)]
@@ -41,7 +41,7 @@ pub fn stop(ctx: &AppContext) -> Result<()> {
     #[cfg(unix)]
     {
         let _ = Command::new("systemctl")
-            .args(["--user", "stop", "agent-bridge.service"])
+            .args(["--user", "stop", "agent-berth.service"])
             .status();
     }
     if let Ok(pid_text) = std::fs::read_to_string(ctx.pid_path()) {
@@ -127,11 +127,11 @@ fn install_systemd(ctx: &AppContext) -> Result<()> {
     match daemon {
         Ok(status) if status.success() => {
             let enable = Command::new("systemctl")
-                .args(["--user", "enable", "--now", "agent-bridge.service"])
+                .args(["--user", "enable", "--now", "agent-berth.service"])
                 .status()
                 .context("systemctl enable")?;
             if !enable.success() {
-                anyhow::bail!("failed to enable agent-bridge.service");
+                anyhow::bail!("failed to enable agent-berth.service");
             }
             println!("Installed systemd user unit {}", unit.display());
         }
@@ -148,7 +148,7 @@ fn install_systemd(ctx: &AppContext) -> Result<()> {
 #[cfg(unix)]
 fn uninstall_systemd(ctx: &AppContext) -> Result<()> {
     let _ = Command::new("systemctl")
-        .args(["--user", "disable", "--now", "agent-bridge.service"])
+        .args(["--user", "disable", "--now", "agent-berth.service"])
         .status();
     let unit = ctx.systemd_unit_path();
     if unit.exists() {

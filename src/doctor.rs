@@ -84,7 +84,7 @@ fn server(ctx: &Context) -> Check {
         Check {
             level: Level::Error,
             name: "server",
-            detail: format!("not running on {endpoint} (start with: agent-bridge server)"),
+            detail: format!("not running on {endpoint} (start with: agent-berth server)"),
         }
     }
 }
@@ -100,10 +100,7 @@ fn service_check(ctx: &Context) -> Check {
         Check {
             level: Level::Warn,
             name: "service",
-            detail: format!(
-                "{} not installed (run: agent-bridge setup)",
-                service_label()
-            ),
+            detail: format!("{} not installed (run: agent-berth setup)", service_label()),
         }
     }
 }
@@ -111,11 +108,11 @@ fn service_check(ctx: &Context) -> Check {
 fn service_label() -> &'static str {
     #[cfg(windows)]
     {
-        "scheduled task AgentBridge"
+        "scheduled task AgentBerth"
     }
     #[cfg(unix)]
     {
-        "systemd user unit agent-bridge.service"
+        "systemd user unit agent-berth.service"
     }
 }
 
@@ -186,7 +183,7 @@ fn provider_check(ctx: &Context, provider: ProviderKind) -> Check {
             level: Level::Error,
             name,
             detail: format!(
-                "hooks missing ({}) (run: agent-bridge setup --no-service)",
+                "hooks missing ({}) (run: agent-berth setup --no-service)",
                 provider.hook_path(ctx).display()
             ),
         };

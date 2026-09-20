@@ -98,7 +98,7 @@ fn pascal(name: &str) -> String {
 }
 
 pub fn install(ctx: &Context) -> Result<PathBuf> {
-    let dest = ctx.grok_home.join("hooks").join("agent-bridge.json");
+    let dest = ctx.grok_home.join("hooks").join("agent-berth.json");
     let handler = command_handler(ctx, "grok", 5, true);
     let mut hooks = serde_json::Map::new();
     for event in HOOK_EVENTS {
@@ -109,7 +109,7 @@ pub fn install(ctx: &Context) -> Result<PathBuf> {
 }
 
 pub fn uninstall(ctx: &Context) -> Result<()> {
-    let dest = ctx.grok_home.join("hooks").join("agent-bridge.json");
+    let dest = ctx.grok_home.join("hooks").join("agent-berth.json");
     if dest.exists() {
         std::fs::remove_file(&dest)?;
     }

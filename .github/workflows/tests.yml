@@ -1,0 +1,64 @@
+name: Tests
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: pwsh
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2025]
+    env:
+      CARGO_TERM_COLOR: always
+      RUST_BACKTRACE: '1'
+      TMPDIR: ${{ runner.temp }}
+      TMP: ${{ runner.temp }}
+      TEMP: ${{ runner.temp }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Check formatting
+        run: |
+          cargo fmt --check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          rustfmt --edition 2024 --check tests/support/fixture.rs
+      - name: Run unit and integration tests
+        run: cargo test --locked --no-fail-fast
+      - name: Install tmux
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          sudo apt-get install --yes tmux
+      - name: Install psmux
+        if: runner.os == 'Windows'
+        run: cargo install psmux --version 3.3.8 --locked
+      - name: Run real tmux integration test
+        run: cargo test --locked --test integration real_tmux -- --ignored
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-diagnostics-${{ matrix.os }}
+          path: ${{ runner.temp }}/ab-it-*/**
+          if-no-files-found: ignore
+          retention-days: 7
