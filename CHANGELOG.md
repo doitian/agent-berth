@@ -2,13 +2,25 @@
 
 All notable changes to this project are documented in this file.
 
-## Unreleased
+## [1.0.1](https://github.com/doitian/agent-berth/releases/tag/v1.0.1) - 2026-09-20
 
 ### Added
+
 - Add README ([7ab7d42](https://github.com/doitian/agent-berth/commit/7ab7d42fc3f4dce796b0ab7bad0aeae641840516))
+- Add auto-generated changelog with git-cliff ([7df3af6](https://github.com/doitian/agent-berth/commit/7df3af66a7d914ed44d13c49538bef2ff2b7edb1))
+
+### Changed
+
+- Scope typos ignore to commit SHA patterns ([5ecfcff](https://github.com/doitian/agent-berth/commit/5ecfcffdea0b9247ad0d0949f6841b1334569699))
+
+### Other
+
+- Use mbx action and cache in CI tests ([5f1c3db](https://github.com/doitian/agent-berth/commit/5f1c3db6aadd8b3b44230ced39fb5f41f976d4ef))
+
 ## [1.0.0](https://github.com/doitian/agent-berth/releases/tag/v1.0.0) - 2026-09-20
 
 ### Added
+
 - Add agent-bridge CLI to monitor and resume coding agents ([deea811](https://github.com/doitian/agent-berth/commit/deea8116724fc405eefd37b29050286d94f4a59d))
 - Add agent-berth integration tests and release automation ([318c54b](https://github.com/doitian/agent-berth/commit/318c54b2b89f07e4e8a1543056a4a599b810cd92))
 - Add mock llm client tests ([8a502f9](https://github.com/doitian/agent-berth/commit/8a502f951210fd017fe70de12cd134cf06630754))
@@ -17,6 +29,7 @@ All notable changes to this project are documented in this file.
 - Add clippy to CI and fix lints ([e2a253f](https://github.com/doitian/agent-berth/commit/e2a253fc7697031660b3a79e0bdb67e001f10e51))
 
 ### Changed
+
 - Drop stale desktop sessions and cap Codex hook timeouts ([a20b544](https://github.com/doitian/agent-berth/commit/a20b544f9801e7f584f28e4a64a0b25afac611c4))
 - Rename bridge terminology to berth ([eb48383](https://github.com/doitian/agent-berth/commit/eb483830a6ce0d09e0a934c07d652801a772221a))
 - Run mock llm client tests in ci matrix ([8320ba2](https://github.com/doitian/agent-berth/commit/8320ba2a106fb2982fe708704719bce6b5e5586d))
@@ -29,6 +42,7 @@ All notable changes to this project are documented in this file.
 - Rework resume with idle opt-in, selection, rm, and pruning ([a4afa00](https://github.com/doitian/agent-berth/commit/a4afa0088ed6a35c470cea11cf7db71ed607319e))
 
 ### Fixed
+
 - Fix runner context usage in test workflow ([5c4063e](https://github.com/doitian/agent-berth/commit/5c4063ed0a71c84050668d427e7c2529efece0f2))
 - Fix hooks for real clients on windows and codex exec ([bb45b01](https://github.com/doitian/agent-berth/commit/bb45b01ec4319bd5e93a81ccd6ebec982c59bf99))
 - Fix mise install task on windows ([9fe9562](https://github.com/doitian/agent-berth/commit/9fe95625e37492edca608c3f6311ec85acbd3abb))

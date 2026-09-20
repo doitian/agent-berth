@@ -22,9 +22,7 @@ body = """
 
 """
 trim = true
-postprocessors = [
-    { pattern = "\n\n$", replace = "\n" },
-]
+format = true
 
 [git]
 conventional_commits = false
