@@ -13,9 +13,15 @@ use crate::status::Source;
 use crate::store::ListedSession;
 use crate::tmux::{self, Pane};
 
-pub fn run(ctx: &AppContext, query: Option<String>, preview: bool, dry_run: bool) -> Result<()> {
+pub fn run(
+    ctx: &AppContext,
+    query: Option<String>,
+    preview: bool,
+    session: bool,
+    dry_run: bool,
+) -> Result<()> {
     let sessions = db::query_sessions(ctx, false, None)?;
-    let candidates = collect(&sessions)?;
+    let candidates = collect(&sessions, session)?;
     if candidates.is_empty() {
         println!("No active agents in tmux panes.");
         return Ok(());
@@ -41,8 +47,8 @@ pub fn run(ctx: &AppContext, query: Option<String>, preview: bool, dry_run: bool
     tmux::attach_pane(&candidate.pane)
 }
 
-fn collect(sessions: &[ListedSession]) -> Result<Vec<Candidate>> {
-    let panes = tmux::list_panes()?;
+fn collect(sessions: &[ListedSession], session: bool) -> Result<Vec<Candidate>> {
+    let panes = tmux::list_panes(!session)?;
     let mut ordered: Vec<&ListedSession> = sessions.iter().collect();
     ordered.sort_by_key(|session| std::cmp::Reverse(session.last_report_ms));
     let mut seen = HashSet::new();

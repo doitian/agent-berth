@@ -54,6 +54,9 @@ enum Command {
         /// Show the pane preview (toggle with ctrl-t)
         #[arg(short, long)]
         preview: bool,
+        /// Only consider panes in the current tmux session
+        #[arg(short, long)]
+        session: bool,
         /// Print candidate panes without attaching
         #[arg(long)]
         dry_run: bool,
@@ -109,8 +112,9 @@ pub fn run() -> Result<()> {
         Command::Attach {
             query,
             preview,
+            session,
             dry_run,
-        } => attach::run(&ctx, query, preview, dry_run),
+        } => attach::run(&ctx, query, preview, session, dry_run),
         Command::Doctor => doctor::run(&ctx),
         Command::Resume { idle, dry_run } => {
             resume::run(&ctx, parse_idle(idle.as_deref())?, dry_run)

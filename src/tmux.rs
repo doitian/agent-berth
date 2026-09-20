@@ -119,9 +119,10 @@ impl Pane {
     }
 }
 
-pub fn list_panes() -> Result<Vec<Pane>> {
+pub fn list_panes(all: bool) -> Result<Vec<Pane>> {
+    let scope = if all { "-a" } else { "-s" };
     let output = command()
-        .args(["list-panes", "-a", "-F", PANE_FORMAT])
+        .args(["list-panes", scope, "-F", PANE_FORMAT])
         .output()
         .context("tmux is not available")?;
     if !output.status.success() {

@@ -254,6 +254,41 @@ fn attach_resolves_active_agent_pane_and_attaches() {
     let _ = agent.wait();
 }
 
+#[test]
+fn attach_session_scopes_panes_to_current_session() {
+    let mut sandbox = Sandbox::new();
+    sandbox.start();
+    let mut agent = sandbox.command(sandbox.fixture_agent()).spawn().unwrap();
+    let pid = agent.id();
+    sandbox.notify(
+        "pi",
+        json!({
+            "id": pid.to_string(),
+            "cwd": sandbox.project(),
+            "status": {"s1": "busy"},
+        }),
+    );
+    sandbox.env.insert(
+        "FIXTURE_TMUX_PANES".into(),
+        format!(
+            "%7\t{pid}\tproject\t0\tshell\t{}",
+            sandbox.project().display()
+        )
+        .into(),
+    );
+    success(sandbox.berth().args(["attach", "--session", "--dry-run"]));
+    let logs: Vec<String> = fs::read_dir(sandbox.root.path().join("tmux-log"))
+        .unwrap()
+        .map(|entry| fs::read_to_string(entry.unwrap().path()).unwrap())
+        .collect();
+    assert!(
+        logs.iter().any(|log| log.contains("list-panes\n-s")),
+        "{logs:?}"
+    );
+    let _ = agent.kill();
+    let _ = agent.wait();
+}
+
 struct RealTmux<'a> {
     sandbox: &'a Sandbox,
     executable: PathBuf,
