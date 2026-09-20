@@ -38,4 +38,4 @@ run = "cargo build --release"
 
 [tasks.install]
 description = "Build release and install into ~/.local/bin"
-run = "cargo install --path . --force --root ~/.local"
+run = "cargo install --path . --force --root \"{{env.HOME}}/.local\""
