@@ -62,3 +62,59 @@ jobs:
           path: ${{ runner.temp }}/ab-it-*/**
           if-no-files-found: ignore
           retention-days: 7
+
+  mock-client:
+    name: Mock LLM (${{ matrix.client }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2025]
+        client: [claude, codex, grok, opencode, pi]
+    env:
+      CARGO_TERM_COLOR: always
+      RUST_BACKTRACE: '1'
+      AGENT_BERTH_TEST_CLIENT: ${{ matrix.client }}
+    steps:
+      - name: Configure test temporary directory
+        run: |
+          [IO.File]::AppendAllText($env:GITHUB_ENV, "TMPDIR=$env:RUNNER_TEMP`nTMP=$env:RUNNER_TEMP`nTEMP=$env:RUNNER_TEMP`n")
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install client
+        run: |
+          switch ($env:AGENT_BERTH_TEST_CLIENT) {
+            'grok' {
+              $version = (Invoke-RestMethod https://x.ai/cli/stable).Trim()
+              $suffix = $IsWindows ? 'windows-x86_64.exe' : 'linux-x86_64'
+              $dir = Join-Path $env:RUNNER_TEMP 'grok-bin'
+              New-Item -ItemType Directory -Force $dir | Out-Null
+              $exe = Join-Path $dir ($IsWindows ? 'grok.exe' : 'grok')
+              Invoke-WebRequest "https://x.ai/cli/grok-$version-$suffix" -OutFile $exe
+              if (-not $IsWindows) { chmod +x $exe }
+              [IO.File]::AppendAllText($env:GITHUB_PATH, "$dir`n")
+            }
+            default {
+              $package = @{
+                claude = '@anthropic-ai/claude-code'
+                codex = '@openai/codex'
+                opencode = 'opencode-ai'
+                pi = '@earendil-works/pi-coding-agent'
+              }[$env:AGENT_BERTH_TEST_CLIENT]
+              npm install -g $package
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            }
+          }
+      - name: Run mock LLM client test
+        run: cargo test --locked --test integration mock_llm -- --ignored
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mock-diagnostics-${{ matrix.os }}-${{ matrix.client }}
+          path: ${{ runner.temp }}/ab-it-*/**
+          if-no-files-found: ignore
+          retention-days: 7

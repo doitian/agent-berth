@@ -140,6 +140,8 @@ remove inherited `TMUX` state before launching children.
 
 `.github/workflows/tests.yml` runs formatting, the default suite, and the real
 tmux test on Windows and Linux for branch pushes and pull requests. It is also
-callable from the publishing workflow. Failed integration runs upload their
-retained temporary directories as artifacts. Live client/model tests are never
-selected in CI.
+callable from the publishing workflow. A second job runs the mock LLM client
+test in a matrix over all five clients on Windows and Linux, installing the
+clients with npm (grok from `x.ai/cli`) and never touching a paid API. Failed
+runs upload their retained temporary directories as artifacts. Live client/model
+tests are never selected in CI.
