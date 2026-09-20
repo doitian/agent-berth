@@ -22,6 +22,6 @@ pub fn uninstall(ctx: &Context) -> Result<()> {
 fn extension_source(ctx: &Context) -> String {
     include_str!("hooks/pi.ts").replace(
         "__AGENT_BERTH_BIN__",
-        &serde_json::to_string(&ctx.bridge_bin.display().to_string()).unwrap(),
+        &serde_json::to_string(&ctx.berth_bin.display().to_string()).unwrap(),
     )
 }

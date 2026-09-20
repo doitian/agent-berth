@@ -56,7 +56,7 @@ fn collect(ctx: &Context) -> Vec<Check> {
 }
 
 fn binary(ctx: &Context) -> Check {
-    let path = &ctx.bridge_bin;
+    let path = &ctx.berth_bin;
     if path.is_file() {
         Check {
             level: Level::Ok,

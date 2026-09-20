@@ -17,7 +17,7 @@ pub struct Context {
     pub grok_home: PathBuf,
     pub pi_dir: PathBuf,
     pub appdata: Option<PathBuf>,
-    pub bridge_bin: PathBuf,
+    pub berth_bin: PathBuf,
     pub socket_override: Option<String>,
 }
 
@@ -47,7 +47,7 @@ impl Context {
             pi_dir: env_path("PI_CODING_AGENT_DIR")
                 .unwrap_or_else(|| home.join(".pi").join("agent")),
             appdata: env_path("APPDATA"),
-            bridge_bin: env::current_exe().unwrap_or_else(|_| PathBuf::from(APP)),
+            berth_bin: env::current_exe().unwrap_or_else(|_| PathBuf::from(APP)),
             socket_override: env::var("AGENT_BERTH_SOCK").ok(),
             home,
             xdg_config_home,
@@ -104,7 +104,7 @@ impl Context {
     }
 
     pub fn quote_bin(&self) -> String {
-        quote_path(&self.bridge_bin)
+        quote_path(&self.berth_bin)
     }
 
     pub fn notify_command(&self, provider: &str) -> String {
@@ -170,7 +170,7 @@ impl Context {
             grok_home: root.join("grok"),
             pi_dir: root.join("pi"),
             appdata: Some(root.join("appdata")),
-            bridge_bin: bin.to_path_buf(),
+            berth_bin: bin.to_path_buf(),
             socket_override: Some(
                 #[cfg(windows)]
                 format!("agent-berth-test-{}", std::process::id()),

@@ -6,8 +6,8 @@ Run the default suite with `cargo test` or just the integration tests:
 cargo test --test integration
 ```
 
-`mise run test:integration` runs the same command. Tests use the compiled bridge
-binary, real IPC, and real redb files. A small Rust fixture supplies client
+`mise run test:integration` runs the same command. Tests use the compiled
+agent-berth binary, real IPC, and real redb files. A small Rust fixture supplies client
 discovery and records tmux commands; `rustc` must be on PATH. No installed agent,
 tmux, authentication, or model request is needed for the default suite.
 
@@ -15,7 +15,7 @@ Coverage includes:
 
 - Claude, Codex, and Grok hook lifecycle transitions, including session removal.
 - OpenCode and Pi snapshots, blocking, and replacement of previous snapshots.
-- Two concurrent bridge servers with separate endpoints and databases, duplicate
+- Two concurrent agent-berth servers with separate endpoints and databases, duplicate
   server rejection, offline reads, and persistence after a server restart.
 - Hook installation into disposable configuration directories for all providers.
 - Resume command construction, including namespace and configuration propagation
@@ -58,10 +58,10 @@ Use a key and model accepted by that client. Existing subscription logins,
 personal configuration, plugins, and session histories are not copied. The test
 does not perform a login or install a client.
 
-The test installs the bridge hooks, then substitutes a recording executable that
-forwards their original payloads to the compiled bridge and records the resulting
+The test installs the agent-berth hooks, then substitutes a recording executable that
+forwards their original payloads to the compiled binary and records the resulting
 session list. Success requires an actual client-generated session to appear in
-the bridge, not merely a successful client or `notify` exit code. This also
+the server, not merely a successful client or `notify` exit code. This also
 exercises client hook/plugin compatibility, which synthetic payload tests cannot
 establish. It uses each client's headless mode; interactive permission dialogs
 and full real-client resume behavior are outside this smoke test.
@@ -126,7 +126,7 @@ Successful tests remove their temporary directories. Failed tests print and
 retain their artifact directory for diagnosis; server processes and real tmux
 namespaces are still cleaned up.
 
-Two environment overrides are available for any bridge invocation:
+Two environment overrides are available for any agent-berth invocation:
 
 | Variable | Effect |
 | --- | --- |

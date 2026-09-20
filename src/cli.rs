@@ -15,7 +15,7 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// Start the bridge server
+    /// Start the server
     Server,
     /// Install the user service and agent hooks
     Setup {
@@ -37,7 +37,7 @@ enum Command {
         #[arg(long, value_name = "DURATION", requires = "resumable")]
         idle: Option<String>,
     },
-    /// Report agent status to the bridge server (used by hooks)
+    /// Report agent status to the server (used by hooks)
     Notify {
         #[arg(long)]
         provider: String,

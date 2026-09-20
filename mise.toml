@@ -9,7 +9,7 @@ run = "cargo test --no-fail-fast --{% for f in usage.filters | default(value=[])
 usage = 'arg "[filters]" var=#true'
 
 [tasks."test:integration"]
-description = "Run isolated bridge integration tests without model calls"
+description = "Run isolated agent-berth integration tests without model calls"
 run = "cargo test --test integration"
 
 [tasks."test:tmux"]

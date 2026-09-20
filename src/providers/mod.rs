@@ -89,7 +89,7 @@ impl ProviderKind {
         let Ok(text) = fs::read_to_string(self.hook_path(ctx)) else {
             return false;
         };
-        let bin = ctx.bridge_bin.display().to_string();
+        let bin = ctx.berth_bin.display().to_string();
         let variants = [
             bin.clone(),
             bin.replace('\\', "\\\\"),

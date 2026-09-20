@@ -79,7 +79,7 @@ pub fn installed(ctx: &AppContext) -> bool {
 
 #[cfg(windows)]
 fn install_windows(ctx: &AppContext) -> Result<()> {
-    let exe = ctx.bridge_bin.display().to_string().replace('\'', "''");
+    let exe = ctx.berth_bin.display().to_string().replace('\'', "''");
     let script = format!(
         r#"
 $exe = '{exe}'
@@ -116,9 +116,9 @@ fn install_systemd(ctx: &AppContext) -> Result<()> {
     if let Some(parent) = unit.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let exec = crate::paths::quote_path(&ctx.bridge_bin);
+    let exec = crate::paths::quote_path(&ctx.berth_bin);
     let body = format!(
-        "[Unit]\nDescription=Agent Bridge\nAfter=default.target\n\n[Service]\nType=simple\nExecStart={exec} server\nRestart=on-failure\nRestartSec=2\n\n[Install]\nWantedBy=default.target\n"
+        "[Unit]\nDescription=Agent Berth\nAfter=default.target\n\n[Service]\nType=simple\nExecStart={exec} server\nRestart=on-failure\nRestartSec=2\n\n[Install]\nWantedBy=default.target\n"
     );
     std::fs::write(&unit, body)?;
     let daemon = Command::new("systemctl")
