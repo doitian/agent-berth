@@ -1,5 +1,6 @@
 use super::*;
 use crate::paths::Context as AppContext;
+use crate::status::AgentStatus;
 use tempfile::tempdir;
 
 #[test]
@@ -22,4 +23,30 @@ fn drops_sessions_moved_to_archived_sessions() {
     assert!(drop_archived(&ctx, &mut sessions));
     assert!(sessions.contains_key("keep"));
     assert!(!sessions.contains_key("01a0be39-a601-7e20-bcb1-60122ec3c8c6"));
+}
+
+#[test]
+fn drops_desktop_sessions_without_session_files() {
+    let root = tempdir().unwrap();
+    let ctx = AppContext::for_test(root.path(), &root.path().join("agent-bridge"));
+    let mut sessions = BTreeMap::new();
+    sessions.insert(
+        "test-desktop".into(),
+        AgentSession {
+            source: Source::Desktop,
+            status: AgentStatus::Working,
+            ..AgentSession::default()
+        },
+    );
+    sessions.insert(
+        "cli-keep".into(),
+        AgentSession {
+            source: Source::Cli,
+            status: AgentStatus::Working,
+            ..AgentSession::default()
+        },
+    );
+    assert!(drop_archived(&ctx, &mut sessions));
+    assert!(sessions.contains_key("cli-keep"));
+    assert!(!sessions.contains_key("test-desktop"));
 }

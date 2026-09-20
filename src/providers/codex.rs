@@ -75,29 +75,36 @@ fn source_for(event: &Value) -> Source {
 }
 
 pub fn drop_archived(ctx: &Context, sessions: &mut BTreeMap<String, AgentSession>) -> bool {
-    let archived = archived_ids(ctx);
-    if archived.is_empty() {
-        return false;
-    }
+    let archived = session_ids_in(&ctx.codex_home.join("archived_sessions"));
+    let known = {
+        let mut ids = session_ids_in(&ctx.codex_home.join("sessions"));
+        ids.extend(archived.iter().cloned());
+        ids
+    };
     let before = sessions.len();
-    sessions.retain(|sid, _| !archived.contains(sid));
+    sessions.retain(|sid, session| {
+        if archived.contains(sid) {
+            return false;
+        }
+        session.source != Source::Desktop || known.contains(sid)
+    });
     sessions.len() != before
 }
 
-fn archived_ids(ctx: &Context) -> HashSet<String> {
+fn session_ids_in(root: &Path) -> HashSet<String> {
     let mut ids = HashSet::new();
-    collect_archived_ids(&ctx.codex_home.join("archived_sessions"), &mut ids);
+    collect_session_ids(root, &mut ids);
     ids
 }
 
-fn collect_archived_ids(root: &Path, ids: &mut HashSet<String>) {
+fn collect_session_ids(root: &Path, ids: &mut HashSet<String>) {
     let Ok(entries) = std::fs::read_dir(root) else {
         return;
     };
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
-            collect_archived_ids(&path, ids);
+            collect_session_ids(&path, ids);
             continue;
         }
         if let Some(id) = session_id_from_rollout(&path) {
@@ -143,7 +150,7 @@ pub fn install(ctx: &Context) -> Result<PathBuf> {
     if !hooks.is_object() {
         *hooks = json!({});
     }
-    let handler = command_handler(ctx, "codex", 5, true);
+    let handler = command_handler(ctx, "codex", 3, true);
     for event in HOOK_EVENTS {
         let groups = hooks
             .as_object_mut()

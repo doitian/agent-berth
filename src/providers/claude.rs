@@ -305,7 +305,9 @@ pub fn apply_agents(
             item.last_report_ms = now;
         }
     }
-    sessions.retain(|sid, session| !session.discovered || live.contains(sid));
+    sessions.retain(|sid, session| {
+        live.contains(sid) || (!session.discovered && session.source != Source::Desktop)
+    });
 }
 
 fn now_ms() -> u64 {
