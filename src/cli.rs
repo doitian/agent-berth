@@ -3,7 +3,7 @@ use clap::{Parser, Subcommand};
 
 use crate::duration::parse_idle;
 use crate::paths::Context;
-use crate::{doctor, list, notify, resume, server, service, setup};
+use crate::{attach, doctor, list, notify, resume, server, service, setup};
 
 /// Monitor coding agents and resume their sessions.
 #[derive(Debug, Parser)]
@@ -46,6 +46,14 @@ enum Command {
     Notify {
         #[arg(long)]
         provider: String,
+    },
+    /// Attach to a running agent in tmux
+    Attach {
+        /// Initial fzf query
+        query: Option<String>,
+        /// Print candidate panes without attaching
+        #[arg(long)]
+        dry_run: bool,
     },
     /// Check server, service, and agent hooks
     Doctor,
@@ -95,6 +103,7 @@ pub fn run() -> Result<()> {
             list::run(&ctx, json, resumable, idle)
         }
         Command::Notify { provider } => notify::run(&ctx, provider),
+        Command::Attach { query, dry_run } => attach::run(&ctx, query, dry_run),
         Command::Doctor => doctor::run(&ctx),
         Command::Resume { idle, dry_run } => {
             resume::run(&ctx, parse_idle(idle.as_deref())?, dry_run)

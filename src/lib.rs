@@ -1,7 +1,9 @@
+mod attach;
 mod cli;
 mod db;
 mod doctor;
 mod duration;
+mod git;
 mod ipc;
 mod list;
 mod notify;

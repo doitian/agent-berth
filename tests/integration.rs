@@ -198,6 +198,62 @@ fn resume_passes_namespace_and_config_to_every_tmux_command() {
     );
 }
 
+#[test]
+fn attach_resolves_active_agent_pane_and_attaches() {
+    let mut sandbox = Sandbox::new();
+    sandbox.start();
+    let project = sandbox.project();
+    fs::create_dir_all(project.join(".git")).unwrap();
+    fs::write(project.join(".git/HEAD"), "ref: refs/heads/attach-work\n").unwrap();
+
+    let mut agent = sandbox.command(sandbox.fixture_agent()).spawn().unwrap();
+    let pid = agent.id();
+    sandbox.notify(
+        "pi",
+        json!({
+            "id": pid.to_string(),
+            "cwd": project,
+            "status": {"s1": "busy"},
+            "titles": {"s1": "Fix attach command"},
+        }),
+    );
+    sandbox.env.insert(
+        "FIXTURE_TMUX_PANES".into(),
+        format!("%7\t{pid}\tproject\t0\tshell\t{}", project.display()).into(),
+    );
+
+    let dry = success(sandbox.berth().args(["attach", "--dry-run"]));
+    let text = String::from_utf8_lossy(&dry.stdout);
+    assert!(text.contains("Fix attach command"), "{text}");
+    assert!(text.contains("attach-work"), "{text}");
+    assert!(text.contains("\tproject\t"), "{text}");
+
+    sandbox
+        .env
+        .insert("FIXTURE_FZF_PICK".into(), "Fix attach".into());
+    sandbox.notify(
+        "pi",
+        json!({
+            "id": pid.to_string(),
+            "cwd": project,
+            "status": {"s1": "busy"},
+            "titles": {"s1": "Fix attach command"},
+        }),
+    );
+    success(sandbox.berth().arg("attach"));
+    let logs: Vec<String> = fs::read_dir(sandbox.root.path().join("tmux-log"))
+        .unwrap()
+        .map(|entry| fs::read_to_string(entry.unwrap().path()).unwrap())
+        .collect();
+    let joined = logs.join("\n---\n");
+    assert!(joined.contains("select-window\n-t\n=project:0"), "{joined}");
+    assert!(joined.contains("select-pane\n-t\n%7"), "{joined}");
+    assert!(joined.contains("attach\n-t\n=project"), "{joined}");
+
+    let _ = agent.kill();
+    let _ = agent.wait();
+}
+
 struct RealTmux<'a> {
     sandbox: &'a Sandbox,
     executable: PathBuf,
@@ -344,6 +400,129 @@ fn real_tmux_resume_inherits_isolated_environment() {
             .command()
             .args(["has-session", "-t", "=sentinel"]),
     );
+}
+
+#[test]
+#[ignore = "requires real tmux/psmux; uses a disposable namespace and no model calls"]
+fn real_tmux_attach_resolves_agent_pane() {
+    let original_path = std::env::var_os("PATH").unwrap();
+    let executable = std::env::split_paths(&original_path)
+        .map(|dir| dir.join(format!("tmux{}", std::env::consts::EXE_SUFFIX)))
+        .find(|path| path.is_file())
+        .expect("tmux/psmux must be installed");
+    let mut sandbox = Sandbox::new();
+    fs::remove_file(
+        sandbox
+            .root
+            .path()
+            .join("bin")
+            .join(format!("tmux{}", std::env::consts::EXE_SUFFIX)),
+    )
+    .unwrap();
+    let mut paths = vec![sandbox.root.path().join("bin")];
+    paths.extend(std::env::split_paths(&original_path));
+    sandbox
+        .env
+        .insert("PATH".into(), std::env::join_paths(paths).unwrap());
+    let shell_config = if cfg!(windows) {
+        "set -g default-shell powershell.exe\nset -g default-command 'powershell.exe -NoLogo -NoProfile'\n"
+    } else {
+        "set -g default-shell /bin/sh\nset -g default-command /bin/sh\n"
+    };
+    fs::write(sandbox.root.path().join("tmux.conf"), shell_config).unwrap();
+    sandbox.start();
+
+    let pid_file = sandbox.root.path().join("agent.pid");
+    let script = sandbox.root.path().join(if cfg!(windows) {
+        "agent.ps1"
+    } else {
+        "agent.sh"
+    });
+    if cfg!(windows) {
+        fs::write(
+            &script,
+            format!(
+                "$PID | Set-Content -Path '{}'\nStart-Sleep -Seconds 300\n",
+                pid_file.display()
+            ),
+        )
+        .unwrap();
+    } else {
+        fs::write(
+            &script,
+            format!("echo $$ > '{}'\nsleep 300\n", pid_file.display()),
+        )
+        .unwrap();
+    }
+    let command: Vec<String> = if cfg!(windows) {
+        [
+            "cmd.exe",
+            "/c",
+            "powershell.exe",
+            "-NoLogo",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            script.to_str().unwrap(),
+        ]
+        .iter()
+        .map(|arg| arg.to_string())
+        .collect()
+    } else {
+        vec!["sh".to_string(), script.display().to_string()]
+    };
+
+    let project = sandbox.project();
+    let tmux = RealTmux {
+        sandbox: &sandbox,
+        executable,
+    };
+    success(tmux.command().args(["new-session", "-d", "-s", "agents"]));
+    let mut new_window = tmux.command();
+    new_window
+        .arg("new-window")
+        .arg("-t")
+        .arg("=agents")
+        .arg("-n")
+        .arg("agent")
+        .arg("-c")
+        .arg(&project)
+        .arg("--");
+    for arg in &command {
+        new_window.arg(arg);
+    }
+    success(&mut new_window);
+
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while !pid_file.is_file() {
+        assert!(
+            Instant::now() < deadline,
+            "pane command did not write its pid"
+        );
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    let pid: u32 = fs::read_to_string(&pid_file)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+
+    sandbox.notify(
+        "pi",
+        json!({
+            "id": pid.to_string(),
+            "cwd": project,
+            "status": {"real": "busy"},
+            "titles": {"real": "real-attach"},
+        }),
+    );
+
+    let output = success(sandbox.berth().args(["attach", "--dry-run"]));
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(text.contains("real-attach"), "{text}");
+    assert!(text.contains("project"), "{text}");
+    drop(tmux);
 }
 
 fn install_recorder(sandbox: &mut Sandbox, provider: &str) -> PathBuf {

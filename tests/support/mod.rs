@@ -101,6 +101,7 @@ impl Sandbox {
         for name in [
             "claude",
             "codex",
+            "fzf",
             "grok",
             "opencode",
             "pi",

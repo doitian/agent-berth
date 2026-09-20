@@ -33,7 +33,22 @@ fn main() {
         fs::write(dir.join(format!("{id}.sessions")), output.stdout).unwrap();
     } else if name == "claude" && args == ["agents", "--json"] {
         println!("[]");
+    } else if name == "fzf" {
+        let mut input = String::new();
+        io::stdin().read_to_string(&mut input).unwrap();
+        let pick = env::var("FIXTURE_FZF_PICK").ok();
+        if let Some(line) = input
+            .lines()
+            .find(|line| pick.as_deref().is_none_or(|needle| line.contains(needle)))
+        {
+            println!("{line}");
+        }
     } else if name == "tmux" {
+        if args.iter().any(|arg| arg == "list-panes") {
+            if let Ok(panes) = env::var("FIXTURE_TMUX_PANES") {
+                print!("{panes}");
+            }
+        }
         let mut log = args.join("\n");
         if args.iter().any(|arg| arg == "-C") {
             log.push_str("\n--stdin--\n");

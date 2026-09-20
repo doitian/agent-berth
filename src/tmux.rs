@@ -84,6 +84,108 @@ pub fn available() -> bool {
     crate::paths::on_path("tmux")
 }
 
+const PANE_FORMAT: &str = "#{pane_id}\t#{pane_pid}\t#{session_name}\t#{window_index}\t#{window_name}\t#{pane_current_path}";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Pane {
+    pub id: String,
+    pub pid: u32,
+    pub session: String,
+    pub window: String,
+    pub window_name: String,
+    pub path: String,
+}
+
+impl Pane {
+    fn parse(line: &str) -> Option<Self> {
+        let mut fields = line.split('\t');
+        let id = fields.next()?.trim().to_string();
+        let pid = fields.next()?.trim().parse().ok()?;
+        let session = fields.next()?.to_string();
+        let window = fields.next()?.to_string();
+        let window_name = fields.next()?.to_string();
+        let path = fields.next()?.to_string();
+        if id.is_empty() {
+            return None;
+        }
+        Some(Self {
+            id,
+            pid,
+            session,
+            window,
+            window_name,
+            path,
+        })
+    }
+}
+
+pub fn list_panes() -> Result<Vec<Pane>> {
+    let output = command()
+        .args(["list-panes", "-a", "-F", PANE_FORMAT])
+        .output()
+        .context("tmux is not available")?;
+    if !output.status.success() {
+        bail!("tmux list-panes failed");
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    Ok(text.lines().filter_map(Pane::parse).collect())
+}
+
+pub fn attach_pane(pane: &Pane) -> Result<()> {
+    let session = format!("={}", pane.session);
+    let window = format!("{session}:{}", pane.window);
+    if std::env::var_os("TMUX").is_some() {
+        run(["switch-client", "-t", &session])?;
+        run(["select-window", "-t", &window])?;
+        run(["select-pane", "-t", &pane.id])?;
+        return Ok(());
+    }
+    run(["select-window", "-t", &window])?;
+    run(["select-pane", "-t", &pane.id])?;
+    let status = command()
+        .args(["attach", "-t", &session])
+        .status()
+        .context("tmux attach")?;
+    if !status.success() {
+        bail!("tmux attach failed");
+    }
+    Ok(())
+}
+
+fn run<I, S>(args: I) -> Result<()>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<std::ffi::OsStr>,
+{
+    if !tmux(args)?.success() {
+        bail!("tmux command failed");
+    }
+    Ok(())
+}
+
+/// fzf preview command for `{1}`, the pane id, including the active socket and config.
+pub fn preview_command() -> String {
+    let mut parts = vec!["tmux".to_string()];
+    if let Some(socket) = crate::paths::env_path("AGENT_BERTH_TMUX_SOCKET") {
+        parts.push("-L".into());
+        parts.push(quote_arg(&socket.display().to_string()));
+    }
+    if let Some(config) = crate::paths::env_path("AGENT_BERTH_TMUX_CONFIG") {
+        parts.push("-f".into());
+        parts.push(quote_arg(&config.display().to_string()));
+    }
+    parts.push("capture-pane -p -e -t {1}".into());
+    parts.join(" ")
+}
+
+fn quote_arg(value: &str) -> String {
+    if value.chars().any(char::is_whitespace) {
+        format!("\"{}\"", value.replace('"', "\\\""))
+    } else {
+        value.to_string()
+    }
+}
+
 fn apply_config(root: &Path, target: &str) -> Result<()> {
     let config = root.join(DEFAULT_CONFIG);
     let mut commands = if config.is_file() {
