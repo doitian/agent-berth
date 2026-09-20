@@ -47,11 +47,13 @@ fn plugin_clients_report_snapshots_and_blocking_over_ipc() {
                 "id": "fixture", "cwd": sandbox.project(),
                 "status": {"busy-session": "busy", "idle-session": "idle"},
                 "blocking": ["busy-session"],
+                "titles": {"busy-session": "Fix the hook"},
             }),
         );
         let sessions = sandbox.sessions(false);
         assert_eq!(sessions.len(), 2);
         assert_eq!(sessions[0]["status"], "waiting");
+        assert_eq!(sessions[0]["title"], "Fix the hook");
         assert_eq!(sessions[1]["status"], "idle");
         sandbox.notify(
             provider,

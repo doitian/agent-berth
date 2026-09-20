@@ -7,12 +7,14 @@ export default () => {
   const running = new Set()
   const child = new Set()
   const pending = new Map()
+  const names = new Map()
   let inflight = false
 
   function drop(sid) {
     seen.delete(sid)
     running.delete(sid)
     child.delete(sid)
+    names.delete(sid)
     for (const [id, session] of pending) if (session === sid) pending.delete(id)
   }
 
@@ -29,10 +31,16 @@ export default () => {
     inflight = true
     const status = {}
     for (const sid of seen) status[sid] = running.has(sid) ? "busy" : "idle"
+    const titles = {}
+    for (const sid of seen) {
+      const name = names.get(sid)
+      if (name) titles[sid] = name
+    }
     const body = JSON.stringify({
       id: String(process.pid),
       cwd: process.cwd(),
       status,
+      titles,
       blocking: [...new Set(pending.values())],
     })
     try {
@@ -52,6 +60,9 @@ export default () => {
     const props = event?.properties || {}
     const sid = props.sessionID || props.info?.id
     const requestID = props.id || props.permissionID || props.requestID
+    if (typeof props.info?.title === "string" && props.info.id) {
+      names.set(props.info.id, props.info.title)
+    }
     if (type === "session.created" && sid) {
       if (props.info?.parentID) child.add(sid)
       else prune(sid)

@@ -19,6 +19,22 @@ fn hook_payload_title_is_listed() {
 }
 
 #[test]
+fn plugin_payload_title_is_listed() {
+    let mut store = Store::default();
+    store
+        .update(
+            "opencode",
+            serde_json::json!({
+                "id":"p",
+                "status":{"s":"busy"},
+                "titles":{"s":"Fix the plugin","other":"unused"}
+            }),
+        )
+        .unwrap();
+    assert_eq!(store.listed()[0].title.as_deref(), Some("Fix the plugin"));
+}
+
+#[test]
 fn plugin_and_hook_identities_do_not_collide() {
     let mut store = Store::default();
     store
@@ -250,6 +266,14 @@ fn rejects_invalid_notify_payloads() {
             .update(
                 "opencode",
                 serde_json::json!({"id":"p","status":{},"blocking":[1]})
+            )
+            .is_err()
+    );
+    assert!(
+        store
+            .update(
+                "opencode",
+                serde_json::json!({"id":"p","status":{},"titles":{"s":1}})
             )
             .is_err()
     );

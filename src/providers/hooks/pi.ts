@@ -6,6 +6,7 @@ export default function (pi) {
   const seen = new Set()
   const running = new Set()
   const pending = new Set()
+  const names = new Map()
   let heartbeat
   let inflight = false
 
@@ -21,7 +22,34 @@ export default function (pi) {
     for (const id of [...seen]) {
       if (id === keep || running.has(id) || pending.has(id)) continue
       seen.delete(id)
+      names.delete(id)
     }
+  }
+
+  function remember(ctx) {
+    const id = sid(ctx)
+    const name = pi.getSessionName?.()
+    if (typeof name === "string" && name) {
+      names.set(id, name)
+      return
+    }
+    if (names.has(id)) return
+    for (const entry of ctx.sessionManager.getEntries?.() ?? []) {
+      if (entry?.message?.role !== "user") continue
+      const text = messageText(entry.message).replace(/\s+/g, " ").trim()
+      if (text) names.set(id, text)
+      return
+    }
+  }
+
+  function messageText(message) {
+    const content = message?.content
+    if (typeof content === "string") return content
+    if (!Array.isArray(content)) return ""
+    return content
+      .filter((block) => block?.type === "text")
+      .map((block) => block.text)
+      .join(" ")
   }
 
   function flush() {
@@ -29,10 +57,16 @@ export default function (pi) {
     inflight = true
     const status = {}
     for (const id of seen) status[id] = running.has(id) ? "busy" : "idle"
+    const titles = {}
+    for (const id of seen) {
+      const name = names.get(id)
+      if (name) titles[id] = name
+    }
     const body = JSON.stringify({
       id: String(process.pid),
       cwd: process.cwd(),
       status,
+      titles,
       blocking: [...pending],
     })
     try {
@@ -67,6 +101,7 @@ export default function (pi) {
       seen.add(id)
       running.add(id)
     }
+    remember(ctx)
     start()
     flush()
   })
@@ -75,6 +110,7 @@ export default function (pi) {
     const id = sid(ctx)
     seen.add(id)
     running.add(id)
+    remember(ctx)
     flush()
   })
 
@@ -82,6 +118,7 @@ export default function (pi) {
     const id = sid(ctx)
     running.delete(id)
     if (seen.has(id)) prune(id)
+    remember(ctx)
     flush()
   })
 
@@ -89,6 +126,7 @@ export default function (pi) {
     const id = sid(ctx)
     seen.add(id)
     pending.add(id)
+    remember(ctx)
     flush()
   })
 
@@ -99,5 +137,14 @@ export default function (pi) {
 
   pi.on("session_shutdown", async () => {
     stop()
+  })
+
+  pi.on("session_info_changed", async (_event, ctx) => {
+    const id = sid(ctx)
+    const name = pi.getSessionName?.()
+    if (typeof name === "string" && name) names.set(id, name)
+    else names.delete(id)
+    remember(ctx)
+    flush()
   })
 }

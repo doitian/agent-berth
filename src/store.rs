@@ -33,6 +33,8 @@ pub struct PluginSnapshot {
     #[serde(default)]
     pub blocking: Vec<String>,
     #[serde(default)]
+    pub titles: BTreeMap<String, String>,
+    #[serde(default)]
     pub cwd: Option<String>,
     #[serde(default)]
     pub cmdline: Vec<String>,
@@ -158,10 +160,25 @@ impl Store {
             }
             Some(_) => anyhow::bail!("blocking must be an array of strings"),
         };
+        let titles = match payload.get("titles") {
+            None => BTreeMap::new(),
+            Some(Value::Object(items)) => {
+                let mut out = BTreeMap::new();
+                for (sid, title) in items {
+                    let title = title
+                        .as_str()
+                        .ok_or_else(|| anyhow::anyhow!("titles must be an object of strings"))?;
+                    out.insert(sid.clone(), title.to_string());
+                }
+                out
+            }
+            Some(_) => anyhow::bail!("titles must be an object of strings"),
+        };
         let pid = u32_field(&payload, &["pid"]).or_else(|| instance.parse().ok());
         let snapshot = PluginSnapshot {
             status,
             blocking,
+            titles,
             cwd: cwd_field(&payload),
             cmdline: string_list(&payload, "cmdline"),
             pid,
@@ -239,7 +256,7 @@ impl Store {
                         kind: SessionKind::Plugin,
                         parent_id: None,
                         exited: false,
-                        title: None,
+                        title: snapshot.titles.get(sid).cloned(),
                     });
                 }
             }
