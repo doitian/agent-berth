@@ -1,0 +1,39 @@
+# git-cliff configuration: https://git-cliff.org/docs/configuration
+
+[changelog]
+header = """
+# Changelog
+
+All notable changes to this project are documented in this file.
+
+"""
+body = """
+{% if version %}\
+    ## [{{ version | trim_start_matches(pat="v") }}](https://github.com/doitian/agent-berth/releases/tag/{{ version }}) - {{ timestamp | date(format="%Y-%m-%d") }}
+{% else %}\
+    ## Unreleased
+{% endif %}\
+{% for group, commits in commits | group_by(attribute="group") %}
+    ### {{ group | striptags | trim }}
+    {% for commit in commits %}\
+        - {{ commit.message | split(pat="\n") | first | trim | upper_first }} ([{{ commit.id | truncate(length=7, end="") }}](https://github.com/doitian/agent-berth/commit/{{ commit.id }}))
+    {% endfor %}\
+{% endfor %}
+
+"""
+trim = true
+postprocessors = [
+    { pattern = "\n\n$", replace = "\n" },
+]
+
+[git]
+conventional_commits = false
+filter_unconventional = false
+commit_parsers = [
+    { message = "(?i)^release v|^initialize ", skip = true },
+    { message = "(?i)^fix|^bugfix|^hotfix", group = "Fixed" },
+    { message = "(?i)^(add|implement|support|introduce|check)", group = "Added" },
+    { message = "(?i)^(rework|refactor|rename|remove|drop|make|scope|always|run|report)", group = "Changed" },
+    { message = "(?i)^(docs?|chore|ci|build|test|bump)", skip = true },
+    { message = ".*", group = "Other" },
+]

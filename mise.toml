@@ -1,3 +1,7 @@
+[tasks.changelog]
+description = "Regenerate CHANGELOG.md from git history with git-cliff"
+run = "git-cliff -o CHANGELOG.md"
+
 [tasks."pre-commit:cargo-fmt"]
 run = "cargo fmt --check"
 

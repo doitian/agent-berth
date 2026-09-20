@@ -90,6 +90,15 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: git-cliff
+      - name: Generate release notes from the tag's changelog section
+        run: git-cliff --latest --strip header -o RELEASE_NOTES.md
       - uses: actions/download-artifact@v4
         with:
           pattern: binary-*
@@ -104,7 +113,7 @@ jobs:
         run: |
           $assets = @(Get-ChildItem -LiteralPath dist -File | ForEach-Object FullName)
           if ($assets.Count -ne 8) { throw 'Expected four archives and four checksums' }
-          $arguments = @('release', 'create', $env:RELEASE_TAG, '--verify-tag', '--title', $env:RELEASE_TAG, '--generate-notes')
+          $arguments = @('release', 'create', $env:RELEASE_TAG, '--verify-tag', '--title', $env:RELEASE_TAG, '--notes-file', 'RELEASE_NOTES.md')
           if ($env:RELEASE_VERSION.Contains('-')) { $arguments += '--prerelease' }
           gh @arguments @assets
 

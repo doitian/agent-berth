@@ -4,6 +4,12 @@ Push a tag named exactly `v` followed by the package version in `Cargo.toml`, fo
 example `v0.1.0`. All tag pushes trigger `publish.yml`; tags with another name or
 version fail before tests, binary builds, authentication, or publishing.
 
+Before tagging, regenerate `CHANGELOG.md` with `mise run changelog` (requires
+[git-cliff](https://git-cliff.org)) and commit it. Commits are grouped by
+message prefix (`fix` becomes Fixed, `add` becomes Added, and so on; see
+`cliff.toml`). The release workflow extracts the tag's changelog section and
+uses it as the GitHub Release notes.
+
 The workflow validates the crate package, runs the reusable Windows/Linux test
 suite, and builds these binaries:
 
