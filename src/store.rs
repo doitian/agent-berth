@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
@@ -12,6 +12,7 @@ use crate::status::{
 };
 
 pub const PLUGIN_STALE: Duration = Duration::from_secs(5);
+pub const SESSION_RETENTION: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 
 #[derive(Debug, Clone)]
 pub enum Change {
@@ -19,7 +20,7 @@ pub enum Change {
     Snapshot { provider: String, instance: String },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SessionKind {
     Hook,
@@ -54,6 +55,8 @@ pub struct Store {
     pub hooks: BTreeMap<String, BTreeMap<String, AgentSession>>,
     #[serde(default)]
     pub snapshots: BTreeMap<String, BTreeMap<String, PluginSnapshot>>,
+    #[serde(default)]
+    pub removed: BTreeMap<String, BTreeMap<String, u64>>,
 }
 
 impl Default for Store {
@@ -63,6 +66,7 @@ impl Default for Store {
             previous_heartbeat_ms: None,
             hooks: BTreeMap::new(),
             snapshots: BTreeMap::new(),
+            removed: BTreeMap::new(),
         }
     }
 }
@@ -104,9 +108,13 @@ impl Store {
             anyhow::bail!("provide a JSON object");
         }
         if payload.get("hook_event_name").is_some() || payload.get("hookEventName").is_some() {
+            let sid = crate::status::session_key(&payload);
+            if let Some(sid) = &sid {
+                self.clear_removed(provider, sid);
+            }
             let bucket = self.hooks.entry(provider.to_string()).or_default();
             providers::apply_hook(provider, bucket, &payload);
-            if let Some(sid) = crate::status::session_key(&payload) {
+            if let Some(sid) = sid {
                 if let Some(session) = bucket.get_mut(&sid) {
                     touch_session(session, &payload, provider);
                     if session.exited {
@@ -145,6 +153,9 @@ impl Store {
                 anyhow::bail!("status values must be idle, busy, or retry");
             }
             status.insert(sid.clone(), kind.to_string());
+        }
+        for sid in status.keys() {
+            self.clear_removed(provider, sid);
         }
         let blocking = match payload.get("blocking") {
             None => Vec::new(),
@@ -192,6 +203,27 @@ impl Store {
             provider: provider.to_string(),
             instance: instance.to_string(),
         })
+    }
+
+    pub fn mark_removed(&mut self, provider: &str, session_id: &str) -> u64 {
+        let at = now_ms();
+        self.removed
+            .entry(provider.to_string())
+            .or_default()
+            .insert(session_id.to_string(), at);
+        at
+    }
+
+    pub fn clear_removed(&mut self, provider: &str, session_id: &str) {
+        if let Some(bucket) = self.removed.get_mut(provider) {
+            bucket.remove(session_id);
+        }
+    }
+
+    pub fn is_removed(&self, provider: &str, session_id: &str) -> bool {
+        self.removed
+            .get(provider)
+            .is_some_and(|bucket| bucket.contains_key(session_id))
     }
 
     pub fn discover(&mut self, ctx: &crate::paths::Context) -> bool {
@@ -261,6 +293,22 @@ impl Store {
                 }
             }
         }
+        out.retain(|session| !self.is_removed(&session.provider, &session.session_id));
+        let mut best: BTreeMap<(String, String, SessionKind), ListedSession> = BTreeMap::new();
+        for session in out {
+            let key = (
+                session.provider.clone(),
+                session.session_id.clone(),
+                session.kind,
+            );
+            match best.get(&key) {
+                Some(existing) if existing.last_report_ms >= session.last_report_ms => {}
+                _ => {
+                    best.insert(key, session);
+                }
+            }
+        }
+        let mut out: Vec<ListedSession> = best.into_values().collect();
         out.sort_by(|a, b| (&a.provider, &a.session_id).cmp(&(&b.provider, &b.session_id)));
         out
     }
@@ -273,12 +321,56 @@ impl Store {
             .collect()
     }
 
-    pub fn resumable(&self, idle: Duration) -> Vec<ListedSession> {
+    pub fn resumable(&self, idle: Option<Duration>) -> Vec<ListedSession> {
         let now = now_ms();
         self.listed()
             .into_iter()
             .filter(|session| session.is_resumable(self, now, idle))
             .collect()
+    }
+
+    pub fn prune(&mut self, now_ms: u64, retention: Duration) -> bool {
+        let cutoff = now_ms.saturating_sub(retention.as_millis() as u64);
+        let mut changed = false;
+
+        for bucket in self.hooks.values_mut() {
+            let before = bucket.len();
+            bucket.retain(|_, session| {
+                session.pid.is_some_and(pid_alive) || session.last_report_ms >= cutoff
+            });
+            changed |= bucket.len() != before;
+        }
+        self.hooks.retain(|_, bucket| !bucket.is_empty());
+
+        for bucket in self.snapshots.values_mut() {
+            let before = bucket.len();
+            bucket.retain(|_, snapshot| {
+                snapshot.pid.is_some_and(pid_alive) || snapshot.last_report_ms >= cutoff
+            });
+            changed |= bucket.len() != before;
+        }
+        self.snapshots.retain(|_, bucket| !bucket.is_empty());
+
+        let mut live: BTreeSet<(String, String)> = BTreeSet::new();
+        for (provider, bucket) in &self.hooks {
+            for sid in bucket.keys() {
+                live.insert((provider.clone(), sid.clone()));
+            }
+        }
+        for (provider, bucket) in &self.snapshots {
+            for snapshot in bucket.values() {
+                for sid in snapshot.status.keys() {
+                    live.insert((provider.clone(), sid.clone()));
+                }
+            }
+        }
+        for (provider, bucket) in self.removed.iter_mut() {
+            let before = bucket.len();
+            bucket.retain(|sid, _| live.contains(&(provider.clone(), sid.clone())));
+            changed |= bucket.len() != before;
+        }
+        self.removed.retain(|_, bucket| !bucket.is_empty());
+        changed
     }
 }
 
@@ -303,7 +395,7 @@ impl ListedSession {
         self.pid.is_some_and(pid_alive)
     }
 
-    pub fn is_resumable(&self, store: &Store, now_ms: u64, idle: Duration) -> bool {
+    pub fn is_resumable(&self, store: &Store, now_ms: u64, idle: Option<Duration>) -> bool {
         if self.exited || self.parent_id.is_some() {
             return false;
         }
@@ -319,6 +411,9 @@ impl ListedSession {
         if !matches!(self.status, AgentStatus::Idle | AgentStatus::Done) {
             return false;
         }
+        let Some(idle) = idle else {
+            return false;
+        };
         idle_age_ms(self, store, now_ms) <= idle.as_millis() as u64
     }
 }

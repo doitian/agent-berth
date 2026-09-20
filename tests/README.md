@@ -20,6 +20,8 @@ Coverage includes:
 - Hook installation into disposable configuration directories for all providers.
 - Resume command construction, including namespace and configuration propagation
   through tmux control mode. Dry runs must not invoke tmux.
+- Resume pattern selection, `--here` filtering, and `rm` hiding sessions until
+  they report again.
 
 ## Real tmux / psmux
 

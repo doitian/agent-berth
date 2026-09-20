@@ -78,9 +78,28 @@ fn busy_session_without_process_is_resumable() {
         )
         .unwrap();
     let idle = Duration::from_secs(1200);
-    let sessions = store.resumable(idle);
+    let sessions = store.resumable(Some(idle));
     assert_eq!(sessions.len(), 1);
     assert_eq!(sessions[0].session_id, "abc");
+}
+
+#[test]
+fn idle_sessions_need_an_explicit_window() {
+    let mut store = Store::default();
+    for event in ["UserPromptSubmit", "Stop"] {
+        store
+            .update(
+                "claude",
+                serde_json::json!({
+                    "session_id":"abc",
+                    "hook_event_name":event,
+                    "cwd":"/work"
+                }),
+            )
+            .unwrap();
+    }
+    assert!(store.resumable(None).is_empty());
+    assert_eq!(store.resumable(Some(Duration::from_secs(1200))).len(), 1);
 }
 
 #[test]
@@ -106,7 +125,7 @@ fn session_end_is_not_resumable() {
             }),
         )
         .unwrap();
-    assert!(store.resumable(Duration::from_secs(1200)).is_empty());
+    assert!(store.resumable(Some(Duration::from_secs(1200))).is_empty());
 }
 
 #[test]
@@ -152,9 +171,13 @@ fn idle_session_uses_previous_heartbeat_window() {
         session.last_report_ms = 1_000;
     }
     store.previous_heartbeat_ms = Some(1_000 + 10 * 60 * 1000);
-    assert_eq!(store.resumable(Duration::from_secs(20 * 60)).len(), 1);
+    assert_eq!(store.resumable(Some(Duration::from_secs(20 * 60))).len(), 1);
     store.previous_heartbeat_ms = Some(1_000 + 30 * 60 * 1000);
-    assert!(store.resumable(Duration::from_secs(20 * 60)).is_empty());
+    assert!(
+        store
+            .resumable(Some(Duration::from_secs(20 * 60)))
+            .is_empty()
+    );
 }
 
 #[test]
@@ -171,7 +194,7 @@ fn desktop_busy_sessions_are_resumable_for_list() {
             }),
         )
         .unwrap();
-    let sessions = store.resumable(Duration::from_secs(1200));
+    let sessions = store.resumable(Some(Duration::from_secs(1200)));
     assert_eq!(sessions.len(), 1);
     assert_eq!(sessions[0].source, Source::Desktop);
 }
@@ -199,7 +222,104 @@ fn missing_cwd_and_live_pid_are_not_resumable() {
             }),
         )
         .unwrap();
-    assert!(store.resumable(Duration::from_secs(1200)).is_empty());
+    assert!(store.resumable(Some(Duration::from_secs(1200))).is_empty());
+}
+
+#[test]
+fn removed_sessions_are_hidden_until_they_report_again() {
+    let mut store = Store::default();
+    store
+        .update(
+            "claude",
+            serde_json::json!({
+                "session_id":"abc",
+                "hook_event_name":"UserPromptSubmit",
+                "cwd":"/work"
+            }),
+        )
+        .unwrap();
+    store.mark_removed("claude", "abc");
+    assert!(store.listed().is_empty());
+    store
+        .update(
+            "claude",
+            serde_json::json!({
+                "session_id":"abc",
+                "hook_event_name":"PermissionRequest",
+                "cwd":"/work"
+            }),
+        )
+        .unwrap();
+    assert_eq!(store.listed().len(), 1);
+}
+
+#[test]
+fn prune_drops_stale_sessions_and_their_tombstones() {
+    let mut store = Store::default();
+    for sid in ["old", "fresh", "live"] {
+        store
+            .update(
+                "claude",
+                serde_json::json!({
+                    "session_id": sid,
+                    "hook_event_name": "UserPromptSubmit",
+                    "cwd": "/work"
+                }),
+            )
+            .unwrap();
+    }
+    {
+        let bucket = store.hooks.get_mut("claude").unwrap();
+        bucket.get_mut("old").unwrap().last_report_ms = 1_000;
+        bucket.get_mut("fresh").unwrap().last_report_ms = 999_999;
+        let live = bucket.get_mut("live").unwrap();
+        live.last_report_ms = 1_000;
+        live.pid = Some(std::process::id());
+    }
+    store.mark_removed("claude", "old");
+    assert!(store.prune(1_000_000, Duration::from_secs(60)));
+    let bucket = &store.hooks["claude"];
+    assert!(!bucket.contains_key("old"));
+    assert!(bucket.contains_key("fresh"));
+    assert!(bucket.contains_key("live"));
+    assert!(!store.is_removed("claude", "old"));
+}
+
+#[test]
+fn prune_is_noop_when_sessions_are_recent() {
+    let mut store = Store::default();
+    store
+        .update(
+            "claude",
+            serde_json::json!({
+                "session_id": "abc",
+                "hook_event_name": "UserPromptSubmit",
+                "cwd": "/work"
+            }),
+        )
+        .unwrap();
+    let now = store.hooks["claude"]["abc"].last_report_ms;
+    assert!(!store.prune(now, Duration::from_secs(60)));
+}
+
+#[test]
+fn duplicate_snapshots_deduplicate_by_session() {
+    let mut store = Store::default();
+    for instance in ["1", "2"] {
+        store
+            .update(
+                "opencode",
+                serde_json::json!({
+                    "id": instance,
+                    "cwd":"/work",
+                    "status":{"same":"idle"}
+                }),
+            )
+            .unwrap();
+    }
+    let listed = store.listed();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].session_id, "same");
 }
 
 #[test]

@@ -36,12 +36,17 @@ fn main() {
     } else if name == "fzf" {
         let mut input = String::new();
         io::stdin().read_to_string(&mut input).unwrap();
-        let pick = env::var("FIXTURE_FZF_PICK").ok();
-        if let Some(line) = input
-            .lines()
-            .find(|line| pick.as_deref().is_none_or(|needle| line.contains(needle)))
-        {
-            println!("{line}");
+        match env::var("FIXTURE_FZF_PICK").ok() {
+            Some(needle) => {
+                for line in input.lines().filter(|line| line.contains(&needle)) {
+                    println!("{line}");
+                }
+            }
+            None => {
+                if let Some(line) = input.lines().next() {
+                    println!("{line}");
+                }
+            }
         }
     } else if name == "tmux" {
         if args.iter().any(|arg| arg == "list-panes") {

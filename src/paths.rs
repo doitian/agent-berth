@@ -140,6 +140,20 @@ pub fn quote_path(path: &Path) -> String {
     }
 }
 
+pub fn is_current_dir(cwd: &str) -> bool {
+    if cwd.is_empty() {
+        return false;
+    }
+    let Ok(current) = env::current_dir() else {
+        return false;
+    };
+    normalize(&current) == normalize(Path::new(cwd))
+}
+
+fn normalize(path: &Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
 pub fn on_path(name: &str) -> bool {
     let Some(path) = env::var_os("PATH") else {
         return false;

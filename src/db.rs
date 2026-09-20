@@ -12,6 +12,7 @@ use crate::store::{Change, ListedSession, PluginSnapshot, Store};
 const META: TableDefinition<&str, u64> = TableDefinition::new("meta");
 const HOOKS: TableDefinition<&str, &[u8]> = TableDefinition::new("hooks");
 const SNAPSHOTS: TableDefinition<&str, &[u8]> = TableDefinition::new("snapshots");
+const REMOVED: TableDefinition<&str, u64> = TableDefinition::new("removed");
 
 const LAST_HEARTBEAT: &str = "last_heartbeat_ms";
 const PREV_HEARTBEAT: &str = "previous_heartbeat_ms";
@@ -68,6 +69,19 @@ pub fn load(db: &Database) -> Result<Store> {
                 .insert(instance.to_string(), snapshot);
         }
     }
+    if let Ok(table) = txn.open_table(REMOVED) {
+        for entry in table.iter()? {
+            let (key, value) = entry?;
+            let Some((provider, session_id)) = split_key(key.value()) else {
+                continue;
+            };
+            store
+                .removed
+                .entry(provider.to_string())
+                .or_default()
+                .insert(session_id.to_string(), value.value());
+        }
+    }
     Ok(store)
 }
 
@@ -92,10 +106,28 @@ pub fn query_sessions(
     let mut store = load_from_path(ctx)?;
     store.discover(ctx);
     if resumable {
-        Ok(store.resumable(idle.unwrap_or_else(crate::duration::default_idle)))
+        Ok(store.resumable(idle))
     } else {
         Ok(store.active())
     }
+}
+
+pub fn query_all(ctx: &AppContext) -> Result<Vec<ListedSession>> {
+    if let Ok(sessions) = ipc::list_all(ctx) {
+        return Ok(sessions);
+    }
+    let mut store = load_from_path(ctx)?;
+    store.discover(ctx);
+    Ok(store.listed())
+}
+
+pub fn mark_removed(ctx: &AppContext, provider: &str, session_id: &str) -> Result<()> {
+    let removed_at = crate::store::now_ms();
+    if ipc::remove(ctx, provider, session_id).is_ok() {
+        return Ok(());
+    }
+    let db = open(ctx)?;
+    persist_removal(&db, provider, session_id, removed_at)
 }
 
 pub fn persist_heartbeats(db: &Database, store: &Store) -> Result<()> {
@@ -158,6 +190,22 @@ fn persist_hooks(
     Ok(())
 }
 
+pub fn persist_removal(
+    db: &Database,
+    provider: &str,
+    session_id: &str,
+    removed_at_ms: u64,
+) -> Result<()> {
+    let txn = db.begin_write().context("write redb")?;
+    {
+        let mut table = txn.open_table(REMOVED)?;
+        let key = format!("{provider}\0{session_id}");
+        table.insert(key.as_str(), removed_at_ms)?;
+    }
+    txn.commit()?;
+    Ok(())
+}
+
 fn persist_snapshot(
     db: &Database,
     provider: &str,
@@ -175,18 +223,109 @@ fn persist_snapshot(
     Ok(())
 }
 
-fn persist_all(db: &Database, store: &Store) -> Result<()> {
+pub fn persist_all(db: &Database, store: &Store) -> Result<()> {
     persist_heartbeats(db, store)?;
-    let providers: Vec<_> = store.hooks.keys().cloned().collect();
-    for provider in providers {
-        let sessions = store.hooks.get(&provider).cloned().unwrap_or_default();
-        persist_hooks(db, &provider, &sessions)?;
-    }
-    for (provider, instances) in &store.snapshots {
-        for (instance, snapshot) in instances {
-            persist_snapshot(db, provider, instance, snapshot)?;
+    sync_hooks(db, &store.hooks)?;
+    sync_snapshots(db, &store.snapshots)?;
+    sync_removed(db, &store.removed)?;
+    Ok(())
+}
+
+fn sync_hooks(db: &Database, all: &BTreeMap<String, BTreeMap<String, AgentSession>>) -> Result<()> {
+    let mut valid = std::collections::BTreeSet::new();
+    for (provider, sessions) in all {
+        for sid in sessions.keys() {
+            valid.insert(format!("{provider}\0{sid}"));
         }
     }
+    let txn = db.begin_write().context("write redb")?;
+    {
+        let mut table = txn.open_table(HOOKS)?;
+        let mut stale = Vec::new();
+        for entry in table.iter()? {
+            let (key, _) = entry?;
+            if !valid.contains(key.value()) {
+                stale.push(key.value().to_string());
+            }
+        }
+        for key in stale {
+            table.remove(key.as_str())?;
+        }
+        for (provider, sessions) in all {
+            for (sid, session) in sessions {
+                let key = format!("{provider}\0{sid}");
+                let bytes = serde_json::to_vec(session)?;
+                table.insert(key.as_str(), bytes.as_slice())?;
+            }
+        }
+    }
+    txn.commit()?;
+    Ok(())
+}
+
+fn sync_snapshots(
+    db: &Database,
+    all: &BTreeMap<String, BTreeMap<String, PluginSnapshot>>,
+) -> Result<()> {
+    let mut valid = std::collections::BTreeSet::new();
+    for (provider, instances) in all {
+        for instance in instances.keys() {
+            valid.insert(format!("{provider}\0{instance}"));
+        }
+    }
+    let txn = db.begin_write().context("write redb")?;
+    {
+        let mut table = txn.open_table(SNAPSHOTS)?;
+        let mut stale = Vec::new();
+        for entry in table.iter()? {
+            let (key, _) = entry?;
+            if !valid.contains(key.value()) {
+                stale.push(key.value().to_string());
+            }
+        }
+        for key in stale {
+            table.remove(key.as_str())?;
+        }
+        for (provider, instances) in all {
+            for (instance, snapshot) in instances {
+                let key = format!("{provider}\0{instance}");
+                let bytes = serde_json::to_vec(snapshot)?;
+                table.insert(key.as_str(), bytes.as_slice())?;
+            }
+        }
+    }
+    txn.commit()?;
+    Ok(())
+}
+
+fn sync_removed(db: &Database, all: &BTreeMap<String, BTreeMap<String, u64>>) -> Result<()> {
+    let mut valid = std::collections::BTreeSet::new();
+    for (provider, sessions) in all {
+        for sid in sessions.keys() {
+            valid.insert(format!("{provider}\0{sid}"));
+        }
+    }
+    let txn = db.begin_write().context("write redb")?;
+    {
+        let mut table = txn.open_table(REMOVED)?;
+        let mut stale = Vec::new();
+        for entry in table.iter()? {
+            let (key, _) = entry?;
+            if !valid.contains(key.value()) {
+                stale.push(key.value().to_string());
+            }
+        }
+        for key in stale {
+            table.remove(key.as_str())?;
+        }
+        for (provider, sessions) in all {
+            for (sid, removed_at) in sessions {
+                let key = format!("{provider}\0{sid}");
+                table.insert(key.as_str(), *removed_at)?;
+            }
+        }
+    }
+    txn.commit()?;
     Ok(())
 }
 
@@ -196,6 +335,7 @@ fn init_tables(db: &Database) -> Result<()> {
         let _ = txn.open_table(META)?;
         let _ = txn.open_table(HOOKS)?;
         let _ = txn.open_table(SNAPSHOTS)?;
+        let _ = txn.open_table(REMOVED)?;
     }
     txn.commit()?;
     Ok(())

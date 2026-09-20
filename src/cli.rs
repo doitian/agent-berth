@@ -3,7 +3,7 @@ use clap::{Parser, Subcommand};
 
 use crate::duration::parse_idle;
 use crate::paths::Context;
-use crate::{attach, doctor, list, notify, resume, server, service, setup};
+use crate::{attach, doctor, list, notify, resume, rm, server, service, setup};
 
 /// Monitor coding agents and resume their sessions.
 #[derive(Debug, Parser)]
@@ -38,9 +38,18 @@ enum Command {
         /// Show sessions that resume would start
         #[arg(long)]
         resumable: bool,
-        /// Idle window used with --resumable (default: 20m)
-        #[arg(long, value_name = "DURATION", requires = "resumable")]
+        /// Only include idle sessions within this window (default: 20m)
+        #[arg(
+            long,
+            value_name = "DURATION",
+            requires = "resumable",
+            num_args = 0..=1,
+            default_missing_value = "20m"
+        )]
         idle: Option<String>,
+        /// Restrict to sessions in the current directory
+        #[arg(long, requires = "resumable")]
+        here: bool,
     },
     /// Report agent status to the server (used by hooks)
     Notify {
@@ -65,12 +74,28 @@ enum Command {
     Doctor,
     /// Resume sessions after the server or host restarts
     Resume {
-        /// Idle window for idle sessions (default: 20m)
-        #[arg(long, value_name = "DURATION")]
+        /// Select the session matching this pattern with fzf
+        pattern: Option<String>,
+        /// Include idle sessions within this window (default: 20m)
+        #[arg(
+            long,
+            value_name = "DURATION",
+            num_args = 0..=1,
+            default_missing_value = "20m"
+        )]
         idle: Option<String>,
+        /// Restrict to sessions in the current directory
+        #[arg(long)]
+        here: bool,
         /// Print actions without starting agents
         #[arg(long)]
         dry_run: bool,
+    },
+    /// Remove sessions so they are hidden and never resumed
+    #[command(alias = "remove")]
+    Rm {
+        /// Only consider sessions matching these terms
+        patterns: Vec<String>,
     },
 }
 
@@ -100,13 +125,14 @@ pub fn run() -> Result<()> {
             json,
             resumable,
             idle,
+            here,
         } => {
             let idle = if resumable {
-                Some(parse_idle(idle.as_deref())?)
+                parse_idle(idle.as_deref())?
             } else {
                 None
             };
-            list::run(&ctx, json, resumable, idle)
+            list::run(&ctx, json, resumable, idle, here)
         }
         Command::Notify { provider } => notify::run(&ctx, provider),
         Command::Attach {
@@ -116,8 +142,12 @@ pub fn run() -> Result<()> {
             dry_run,
         } => attach::run(&ctx, query, preview, session, dry_run),
         Command::Doctor => doctor::run(&ctx),
-        Command::Resume { idle, dry_run } => {
-            resume::run(&ctx, parse_idle(idle.as_deref())?, dry_run)
-        }
+        Command::Resume {
+            pattern,
+            idle,
+            here,
+            dry_run,
+        } => resume::run(&ctx, parse_idle(idle.as_deref())?, pattern, here, dry_run),
+        Command::Rm { patterns } => rm::run(&ctx, patterns),
     }
 }

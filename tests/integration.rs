@@ -199,6 +199,63 @@ fn resume_passes_namespace_and_config_to_every_tmux_command() {
 }
 
 #[test]
+fn resume_pattern_matches_single_session() {
+    let mut sandbox = Sandbox::new();
+    sandbox.start();
+    sandbox.hook("codex", "alpha", "UserPromptSubmit", None);
+    sandbox.hook("codex", "beta", "UserPromptSubmit", None);
+    let output = success(sandbox.berth().args(["resume", "--dry-run", "alpha"]));
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(text.contains("codex alpha"), "{text}");
+    assert!(!text.contains("codex beta"), "{text}");
+}
+
+#[test]
+fn list_resumable_here_filters_to_current_directory() {
+    let mut sandbox = Sandbox::new();
+    sandbox.start();
+    sandbox.hook("codex", "here", "UserPromptSubmit", None);
+    sandbox.notify(
+        "opencode",
+        json!({
+            "id": "p", "cwd": sandbox.root.path(), "status": {"there": "busy"},
+        }),
+    );
+    let output = success(
+        sandbox
+            .berth()
+            .args(["list", "--json", "--resumable", "--here"]),
+    );
+    let sessions: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(sessions.len(), 1, "{sessions:?}");
+    assert_eq!(sessions[0]["session_id"], "here");
+}
+
+#[test]
+fn rm_hides_selected_sessions_until_they_report_again() {
+    let mut sandbox = Sandbox::new();
+    sandbox.start();
+    for sid in ["drop-a", "drop-b", "keep"] {
+        sandbox.hook("claude", sid, "UserPromptSubmit", None);
+    }
+    sandbox.env.insert("FIXTURE_FZF_PICK".into(), "drop".into());
+    success(sandbox.berth().arg("rm"));
+    let sessions = sandbox.sessions(false);
+    assert_eq!(sessions.len(), 1, "{sessions:?}");
+    assert_eq!(sessions[0]["session_id"], "keep");
+
+    sandbox.hook("claude", "drop-a", "PermissionRequest", None);
+    let sessions = sandbox.sessions(false);
+    assert_eq!(sessions.len(), 2, "{sessions:?}");
+    assert!(
+        sessions
+            .iter()
+            .any(|session| session["session_id"] == "drop-a"),
+        "{sessions:?}"
+    );
+}
+
+#[test]
 fn attach_resolves_active_agent_pane_and_attaches() {
     let mut sandbox = Sandbox::new();
     sandbox.start();

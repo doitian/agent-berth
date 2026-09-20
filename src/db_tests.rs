@@ -96,6 +96,30 @@ fn persists_plugin_snapshot_and_heartbeats() {
 }
 
 #[test]
+fn persist_all_drops_pruned_entries() {
+    let root = tempdir().unwrap();
+    let ctx = Context::for_test(root.path(), &root.path().join("agent-berth"));
+    std::fs::create_dir_all(&ctx.state_dir).unwrap();
+    let db = open(&ctx).unwrap();
+    let mut store = Store::default();
+    store
+        .update(
+            "opencode",
+            serde_json::json!({"id":"1","status":{"s":"busy"}}),
+        )
+        .unwrap();
+    persist_all(&db, &store).unwrap();
+    store.snapshots.clear();
+    store.mark_removed("opencode", "s");
+    persist_all(&db, &store).unwrap();
+    drop(db);
+
+    let loaded = load_from_path(&ctx).unwrap();
+    assert!(loaded.snapshots.is_empty());
+    assert!(loaded.is_removed("opencode", "s"));
+}
+
+#[test]
 fn migrates_legacy_json_once() {
     let root = tempdir().unwrap();
     let ctx = Context::for_test(root.path(), &root.path().join("agent-berth"));

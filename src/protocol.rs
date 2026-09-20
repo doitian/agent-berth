@@ -16,6 +16,11 @@ pub enum Request {
         #[serde(default)]
         idle_ms: Option<u64>,
     },
+    ListAll,
+    Remove {
+        provider: String,
+        session_id: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

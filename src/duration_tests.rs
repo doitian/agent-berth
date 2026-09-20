@@ -19,10 +19,10 @@ fn rejects_bad_input() {
 }
 
 #[test]
-fn default_idle_is_twenty_minutes() {
-    assert_eq!(parse_idle(None).unwrap(), Duration::from_secs(20 * 60));
+fn idle_is_explicit() {
+    assert_eq!(parse_idle(None).unwrap(), None);
     assert_eq!(
         parse_idle(Some("30m")).unwrap(),
-        Duration::from_secs(30 * 60)
+        Some(Duration::from_secs(30 * 60))
     );
 }

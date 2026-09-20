@@ -25,6 +25,24 @@ fn request_response_roundtrip() {
         }
     ));
 
+    let all = serde_json::to_string(&Request::ListAll).unwrap();
+    assert!(all.contains("list_all"));
+    assert!(matches!(
+        serde_json::from_str(&all).unwrap(),
+        Request::ListAll
+    ));
+
+    let remove = Request::Remove {
+        provider: "claude".into(),
+        session_id: "s".into(),
+    };
+    let text = serde_json::to_string(&remove).unwrap();
+    assert!(matches!(
+        serde_json::from_str(&text).unwrap(),
+        Request::Remove { provider, session_id }
+            if provider == "claude" && session_id == "s"
+    ));
+
     let ok = serde_json::to_string(&Response::ok()).unwrap();
     let parsed: Response = serde_json::from_str(&ok).unwrap();
     assert!(matches!(parsed, Response::Ok { sessions: None, .. }));

@@ -5,17 +5,35 @@ use std::time::Duration;
 use anyhow::Result;
 
 use crate::db;
-use crate::paths::Context;
+use crate::paths::{self, Context};
+use crate::pick;
 use crate::status::Source;
 use crate::store::ListedSession;
 use crate::tmux;
 
-pub fn run(ctx: &Context, idle: Duration, dry_run: bool) -> Result<()> {
-    let sessions = db::query_sessions(ctx, true, Some(idle))?;
+pub fn run(
+    ctx: &Context,
+    idle: Option<Duration>,
+    pattern: Option<String>,
+    here: bool,
+    dry_run: bool,
+) -> Result<()> {
+    let mut sessions = db::query_sessions(ctx, true, idle)?;
+    if here {
+        sessions.retain(|session| session.cwd.as_deref().is_some_and(paths::is_current_dir));
+    }
     if sessions.is_empty() {
         println!("No resumable sessions.");
         return Ok(());
     }
+
+    let sessions = match pattern {
+        Some(pattern) => match pick::single(&sessions, &pattern)? {
+            Some(session) => vec![session],
+            None => return Ok(()),
+        },
+        None => sessions,
+    };
 
     let mut by_cwd: BTreeMap<PathBuf, Vec<&ListedSession>> = BTreeMap::new();
     let mut skipped = Vec::new();
@@ -61,6 +79,7 @@ pub fn run(ctx: &Context, idle: Duration, dry_run: bool) -> Result<()> {
                 continue;
             }
             tmux::new_window(&session_name, &window, cwd, &session.cmdline)?;
+            db::mark_removed(ctx, &session.provider, &session.session_id)?;
             println!(
                 "resumed {} {} in tmux {session_name} window {window}",
                 session.provider, session.session_id

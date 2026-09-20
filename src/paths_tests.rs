@@ -19,6 +19,15 @@ fn quote_path_wraps_spaces() {
 }
 
 #[test]
+fn current_dir_matches_only_itself() {
+    let cwd = std::env::current_dir().unwrap();
+    assert!(is_current_dir(&cwd.display().to_string()));
+    assert!(!is_current_dir(""));
+    let missing = cwd.join("agent-berth-missing-dir");
+    assert!(!is_current_dir(&missing.display().to_string()));
+}
+
+#[test]
 fn notify_command_includes_provider() {
     let root = Path::new("/tmp/ab");
     let ctx = Context::for_test(root, Path::new("/bin/agent-berth"));

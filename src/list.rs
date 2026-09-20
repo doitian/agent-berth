@@ -3,7 +3,7 @@ use std::io::{self, Write};
 use anyhow::Result;
 
 use crate::db;
-use crate::paths::Context;
+use crate::paths::{self, Context};
 use crate::store::ListedSession;
 
 pub fn run(
@@ -11,8 +11,12 @@ pub fn run(
     json: bool,
     resumable: bool,
     idle: Option<std::time::Duration>,
+    here: bool,
 ) -> Result<()> {
-    let sessions = db::query_sessions(ctx, resumable, idle)?;
+    let mut sessions = db::query_sessions(ctx, resumable, idle)?;
+    if here {
+        sessions.retain(|session| session.cwd.as_deref().is_some_and(paths::is_current_dir));
+    }
     if json {
         println!("{}", serde_json::to_string_pretty(&sessions)?);
         return Ok(());

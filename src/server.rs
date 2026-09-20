@@ -63,7 +63,8 @@ fn serve(ctx: &AppContext) -> Result<()> {
     let db = Arc::new(db::open(ctx)?);
     let mut store = db::load(&db)?;
     store.on_server_start();
-    db::persist_heartbeats(&db, &store)?;
+    store.prune(crate::store::now_ms(), crate::store::SESSION_RETENTION);
+    db::persist_all(&db, &store)?;
     std::fs::write(ctx.pid_path(), std::process::id().to_string())
         .with_context(|| format!("write {}", ctx.pid_path().display()))?;
 
@@ -85,7 +86,11 @@ fn serve(ctx: &AppContext) -> Result<()> {
             if let Ok(mut store) = hb_state.lock() {
                 persist_discover(&hb_db, &mut store, &hb_ctx);
                 store.heartbeat();
-                let _ = db::persist_heartbeats(&hb_db, &store);
+                if store.prune(crate::store::now_ms(), crate::store::SESSION_RETENTION) {
+                    let _ = db::persist_all(&hb_db, &store);
+                } else {
+                    let _ = db::persist_heartbeats(&hb_db, &store);
+                }
             }
         }
     });
@@ -140,14 +145,31 @@ fn handle(stream: Stream, state: &Mutex<Store>, db: &Database, ctx: &AppContext)
             Ok(mut store) => {
                 persist_discover(db, &mut store, ctx);
                 let sessions = if resumable {
-                    let idle = idle_ms
-                        .map(Duration::from_millis)
-                        .unwrap_or_else(crate::duration::default_idle);
-                    store.resumable(idle)
+                    store.resumable(idle_ms.map(Duration::from_millis))
                 } else {
                     store.active()
                 };
                 Response::sessions(sessions)
+            }
+            Err(_) => Response::error("store lock poisoned"),
+        },
+        Request::ListAll => match state.lock() {
+            Ok(mut store) => {
+                persist_discover(db, &mut store, ctx);
+                Response::sessions(store.listed())
+            }
+            Err(_) => Response::error("store lock poisoned"),
+        },
+        Request::Remove {
+            provider,
+            session_id,
+        } => match state.lock() {
+            Ok(mut store) => {
+                let removed_at = store.mark_removed(&provider, &session_id);
+                match db::persist_removal(db, &provider, &session_id, removed_at) {
+                    Ok(()) => Response::ok(),
+                    Err(err) => Response::error(err.to_string()),
+                }
             }
             Err(_) => Response::error("store lock poisoned"),
         },

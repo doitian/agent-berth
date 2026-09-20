@@ -67,6 +67,24 @@ pub fn list(
     }
 }
 
+pub fn list_all(ctx: &AppContext) -> Result<Vec<crate::store::ListedSession>> {
+    match send(ctx, &Request::ListAll)? {
+        Response::Ok { sessions, .. } => Ok(sessions.unwrap_or_default()),
+        Response::Error { message } => bail!("{message}"),
+    }
+}
+
+pub fn remove(ctx: &AppContext, provider: &str, session_id: &str) -> Result<()> {
+    let request = Request::Remove {
+        provider: provider.to_string(),
+        session_id: session_id.to_string(),
+    };
+    match send(ctx, &request)? {
+        Response::Ok { .. } => Ok(()),
+        Response::Error { message } => bail!("{message}"),
+    }
+}
+
 pub fn bind(ctx: &AppContext) -> Result<Listener> {
     #[cfg(unix)]
     {

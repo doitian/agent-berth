@@ -2,12 +2,6 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 
-const DEFAULT_IDLE: Duration = Duration::from_secs(20 * 60);
-
-pub fn default_idle() -> Duration {
-    DEFAULT_IDLE
-}
-
 pub fn parse_duration(input: &str) -> Result<Duration> {
     let trimmed = input.trim();
     if trimmed.is_empty() {
@@ -38,11 +32,8 @@ pub fn parse_duration(input: &str) -> Result<Duration> {
     Ok(Duration::from_secs_f64(value * factor))
 }
 
-pub fn parse_idle(input: Option<&str>) -> Result<Duration> {
-    match input {
-        Some(value) => parse_duration(value),
-        None => Ok(default_idle()),
-    }
+pub fn parse_idle(input: Option<&str>) -> Result<Option<Duration>> {
+    input.map(parse_duration).transpose()
 }
 
 #[cfg(test)]
