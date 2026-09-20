@@ -126,6 +126,13 @@ pub fn env_path(key: &str) -> Option<PathBuf> {
 
 pub fn quote_path(path: &Path) -> String {
     let text = path.display().to_string();
+    // Hook commands run under bash (claude), cmd (grok), or codex's own
+    // command splitting. An unquoted forward-slash path works in all of them:
+    // bash mangles unquoted backslashes, and codex cannot parse quoted paths.
+    // Paths containing spaces are not supported on Windows.
+    if cfg!(windows) {
+        return text.replace('\\', "/");
+    }
     if text.chars().any(|ch| ch.is_whitespace() || ch == '"') {
         format!("\"{}\"", text.replace('"', "\\\""))
     } else {

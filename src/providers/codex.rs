@@ -150,7 +150,8 @@ pub fn install(ctx: &Context) -> Result<PathBuf> {
     if !hooks.is_object() {
         *hooks = json!({});
     }
-    let handler = command_handler(ctx, "codex", 3, true);
+    // Codex ignores async hooks in `exec` mode, so install synchronous hooks.
+    let handler = command_handler(ctx, "codex", 3, false);
     for event in HOOK_EVENTS {
         let groups = hooks
             .as_object_mut()
@@ -166,10 +167,7 @@ pub fn install(ctx: &Context) -> Result<PathBuf> {
                     .cloned(),
             );
         }
-        let mut group = json!({"hooks": [handler.clone()]});
-        if *event == "SessionEnd" {
-            group["hooks"][0]["async"] = Value::Bool(false);
-        }
+        let group = json!({"hooks": [handler.clone()]});
         kept.push(group);
         *groups = Value::Array(kept);
     }

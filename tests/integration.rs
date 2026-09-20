@@ -359,19 +359,25 @@ fn install_recorder(sandbox: &mut Sandbox, provider: &str) -> PathBuf {
         .join(format!("hook-recorder{}", std::env::consts::EXE_SUFFIX));
     let hook_path = sandbox.root.path().join(hook_path);
     let contents = fs::read_to_string(&hook_path).unwrap();
-    let binary = fs::canonicalize(support::BRIDGE).unwrap();
-    let binary = binary
-        .display()
-        .to_string()
-        .trim_start_matches(r"\\?\")
-        .to_owned();
-    let from = serde_json::to_string(&binary).unwrap();
-    let to = serde_json::to_string(&recorder).unwrap();
-    let contents = contents.replace(&from[1..from.len() - 1], &to[1..to.len() - 1]);
-    assert!(
-        contents.contains(&to[1..to.len() - 1]),
-        "recorder was not installed"
-    );
+    let binary = support::BRIDGE;
+    let recorder_str = recorder.display().to_string();
+    let mut replaced = None;
+    for (from, to) in [
+        (binary.to_string(), recorder_str.clone()),
+        (
+            binary.replace('\\', "\\\\"),
+            recorder_str.replace('\\', "\\\\"),
+        ),
+        (binary.replace('\\', "/"), recorder_str.replace('\\', "/")),
+    ] {
+        if contents.contains(&from) {
+            replaced = Some(contents.replace(&from, &to));
+            break;
+        }
+    }
+    let Some(contents) = replaced else {
+        panic!("recorder was not installed")
+    };
     fs::write(hook_path, contents).unwrap();
     sandbox
         .env

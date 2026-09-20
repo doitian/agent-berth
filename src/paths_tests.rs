@@ -3,11 +3,19 @@ use std::path::Path;
 
 #[test]
 fn quote_path_wraps_spaces() {
-    assert_eq!(quote_path(Path::new("agent-berth")), "agent-berth");
-    assert_eq!(
-        quote_path(Path::new("/opt/my tools/agent-berth")),
-        "\"/opt/my tools/agent-berth\""
-    );
+    if cfg!(windows) {
+        assert_eq!(quote_path(Path::new("agent-berth")), "agent-berth");
+        assert_eq!(
+            quote_path(Path::new("C:\\tools\\agent-berth")),
+            "C:/tools/agent-berth"
+        );
+    } else {
+        assert_eq!(quote_path(Path::new("agent-berth")), "agent-berth");
+        assert_eq!(
+            quote_path(Path::new("/opt/my tools/agent-berth")),
+            "\"/opt/my tools/agent-berth\""
+        );
+    }
 }
 
 #[test]

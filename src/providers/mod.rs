@@ -90,8 +90,12 @@ impl ProviderKind {
             return false;
         };
         let bin = ctx.bridge_bin.display().to_string();
-        let escaped = bin.replace('\\', "\\\\");
-        !(text.contains(&bin) || text.contains(&escaped))
+        let variants = [
+            bin.clone(),
+            bin.replace('\\', "\\\\"),
+            bin.replace('\\', "/"),
+        ];
+        !variants.iter().any(|variant| text.contains(variant))
     }
 }
 
