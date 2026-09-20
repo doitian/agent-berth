@@ -1,3 +1,6 @@
 fn main() {
-    println!("Hello, world!");
+    if let Err(err) = agent_bridge::run() {
+        eprintln!("{err:#}");
+        std::process::exit(1);
+    }
 }

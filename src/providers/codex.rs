@@ -1,0 +1,201 @@
+use std::collections::{BTreeMap, HashSet};
+use std::path::{Path, PathBuf};
+
+use anyhow::Result;
+use serde_json::{Value, json};
+
+use super::{command_handler, group_is_ours, load_object, save_object};
+use crate::paths::Context;
+use crate::status::{
+    AgentEvent, AgentEventKind, AgentSession, Source, apply_event, session_key, string_field,
+    u32_field,
+};
+
+const HOOK_EVENTS: &[&str] = &[
+    "SessionStart",
+    "UserPromptSubmit",
+    "PreToolUse",
+    "PermissionRequest",
+    "PostToolUse",
+    "Stop",
+    "Interrupt",
+    "SubagentStop",
+    "SessionEnd",
+];
+
+pub fn apply_hook(sessions: &mut BTreeMap<String, AgentSession>, event: &Value) {
+    let Some(sid) = session_key(event) else {
+        return;
+    };
+    let Some(name) = string_field(event, &["hook_event_name", "hookEventName"]) else {
+        return;
+    };
+    let kind = match name {
+        "SessionStart" => Some(AgentEventKind::SessionStart),
+        "UserPromptSubmit" => Some(AgentEventKind::PromptSubmit),
+        "PreToolUse" => Some(AgentEventKind::ToolStart),
+        "PostToolUse" => Some(AgentEventKind::ToolComplete),
+        "SessionEnd" => Some(AgentEventKind::SessionEnd),
+        "PermissionRequest" => Some(AgentEventKind::PermissionRequest),
+        "Stop" | "Interrupt" => Some(AgentEventKind::Stop),
+        "SubagentStop" => {
+            if string_field(event, &["agent_id", "agentId"]).is_none() {
+                return;
+            }
+            Some(AgentEventKind::SessionEnd)
+        }
+        _ => None,
+    };
+    let Some(kind) = kind else {
+        return;
+    };
+    let parent_id = string_field(event, &["agent_id", "agentId"]).map(|_| {
+        string_field(event, &["session_id", "sessionId"])
+            .unwrap_or("")
+            .to_string()
+    });
+    apply_event(
+        sessions,
+        AgentEvent {
+            session_id: sid,
+            kind,
+            source: source_for(event),
+            pid: u32_field(event, &["pid"]),
+            parent_id,
+            background_running: false,
+        },
+    );
+}
+
+fn source_for(event: &Value) -> Source {
+    if let Some(origin) = string_field(event, &["originator"]) {
+        return Source::from_label(origin);
+    }
+    Source::Cli
+}
+
+pub fn drop_archived(ctx: &Context, sessions: &mut BTreeMap<String, AgentSession>) -> bool {
+    let archived = archived_ids(ctx);
+    if archived.is_empty() {
+        return false;
+    }
+    let before = sessions.len();
+    sessions.retain(|sid, _| !archived.contains(sid));
+    sessions.len() != before
+}
+
+fn archived_ids(ctx: &Context) -> HashSet<String> {
+    let mut ids = HashSet::new();
+    collect_archived_ids(&ctx.codex_home.join("archived_sessions"), &mut ids);
+    ids
+}
+
+fn collect_archived_ids(root: &Path, ids: &mut HashSet<String>) {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_archived_ids(&path, ids);
+            continue;
+        }
+        if let Some(id) = session_id_from_rollout(&path) {
+            ids.insert(id);
+        }
+    }
+}
+
+fn session_id_from_rollout(path: &Path) -> Option<String> {
+    if let Ok(text) = std::fs::read_to_string(path) {
+        if let Some(line) = text.lines().next() {
+            if let Ok(data) = serde_json::from_str::<Value>(line) {
+                let payload = if data.get("type").and_then(Value::as_str) == Some("session_meta") {
+                    data.get("payload").cloned().unwrap_or(data)
+                } else {
+                    data
+                };
+                if let Some(id) = string_field(&payload, &["session_id", "id"]) {
+                    return Some(id.to_string());
+                }
+            }
+        }
+    }
+    let stem = path.file_stem()?.to_str()?;
+    let parts: Vec<_> = stem.split('-').collect();
+    if parts.len() >= 5 {
+        return Some(parts[parts.len() - 5..].join("-"));
+    }
+    None
+}
+
+pub fn install(ctx: &Context) -> Result<PathBuf> {
+    let dest = ctx.codex_home.join("hooks.json");
+    let mut data = load_object(&dest)?;
+    if !data.is_object() {
+        data = json!({});
+    }
+    let hooks = data
+        .as_object_mut()
+        .unwrap()
+        .entry("hooks")
+        .or_insert_with(|| json!({}));
+    if !hooks.is_object() {
+        *hooks = json!({});
+    }
+    let handler = command_handler(ctx, "codex", 5, true);
+    for event in HOOK_EVENTS {
+        let groups = hooks
+            .as_object_mut()
+            .unwrap()
+            .entry(*event)
+            .or_insert_with(|| json!([]));
+        let mut kept = Vec::new();
+        if let Some(items) = groups.as_array() {
+            kept.extend(
+                items
+                    .iter()
+                    .filter(|group| !group_is_ours(group, "codex"))
+                    .cloned(),
+            );
+        }
+        let mut group = json!({"hooks": [handler.clone()]});
+        if *event == "SessionEnd" {
+            group["hooks"][0]["async"] = Value::Bool(false);
+        }
+        kept.push(group);
+        *groups = Value::Array(kept);
+    }
+    save_object(&dest, &data)?;
+    Ok(dest)
+}
+
+pub fn uninstall(ctx: &Context) -> Result<()> {
+    let dest = ctx.codex_home.join("hooks.json");
+    if !dest.exists() {
+        return Ok(());
+    }
+    let mut data = load_object(&dest)?;
+    let Some(hooks) = data.get_mut("hooks").and_then(Value::as_object_mut) else {
+        return Ok(());
+    };
+    let events: Vec<String> = hooks.keys().cloned().collect();
+    for event in events {
+        let Some(groups) = hooks.get_mut(&event).and_then(Value::as_array_mut) else {
+            continue;
+        };
+        groups.retain(|group| !group_is_ours(group, "codex"));
+        if groups.is_empty() {
+            hooks.remove(&event);
+        }
+    }
+    if hooks.is_empty() {
+        data.as_object_mut().unwrap().remove("hooks");
+    }
+    save_object(&dest, &data)?;
+    Ok(())
+}
+
+#[cfg(test)]
+#[path = "codex_tests.rs"]
+mod tests;

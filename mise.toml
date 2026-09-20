@@ -1,0 +1,25 @@
+[env._]
+path = ["{{config_root}}/target/release"]
+
+[tasks."pre-commit:cargo-fmt"]
+run = "cargo fmt --check"
+
+[tasks.test]
+run = "cargo test --no-fail-fast --{% for f in usage.filters | default(value=[]) %} {{ f }}{% endfor %}"
+usage = 'arg "[filters]" var=#true'
+
+[tasks."pre-commit:typos"]
+run = "typos"
+
+[tasks.pre-commit]
+depends = ["pre-commit:*"]
+
+[tasks.default]
+run = "cargo build"
+
+[tasks.release]
+run = "cargo build --release"
+
+[tasks.install]
+description = "Build release and install into ~/.local/bin"
+run = "cargo install --path . --force --root ~/.local"
