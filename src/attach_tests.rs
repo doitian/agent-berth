@@ -82,3 +82,26 @@ fn pane_matches_by_pid_in_ancestor_chain() {
     assert_eq!(pane_for_pid(&panes, &[99, 20, 5]).unwrap().id, "%2");
     assert!(pane_for_pid(&panes, &[99, 98]).is_none());
 }
+
+#[test]
+fn fzf_never_auto_selects() {
+    let args = fzf_args(Some("query"), true);
+    assert!(
+        !args.iter().any(|arg| arg == "-1" || arg == "-0"),
+        "{args:?}"
+    );
+    assert!(
+        args.windows(2).any(|pair| pair == ["-q", "query"]),
+        "{args:?}"
+    );
+}
+
+#[test]
+fn fzf_hides_preview_by_default() {
+    assert!(
+        fzf_args(None, false)
+            .iter()
+            .any(|arg| arg == "up:80%:hidden")
+    );
+    assert!(fzf_args(None, true).iter().any(|arg| arg == "up:80%"));
+}

@@ -82,27 +82,7 @@ fn pane_for_pid<'a>(panes: &'a [Pane], chain: &[u32]) -> Option<&'a Pane> {
 
 fn select(lines: &[String], query: Option<&str>, preview: bool) -> Result<Option<String>> {
     let mut command = Command::new("fzf");
-    let preview_command = tmux::preview_command();
-    let preview_window = if preview { "up:80%" } else { "up:80%:hidden" };
-    command.args([
-        "--delimiter",
-        "\t",
-        "--with-nth",
-        "2..",
-        "+m",
-        "-0",
-        "--ansi",
-        "--preview",
-        preview_command.as_str(),
-        "--preview-window",
-        preview_window,
-        "--bind",
-        "ctrl-t:toggle-preview",
-    ]);
-    if let Some(query) = query {
-        command.arg("-q").arg(query);
-        command.arg("-1");
-    }
+    command.args(fzf_args(query, preview));
     let mut child = command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -162,6 +142,33 @@ fn folder_name(path: &str) -> Option<String> {
     Path::new(path)
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
+}
+
+fn fzf_args(query: Option<&str>, preview: bool) -> Vec<String> {
+    let preview_command = tmux::preview_command();
+    let preview_window = if preview { "up:80%" } else { "up:80%:hidden" };
+    let mut args: Vec<String> = [
+        "--delimiter",
+        "\t",
+        "--with-nth",
+        "2..",
+        "+m",
+        "--ansi",
+        "--preview",
+        preview_command.as_str(),
+        "--preview-window",
+        preview_window,
+        "--bind",
+        "ctrl-t:toggle-preview",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect();
+    if let Some(query) = query {
+        args.push("-q".into());
+        args.push(query.into());
+    }
+    args
 }
 
 #[cfg(test)]
