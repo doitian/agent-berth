@@ -26,10 +26,10 @@ jobs:
     env:
       CARGO_TERM_COLOR: always
       RUST_BACKTRACE: '1'
-      TMPDIR: ${{ runner.temp }}
-      TMP: ${{ runner.temp }}
-      TEMP: ${{ runner.temp }}
     steps:
+      - name: Configure test temporary directory
+        run: |
+          [IO.File]::AppendAllText($env:GITHUB_ENV, "TMPDIR=$env:RUNNER_TEMP`nTMP=$env:RUNNER_TEMP`nTEMP=$env:RUNNER_TEMP`n")
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
