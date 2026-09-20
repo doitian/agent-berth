@@ -13,7 +13,7 @@ use crate::status::Source;
 use crate::store::ListedSession;
 use crate::tmux::{self, Pane};
 
-pub fn run(ctx: &AppContext, query: Option<String>, dry_run: bool) -> Result<()> {
+pub fn run(ctx: &AppContext, query: Option<String>, preview: bool, dry_run: bool) -> Result<()> {
     let sessions = db::query_sessions(ctx, false, None)?;
     let candidates = collect(&sessions)?;
     if candidates.is_empty() {
@@ -30,7 +30,7 @@ pub fn run(ctx: &AppContext, query: Option<String>, dry_run: bool) -> Result<()>
         bail!("fzf is required to select a session");
     }
     let lines: Vec<String> = candidates.iter().map(Candidate::line).collect();
-    let Some(selected) = select(&lines, query.as_deref())? else {
+    let Some(selected) = select(&lines, query.as_deref(), preview)? else {
         return Ok(());
     };
     let pane_id = selected.split('\t').next().unwrap_or("");
@@ -74,9 +74,10 @@ fn pane_for_pid<'a>(panes: &'a [Pane], chain: &[u32]) -> Option<&'a Pane> {
     panes.iter().find(|pane| chain.contains(&pane.pid))
 }
 
-fn select(lines: &[String], query: Option<&str>) -> Result<Option<String>> {
+fn select(lines: &[String], query: Option<&str>, preview: bool) -> Result<Option<String>> {
     let mut command = Command::new("fzf");
-    let preview = tmux::preview_command();
+    let preview_command = tmux::preview_command();
+    let preview_window = if preview { "up:80%" } else { "up:80%:hidden" };
     command.args([
         "--delimiter",
         "\t",
@@ -86,9 +87,9 @@ fn select(lines: &[String], query: Option<&str>) -> Result<Option<String>> {
         "-0",
         "--ansi",
         "--preview",
-        preview.as_str(),
+        preview_command.as_str(),
         "--preview-window",
-        "up:50%",
+        preview_window,
         "--bind",
         "ctrl-t:toggle-preview",
     ]);

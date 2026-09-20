@@ -51,6 +51,9 @@ enum Command {
     Attach {
         /// Initial fzf query
         query: Option<String>,
+        /// Show the pane preview (toggle with ctrl-t)
+        #[arg(short, long)]
+        preview: bool,
         /// Print candidate panes without attaching
         #[arg(long)]
         dry_run: bool,
@@ -103,7 +106,11 @@ pub fn run() -> Result<()> {
             list::run(&ctx, json, resumable, idle)
         }
         Command::Notify { provider } => notify::run(&ctx, provider),
-        Command::Attach { query, dry_run } => attach::run(&ctx, query, dry_run),
+        Command::Attach {
+            query,
+            preview,
+            dry_run,
+        } => attach::run(&ctx, query, preview, dry_run),
         Command::Doctor => doctor::run(&ctx),
         Command::Resume { idle, dry_run } => {
             resume::run(&ctx, parse_idle(idle.as_deref())?, dry_run)
