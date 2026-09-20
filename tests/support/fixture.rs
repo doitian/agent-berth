@@ -12,11 +12,11 @@ fn main() {
     if name == "hook-recorder" {
         let mut payload = String::new();
         io::stdin().read_to_string(&mut payload).unwrap();
-        let bridge = env::var_os("FIXTURE_BRIDGE_BIN").unwrap();
+        let berth = env::var_os("FIXTURE_BERTH_BIN").unwrap();
         let dir = PathBuf::from(env::var_os("FIXTURE_LOG_DIR").unwrap());
         let id = std::process::id();
         fs::write(dir.join(format!("{id}.payload")), &payload).unwrap();
-        let mut child = command(&bridge)
+        let mut child = command(&berth)
             .args(&args)
             .stdin(std::process::Stdio::piped())
             .spawn()
@@ -28,7 +28,7 @@ fn main() {
             .write_all(payload.as_bytes())
             .unwrap();
         assert!(child.wait().unwrap().success());
-        let output = command(&bridge).args(["list", "--json"]).output().unwrap();
+        let output = command(&berth).args(["list", "--json"]).output().unwrap();
         assert!(output.status.success());
         fs::write(dir.join(format!("{id}.sessions")), output.stdout).unwrap();
     } else if name == "claude" && args == ["agents", "--json"] {

@@ -72,6 +72,45 @@ enabled. Model execution has a two-minute deadline; hook observations have an
 additional ten-second deadline. Client stdout/stderr and hook payloads are saved
 under the test root.
 
+## Mock LLM client test
+
+```powershell
+$env:AGENT_BERTH_TEST_CLIENT = 'codex'
+cargo test --test integration mock_llm -- --ignored
+```
+
+Or use `mise run test:mock`. This runs the same installed clients headless, but
+points them at a local in-process mock of the Anthropic Messages and OpenAI
+Chat Completions/Responses APIs instead of a paid service. No credentials are
+needed. Supported selections are `claude`, `codex`, `grok`, `opencode`, and
+`pi`. CI installs the clients and runs this test in a matrix on every push;
+`AGENT_BERTH_TEST_MODEL` does not apply.
+
+Each client is wired to the mock through its custom-endpoint configuration:
+`ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN` for claude, a `[model_providers]`
+entry with `wire_api = "responses"` for codex, `GROK_XAI_API_BASE_URL` for
+grok, an `@ai-sdk/openai-compatible` provider in `opencode.json` for opencode,
+and a `models.json` provider for pi.
+
+The mock answers every completion with a final `stop` response, so the
+conversation completes deterministically. The test asserts the client called
+the mock, its session reached the server, and the session arrived at its
+terminal state: a terminal hook (`Stop` for claude, which does not emit
+`SessionEnd` in print mode; `SessionEnd` for codex and grok) plus removal from
+the active list, or an idle-or-stale plugin snapshot for opencode and pi. The
+mock delays its answers by two seconds (three for the plugin clients) so async
+hooks and plugin heartbeats flush before the client exits.
+
+opencode downloads the `@ai-sdk/openai-compatible` package into the sandbox's
+fresh cache on every run, so it needs network access and can take over a
+minute; the client deadline is four minutes.
+
+Codex ignores `async` hooks in `exec` mode, so agent-berth installs its codex
+hooks synchronously. On Windows, claude runs hooks through bash and codex
+cannot parse quoted commands, so installed hook commands use an unquoted
+forward-slash path to the agent-berth binary; paths containing spaces are not
+supported there.
+
 ## Isolation and diagnostics
 
 Each test builds a child-process environment from scratch. Home directories,

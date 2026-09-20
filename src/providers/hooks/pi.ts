@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process"
 
-const BRIDGE_BIN = __AGENT_BERTH_BIN__
+const BERTH_BIN = __AGENT_BERTH_BIN__
 
 export default function (pi) {
   const seen = new Set()
@@ -36,7 +36,7 @@ export default function (pi) {
       blocking: [...pending],
     })
     try {
-      const child = spawn(BRIDGE_BIN, ["notify", "--provider", "pi"], {
+      const child = spawn(BERTH_BIN, ["notify", "--provider", "pi"], {
         stdio: ["pipe", "ignore", "ignore"],
         windowsHide: true,
       })

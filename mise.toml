@@ -20,6 +20,10 @@ run = "cargo test --test integration real_tmux -- --ignored"
 description = "Test AGENT_BERTH_TEST_CLIENT with a real model call"
 run = "cargo test --test integration live_client -- --ignored"
 
+[tasks."test:mock"]
+description = "Test AGENT_BERTH_TEST_CLIENT against a local mock LLM, no credentials needed"
+run = "cargo test --test integration mock_llm -- --ignored"
+
 [tasks."pre-commit:typos"]
 run = "typos"
 

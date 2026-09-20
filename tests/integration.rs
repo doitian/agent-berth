@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
+use support::mock_llm::MockLlm;
 use support::{Sandbox, success};
 
 #[test]
@@ -83,7 +84,7 @@ fn concurrent_servers_isolate_ipc_state_and_restarts() {
 
     let duplicate = support::finish(
         first
-            .bridge()
+            .berth()
             .arg("server")
             .stderr(std::process::Stdio::piped())
             .spawn()
@@ -91,7 +92,7 @@ fn concurrent_servers_isolate_ipc_state_and_restarts() {
     );
     assert!(!duplicate.status.success());
     first.stop();
-    let offline = success(first.bridge().args(["list", "--json", "--resumable"]));
+    let offline = success(first.berth().args(["list", "--json", "--resumable"]));
     let sessions: Vec<Value> = serde_json::from_slice(&offline.stdout).unwrap();
     assert_eq!(sessions.len(), 1);
     assert_eq!(sessions[0]["session_id"], "first");
@@ -123,7 +124,7 @@ fn concurrent_servers_isolate_ipc_state_and_restarts() {
 #[test]
 fn setup_installs_all_hooks_in_disposable_client_homes() {
     let sandbox = Sandbox::new();
-    success(sandbox.bridge().args(["setup", "--no-service"]));
+    success(sandbox.berth().args(["setup", "--no-service"]));
     for (provider, file) in [
         ("claude", "claude/settings.json"),
         ("codex", "codex/hooks.json"),
@@ -141,14 +142,14 @@ fn setup_installs_all_hooks_in_disposable_client_homes() {
                 .strip_suffix(&format!(" notify --provider {provider}"))
                 .unwrap()
                 .trim_matches('"');
-            assert_eq!(PathBuf::from(binary), PathBuf::from(support::BRIDGE));
+            assert_eq!(PathBuf::from(binary), PathBuf::from(support::BERTH));
         } else {
             let binary = contents
                 .lines()
-                .find_map(|line| line.strip_prefix("const BRIDGE_BIN = "))
+                .find_map(|line| line.strip_prefix("const BERTH_BIN = "))
                 .unwrap();
             let binary: String = serde_json::from_str(binary).unwrap();
-            assert_eq!(PathBuf::from(binary), PathBuf::from(support::BRIDGE));
+            assert_eq!(PathBuf::from(binary), PathBuf::from(support::BERTH));
             assert!(contents.contains(&format!("\"{provider}\"")));
         }
     }
@@ -166,14 +167,14 @@ fn resume_passes_namespace_and_config_to_every_tmux_command() {
     let mut sandbox = Sandbox::new();
     sandbox.start();
     sandbox.hook("codex", "resume-session", "UserPromptSubmit", None);
-    success(sandbox.bridge().args(["resume", "--dry-run"]));
+    success(sandbox.berth().args(["resume", "--dry-run"]));
     assert_eq!(
         fs::read_dir(sandbox.root.path().join("tmux-log"))
             .unwrap()
             .count(),
         0
     );
-    success(sandbox.bridge().arg("resume"));
+    success(sandbox.berth().arg("resume"));
     let logs: Vec<_> = fs::read_dir(sandbox.root.path().join("tmux-log"))
         .unwrap()
         .map(|entry| fs::read_to_string(entry.unwrap().path()).unwrap())
@@ -305,7 +306,7 @@ fn real_tmux_resume_inherits_isolated_environment() {
         sandbox: &sandbox,
         executable,
     };
-    success(sandbox.bridge().arg("resume"));
+    success(sandbox.berth().arg("resume"));
     let report_path = sandbox.root.path().join("agent-report.txt");
     let deadline = Instant::now() + Duration::from_secs(15);
     while !report_path.is_file() {
@@ -359,7 +360,7 @@ fn install_recorder(sandbox: &mut Sandbox, provider: &str) -> PathBuf {
         .join(format!("hook-recorder{}", std::env::consts::EXE_SUFFIX));
     let hook_path = sandbox.root.path().join(hook_path);
     let contents = fs::read_to_string(&hook_path).unwrap();
-    let binary = support::BRIDGE;
+    let binary = support::BERTH;
     let recorder_str = recorder.display().to_string();
     let mut replaced = None;
     for (from, to) in [
@@ -381,14 +382,14 @@ fn install_recorder(sandbox: &mut Sandbox, provider: &str) -> PathBuf {
     fs::write(hook_path, contents).unwrap();
     sandbox
         .env
-        .insert("FIXTURE_BRIDGE_BIN".into(), support::BRIDGE.into());
+        .insert("FIXTURE_BERTH_BIN".into(), support::BERTH.into());
     recorder
 }
 
 #[test]
 fn recording_hook_forwards_payload_and_observes_session() {
     let mut sandbox = Sandbox::new();
-    success(sandbox.bridge().args(["setup", "--no-service"]));
+    success(sandbox.berth().args(["setup", "--no-service"]));
     let recorder = install_recorder(&mut sandbox, "codex");
     sandbox.start();
     let payload = json!({"session_id": "recorded", "hook_event_name": "UserPromptSubmit", "cwd": sandbox.project()});
@@ -425,9 +426,48 @@ fn recording_hook_forwards_payload_and_observes_session() {
     assert_eq!(sessions[0]["session_id"], "recorded");
 }
 
+const TEST_PROMPT: &str = "Reply with exactly OK. Do not use tools.";
+
+fn headless_args(provider: &str, prompt: &str) -> Vec<String> {
+    match provider {
+        "claude" => vec![
+            "-p".into(),
+            prompt.into(),
+            "--output-format".into(),
+            "json".into(),
+        ],
+        "codex" => vec![
+            "exec".into(),
+            "--json".into(),
+            "--skip-git-repo-check".into(),
+            "--dangerously-bypass-hook-trust".into(),
+            prompt.into(),
+        ],
+        "grok" => vec![
+            "--single".into(),
+            prompt.into(),
+            "--output-format".into(),
+            "json".into(),
+        ],
+        "opencode" => vec![
+            "run".into(),
+            "--format".into(),
+            "json".into(),
+            prompt.into(),
+        ],
+        "pi" => vec![
+            "--print".into(),
+            "--mode".into(),
+            "json".into(),
+            prompt.into(),
+        ],
+        _ => unreachable!(),
+    }
+}
+
 #[test]
 #[ignore = "requires AGENT_BERTH_TEST_CLIENT and credentials; makes a real model call"]
-fn live_client_emits_hooks_and_reaches_bridge() {
+fn live_client_emits_hooks_and_reaches_berth() {
     let provider = std::env::var("AGENT_BERTH_TEST_CLIENT")
         .expect("set AGENT_BERTH_TEST_CLIENT to claude, codex, grok, opencode, or pi");
     assert!(["claude", "codex", "grok", "opencode", "pi"].contains(&provider.as_str()));
@@ -437,7 +477,7 @@ fn live_client_emits_hooks_and_reaches_bridge() {
         .find(|path| path.is_file())
         .expect("selected client must be installed");
     let mut sandbox = Sandbox::new();
-    success(sandbox.bridge().args(["setup", "--no-service"]));
+    success(sandbox.berth().args(["setup", "--no-service"]));
     install_recorder(&mut sandbox, &provider);
     fs::remove_file(
         sandbox
@@ -466,31 +506,7 @@ fn live_client_emits_hooks_and_reaches_bridge() {
             command.env(key, value);
         }
     }
-    let prompt = "Reply with exactly OK. Do not use tools.";
-    match provider.as_str() {
-        "claude" => {
-            command.args(["-p", prompt, "--output-format", "json"]);
-        }
-        "codex" => {
-            command.args([
-                "exec",
-                "--json",
-                "--skip-git-repo-check",
-                "--dangerously-bypass-hook-trust",
-                prompt,
-            ]);
-        }
-        "grok" => {
-            command.args(["--single", prompt, "--output-format", "json"]);
-        }
-        "opencode" => {
-            command.args(["run", "--format", "json", prompt]);
-        }
-        "pi" => {
-            command.args(["--print", "--mode", "json", prompt]);
-        }
-        _ => unreachable!(),
-    }
+    command.args(headless_args(&provider, TEST_PROMPT));
     if let Ok(model) = std::env::var("AGENT_BERTH_TEST_MODEL") {
         command.args(["--model", &model]);
     }
@@ -532,7 +548,250 @@ fn live_client_emits_hooks_and_reaches_bridge() {
         }
         assert!(
             Instant::now() < deadline,
-            "no client-generated session reached the bridge; inspect recorded payloads"
+            "no client-generated session reached the berth; inspect recorded payloads"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+fn configure_mock_provider(sandbox: &mut Sandbox, provider: &str, mock: &MockLlm) {
+    match provider {
+        "claude" => {
+            sandbox
+                .env
+                .insert("ANTHROPIC_BASE_URL".into(), mock.url().into());
+            sandbox
+                .env
+                .insert("ANTHROPIC_AUTH_TOKEN".into(), "mock".into());
+            sandbox
+                .env
+                .insert("ANTHROPIC_MODEL".into(), "mock-model".into());
+            sandbox.env.insert(
+                "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC".into(),
+                "1".into(),
+            );
+            let claude_json = json!({
+                "hasCompletedOnboarding": true,
+                "projects": {
+                    sandbox.project().to_str().unwrap(): {"hasTrustDialogAccepted": true},
+                },
+            });
+            fs::write(
+                sandbox.root.path().join("home/.claude.json"),
+                claude_json.to_string(),
+            )
+            .unwrap();
+        }
+        "codex" => {
+            let config = format!(
+                "model = \"mock-model\"\nmodel_provider = \"mock\"\n\n[model_providers.mock]\nname = \"Mock\"\nbase_url = \"{}/v1\"\nwire_api = \"responses\"\nenv_key = \"MOCK_LLM_API_KEY\"\n",
+                mock.url()
+            );
+            fs::write(sandbox.root.path().join("codex/config.toml"), config).unwrap();
+            sandbox.env.insert("MOCK_LLM_API_KEY".into(), "mock".into());
+        }
+        "grok" => {
+            for (key, value) in [
+                ("GROK_XAI_API_BASE_URL", format!("{}/v1", mock.url())),
+                ("GROK_MODELS_BASE_URL", format!("{}/v1", mock.url())),
+                ("GROK_MODELS_LIST_URL", format!("{}/v1/models", mock.url())),
+                ("XAI_API_KEY", "mock".to_string()),
+                ("GROK_CODE_XAI_API_KEY", "mock".to_string()),
+                ("GROK_DEFAULT_MODEL", "mock-model".to_string()),
+                ("GROK_TELEMETRY_ENABLED", "0".to_string()),
+                ("GROK_DISABLE_AUTOUPDATER", "1".to_string()),
+            ] {
+                sandbox.env.insert(key.into(), value.into());
+            }
+        }
+        "opencode" => {
+            let config = json!({
+                "$schema": "https://opencode.ai/config.json",
+                "model": "mock/mock-model",
+                "provider": {
+                    "mock": {
+                        "npm": "@ai-sdk/openai-compatible",
+                        "name": "Mock",
+                        "options": {"baseURL": format!("{}/v1", mock.url()), "apiKey": "mock"},
+                        "models": {"mock-model": {"name": "Mock Model"}},
+                    },
+                },
+            });
+            let path = sandbox.root.path().join("config/opencode/opencode.json");
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, config.to_string()).unwrap();
+        }
+        "pi" => {
+            let models = json!({
+                "providers": {
+                    "mock": {
+                        "baseUrl": format!("{}/v1", mock.url()),
+                        "apiKey": "mock",
+                        "api": "openai-completions",
+                        "models": [{
+                            "id": "mock-model",
+                            "name": "Mock Model",
+                            "reasoning": false,
+                            "input": ["text"],
+                            "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+                            "contextWindow": 128000,
+                            "maxTokens": 4096,
+                        }],
+                    },
+                },
+            });
+            fs::write(
+                sandbox.root.path().join("pi/models.json"),
+                models.to_string(),
+            )
+            .unwrap();
+        }
+        _ => unreachable!(),
+    }
+}
+
+#[test]
+#[ignore = "requires AGENT_BERTH_TEST_CLIENT and the installed client; calls a local mock LLM only"]
+fn mock_llm_client_completes_and_reports_terminal_state() {
+    let provider = std::env::var("AGENT_BERTH_TEST_CLIENT")
+        .expect("set AGENT_BERTH_TEST_CLIENT to claude, codex, grok, opencode, or pi");
+    assert!(["claude", "codex", "grok", "opencode", "pi"].contains(&provider.as_str()));
+    let original_path = std::env::var_os("PATH").unwrap();
+    let executable = std::env::split_paths(&original_path)
+        .map(|dir| dir.join(format!("{provider}{}", std::env::consts::EXE_SUFFIX)))
+        .find(|path| path.is_file())
+        .expect("selected client must be installed");
+    let mut sandbox = Sandbox::new();
+    success(sandbox.berth().args(["setup", "--no-service"]));
+    install_recorder(&mut sandbox, &provider);
+    fs::remove_file(
+        sandbox
+            .root
+            .path()
+            .join("bin")
+            .join(format!("{provider}{}", std::env::consts::EXE_SUFFIX)),
+    )
+    .unwrap();
+    let mut paths = vec![sandbox.root.path().join("bin")];
+    paths.extend(std::env::split_paths(&original_path));
+    sandbox
+        .env
+        .insert("PATH".into(), std::env::join_paths(paths).unwrap());
+    let plugin = matches!(provider.as_str(), "opencode" | "pi");
+    // Keep the conversation open briefly so async hooks and plugin heartbeats
+    // flush before the client exits.
+    let mock = MockLlm::start_with_delay(if plugin {
+        Duration::from_secs(3)
+    } else {
+        Duration::from_secs(2)
+    });
+    configure_mock_provider(&mut sandbox, &provider, &mock);
+    sandbox.start();
+
+    let mut command = sandbox.command(executable);
+    command.args(headless_args(&provider, TEST_PROMPT));
+    match provider.as_str() {
+        "claude" => {
+            // --debug keeps hook execution logs in the retained artifacts.
+            command.arg("--debug");
+        }
+        "grok" => {
+            command.args(["--model", "mock-model"]);
+        }
+        "opencode" | "pi" => {
+            command.args(["--model", "mock/mock-model"]);
+        }
+        _ => {}
+    }
+    let stdout = fs::File::create(sandbox.root.path().join("client.stdout")).unwrap();
+    let stderr = fs::File::create(sandbox.root.path().join("client.stderr")).unwrap();
+    let output = support::finish_timeout(
+        command
+            .stdin(std::process::Stdio::null())
+            .stdout(stdout)
+            .stderr(stderr)
+            .spawn()
+            .unwrap(),
+        // opencode downloads its provider package into the fresh sandbox cache
+        // on every run, which can take over a minute on a slow network.
+        Duration::from_secs(240),
+    );
+    assert!(
+        output.status.success(),
+        "client failed; see client.stderr in the retained artifacts"
+    );
+    assert!(
+        mock.completions() > 0,
+        "client made no completion request to the mock LLM; requests: {:?}",
+        mock.requests()
+    );
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let observed = fs::read_dir(sandbox.root.path().join("tmux-log"))
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                entry
+                    .path()
+                    .extension()
+                    .is_some_and(|ext| ext == "sessions")
+            })
+            .filter_map(|entry| fs::read(entry.path()).ok())
+            .filter_map(|bytes| serde_json::from_slice::<Vec<Value>>(&bytes).ok())
+            .any(|sessions| {
+                sessions
+                    .iter()
+                    .any(|session| session["provider"] == provider)
+            });
+        if observed {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "no client-generated session reached the berth; inspect recorded payloads"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+
+    // The mock ends the conversation on the first response, so the terminal
+    // state is deterministic: hook clients send SessionEnd, and plugin client
+    // snapshots go idle or leave the active list once the process exits.
+    let deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        let settled = if plugin {
+            sandbox
+                .sessions(false)
+                .iter()
+                .filter(|session| session["provider"] == provider)
+                .all(|session| session["status"] == "idle")
+        } else {
+            // claude does not emit SessionEnd in print mode; its terminal hook
+            // is Stop. codex and grok emit SessionEnd on exit.
+            let terminal_hook = if provider == "claude" {
+                "Stop"
+            } else {
+                "SessionEnd"
+            };
+            let ended = fs::read_dir(sandbox.root.path().join("tmux-log"))
+                .unwrap()
+                .filter_map(Result::ok)
+                .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "payload"))
+                .filter_map(|entry| fs::read_to_string(entry.path()).ok())
+                .any(|payload| payload.contains(terminal_hook));
+            ended
+                && !sandbox
+                    .sessions(false)
+                    .iter()
+                    .any(|session| session["provider"] == provider)
+        };
+        if settled {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "client session did not reach its terminal state: {:?}",
+            sandbox.sessions(false)
         );
         std::thread::sleep(Duration::from_millis(50));
     }

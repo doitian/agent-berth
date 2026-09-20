@@ -12,7 +12,9 @@ use interprocess::local_socket::prelude::*;
 use serde_json::{Value, json};
 use tempfile::TempDir;
 
-pub const BRIDGE: &str = env!("CARGO_BIN_EXE_agent-berth");
+pub mod mock_llm;
+
+pub const BERTH: &str = env!("CARGO_BIN_EXE_agent-berth");
 const TIMEOUT: Duration = Duration::from_secs(20);
 
 fn executable(name: &str) -> String {
@@ -60,7 +62,7 @@ impl Sandbox {
         let endpoint = if cfg!(windows) {
             namespace.clone()
         } else {
-            root.path().join("bridge.sock").display().to_string()
+            root.path().join("berth.sock").display().to_string()
         };
         let mut env = BTreeMap::new();
         for key in ["SystemRoot", "WINDIR", "COMSPEC", "PATHEXT"] {
@@ -148,8 +150,8 @@ impl Sandbox {
         command
     }
 
-    pub fn bridge(&self) -> Command {
-        self.command(BRIDGE)
+    pub fn berth(&self) -> Command {
+        self.command(BERTH)
     }
 
     pub fn project(&self) -> PathBuf {
@@ -160,7 +162,7 @@ impl Sandbox {
         assert!(self.server.is_none());
         let log = fs::File::create(self.root.path().join("server.log")).unwrap();
         self.server = Some(
-            self.bridge()
+            self.berth()
                 .arg("server")
                 .stdout(Stdio::null())
                 .stderr(log)
@@ -229,7 +231,7 @@ impl Sandbox {
     }
 
     pub fn notify(&self, provider: &str, payload: Value) {
-        let mut command = self.bridge();
+        let mut command = self.berth();
         command
             .args(["notify", "--provider", provider])
             .stdin(Stdio::piped());
