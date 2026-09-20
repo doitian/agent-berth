@@ -26,7 +26,15 @@ export default function (pi) {
     }
   }
 
-  function remember(ctx) {
+  function firstMessage(ctx) {
+    for (const entry of ctx.sessionManager.getEntries?.() ?? []) {
+      if (entry?.message?.role !== "user") continue
+      return messageText(entry.message)
+    }
+    return ""
+  }
+
+  function remember(ctx, prompt) {
     const id = sid(ctx)
     const name = pi.getSessionName?.()
     if (typeof name === "string" && name) {
@@ -34,12 +42,8 @@ export default function (pi) {
       return
     }
     if (names.has(id)) return
-    for (const entry of ctx.sessionManager.getEntries?.() ?? []) {
-      if (entry?.message?.role !== "user") continue
-      const text = messageText(entry.message).replace(/\s+/g, " ").trim()
-      if (text) names.set(id, text)
-      return
-    }
+    const text = String(prompt ?? firstMessage(ctx)).replace(/\s+/g, " ").trim()
+    if (text) names.set(id, text)
   }
 
   function messageText(message) {
@@ -104,6 +108,10 @@ export default function (pi) {
     remember(ctx)
     start()
     flush()
+  })
+
+  pi.on("before_agent_start", async (event, ctx) => {
+    remember(ctx, event.prompt)
   })
 
   pi.on("agent_start", async (_event, ctx) => {
