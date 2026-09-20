@@ -1,6 +1,6 @@
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, IsTerminal, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::Duration;
 
@@ -15,7 +15,47 @@ use crate::paths::Context as AppContext;
 use crate::protocol::{Request, Response};
 use crate::store::Store;
 
+static SERVER_LOG: OnceLock<Mutex<std::fs::File>> = OnceLock::new();
+
+fn init_log(ctx: &AppContext) {
+    let path = crate::service::server_log_path(ctx);
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
+        let _ = SERVER_LOG.set(Mutex::new(file));
+    }
+}
+
+fn log(args: std::fmt::Arguments<'_>) {
+    if let Some(file) = SERVER_LOG.get() {
+        if let Ok(mut file) = file.lock() {
+            let _ = writeln!(file, "{args}");
+        }
+    }
+    if std::io::stderr().is_terminal() {
+        eprintln!("{args}");
+    }
+}
+
 pub fn run(ctx: &AppContext) -> Result<()> {
+    init_log(ctx);
+    log(format_args!(
+        "agent-berth server starting (pid {})",
+        std::process::id()
+    ));
+    let result = serve(ctx);
+    if let Err(err) = &result {
+        log(format_args!("server error: {err:#}"));
+    }
+    result
+}
+
+fn serve(ctx: &AppContext) -> Result<()> {
     if ipc::ping(ctx).is_ok() {
         anyhow::bail!("agent-berth server is already running");
     }
@@ -50,7 +90,7 @@ pub fn run(ctx: &AppContext) -> Result<()> {
         }
     });
 
-    eprintln!("listening on {}", ctx.endpoint_display());
+    log(format_args!("listening on {}", ctx.endpoint_display()));
     for conn in listener.incoming() {
         if shutdown.load(Ordering::Relaxed) {
             break;
@@ -62,11 +102,11 @@ pub fn run(ctx: &AppContext) -> Result<()> {
                 let ctx = ctx.clone();
                 thread::spawn(move || {
                     if let Err(err) = handle(stream, &state, &db, &ctx) {
-                        eprintln!("connection: {err:#}");
+                        log(format_args!("connection: {err:#}"));
                     }
                 });
             }
-            Err(err) => eprintln!("accept: {err}"),
+            Err(err) => log(format_args!("accept: {err}")),
         }
     }
     cleanup(ctx);

@@ -3,7 +3,7 @@ use clap::{Parser, Subcommand};
 
 use crate::duration::parse_idle;
 use crate::paths::Context;
-use crate::{doctor, list, notify, resume, server, setup};
+use crate::{doctor, list, notify, resume, server, service, setup};
 
 /// Monitor coding agents and resume their sessions.
 #[derive(Debug, Parser)]
@@ -25,6 +25,11 @@ enum Command {
     },
     /// Stop the service and remove agent hooks
     Teardown,
+    /// Manage the background server service
+    Service {
+        #[command(subcommand)]
+        action: ServiceAction,
+    },
     /// List sessions
     List {
         /// Print JSON
@@ -55,6 +60,16 @@ enum Command {
     },
 }
 
+#[derive(Debug, Subcommand)]
+enum ServiceAction {
+    /// Start the background server
+    Start,
+    /// Stop the background server
+    Stop,
+    /// Restart the background server
+    Restart,
+}
+
 pub fn run() -> Result<()> {
     let cli = Cli::parse();
     let ctx = Context::from_env()?;
@@ -62,6 +77,11 @@ pub fn run() -> Result<()> {
         Command::Server => server::run(&ctx),
         Command::Setup { no_service } => setup::setup(&ctx, no_service),
         Command::Teardown => setup::teardown(&ctx),
+        Command::Service { action } => match action {
+            ServiceAction::Start => service::start(&ctx),
+            ServiceAction::Stop => service::stop(&ctx),
+            ServiceAction::Restart => service::restart(&ctx),
+        },
         Command::List {
             json,
             resumable,

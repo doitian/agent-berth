@@ -79,7 +79,13 @@ impl ProviderKind {
         let Ok(text) = fs::read_to_string(self.hook_path(ctx)) else {
             return false;
         };
-        text.contains(&format!("notify --provider {}", self.name()))
+        // Shell hooks spell out `notify --provider <name>`, while JS/TS plugins
+        // pass it as an argv array; compare with separators stripped.
+        let compact: String = text
+            .chars()
+            .filter(|ch| ch.is_ascii_alphanumeric())
+            .collect();
+        compact.contains(&format!("notifyprovider{}", self.name()))
     }
 
     pub fn hooks_stale(self, ctx: &AppContext) -> bool {

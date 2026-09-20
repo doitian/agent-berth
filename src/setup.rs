@@ -5,11 +5,6 @@ use crate::providers::ProviderKind;
 use crate::service;
 
 pub fn setup(ctx: &Context, no_service: bool) -> Result<()> {
-    if no_service {
-        println!("skip service installation");
-    } else {
-        service::install(ctx)?;
-    }
     for provider in ProviderKind::ALL {
         if !provider.is_installed(ctx) {
             println!("skip {} (not installed)", provider.name());
@@ -20,10 +15,15 @@ pub fn setup(ctx: &Context, no_service: bool) -> Result<()> {
             Err(err) => eprintln!("failed to install {}: {err:#}", provider.name()),
         }
     }
+    if no_service {
+        println!("skip service installation");
+    } else {
+        service::install(ctx)?;
+    }
     if service::running(ctx) {
         println!("server is running");
     } else {
-        eprintln!("server is not running yet; start it with: agent-berth server");
+        eprintln!("server is not running yet; start it with: agent-berth service start");
     }
     Ok(())
 }
