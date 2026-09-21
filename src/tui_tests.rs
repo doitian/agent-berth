@@ -43,6 +43,46 @@ fn app_with_sessions() -> App {
 }
 
 #[test]
+fn details_show_combined_branch_status_with_branch_only_fallback() {
+    let mut app = app_with_sessions();
+    app.branch = Some("main".into());
+    app.git = Some(git::RepoInfo {
+        status: "main (dirty) (ahead 2 ↑ behind 1 ↓)".into(),
+        github: Some("owner/repo".into()),
+    });
+    for expected in [
+        "branch   main (dirty) (ahead 2 ↑ behind 1 ↓)",
+        "branch   main",
+        "branch   -",
+    ] {
+        let backend = ratatui::backend::TestBackend::new(80, 20);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| render_details(frame, &app, frame.area()))
+            .unwrap();
+        let text = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(text.contains(expected), "{text}");
+        assert_eq!(
+            text.matches("main").count(),
+            usize::from(app.branch.is_some())
+        );
+        assert!(!text.contains("git      "), "{text}");
+        if app.git.is_some() {
+            assert!(text.contains("repo     owner/repo"), "{text}");
+            app.git = None;
+        } else {
+            app.branch = None;
+        }
+    }
+}
+
+#[test]
 fn starts_on_active_view() {
     let app = App::new();
     assert_eq!(app.view, View::Active);
