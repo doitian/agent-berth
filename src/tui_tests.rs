@@ -1023,6 +1023,70 @@ fn transcript_completion(app: &mut App, content: &str) -> Fetched {
 }
 
 #[test]
+fn desktop_reselection_shows_cached_preview_while_refreshing() {
+    let mut app = desktop_app();
+    let first = transcript_completion(&mut app, "first session");
+    app.handle_fetched(first);
+    app.selected = 1;
+    app.update_selection();
+    assert!(app.preview.is_none());
+    let second = transcript_completion(&mut app, "second session");
+    app.handle_fetched(second);
+
+    app.selected = 0;
+    app.update_selection();
+    assert_eq!(app.preview.as_deref(), Some("first session"));
+    let refresh = transcript_completion(&mut app, "updated first session");
+    assert_eq!(app.preview.as_deref(), Some("first session"));
+    app.handle_fetched(refresh);
+    assert_eq!(app.preview.as_deref(), Some("updated first session"));
+
+    // Reusing a session ID with a different transcript must not reuse its text.
+    app.sessions[0].transcript_path = Some("/logs/replacement.jsonl".into());
+    app.update_selection();
+    assert!(app.preview.is_none());
+}
+
+#[test]
+fn background_transcript_results_warm_cache_without_overwriting_newer_results() {
+    let mut app = desktop_app();
+    let first = transcript_completion(&mut app, "first session");
+    let Fetched::Transcript {
+        source, generation, ..
+    } = &first
+    else {
+        unreachable!()
+    };
+    let outdated = Fetched::Transcript {
+        source: source.clone(),
+        reader: Box::default(),
+        content: "outdated first session".into(),
+        generation: *generation,
+    };
+    app.selected = 1;
+    app.update_selection();
+    let second = transcript_completion(&mut app, "second session");
+    let in_flight = app.preview_in_flight;
+    app.handle_fetched(first);
+    assert!(app.preview.is_none());
+    assert_eq!(app.preview_in_flight, in_flight);
+    app.handle_fetched(second);
+
+    app.selected = 0;
+    app.update_selection();
+    assert_eq!(app.preview.as_deref(), Some("first session"));
+    let refresh = transcript_completion(&mut app, "new first session");
+    app.handle_fetched(refresh);
+    app.handle_fetched(outdated);
+    app.selected = 1;
+    app.update_selection();
+    assert_eq!(app.preview.as_deref(), Some("second session"));
+    app.selected = 0;
+    app.update_selection();
+    assert_eq!(app.preview.as_deref(), Some("new first session"));
+}
+
+#[test]
 fn desktop_navigation_rejects_old_results_even_after_reselection() {
     let mut app = desktop_app();
     let first = transcript_completion(&mut app, "old first session");

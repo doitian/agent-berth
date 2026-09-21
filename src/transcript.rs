@@ -13,7 +13,7 @@ const RECORD_LIMIT: usize = 256 * 1024;
 const ENTRY_LIMIT: usize = 48;
 const TEXT_LIMIT: usize = 1024;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct Source {
     pub provider: String,
     pub session_id: String,

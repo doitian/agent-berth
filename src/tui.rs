@@ -143,6 +143,11 @@ struct CachedGit {
     info: Option<git::RepoInfo>,
 }
 
+struct CachedTranscript {
+    generation: u64,
+    content: String,
+}
+
 enum Fetched {
     Transcript {
         source: transcript::Source,
@@ -260,6 +265,7 @@ struct App {
     preview_generation: u64,
     git_generation: u64,
     previews: HashMap<String, String>,
+    transcript_previews: HashMap<transcript::Source, CachedTranscript>,
     gits: HashMap<String, CachedGit>,
 }
 
@@ -301,6 +307,7 @@ impl App {
             preview_generation: 0,
             git_generation: 0,
             previews: HashMap::new(),
+            transcript_previews: HashMap::new(),
             gits: HashMap::new(),
         }
     }
@@ -353,6 +360,26 @@ impl App {
                 content,
                 generation,
             } => {
+                // A fetch finishing after navigation can still warm the cache,
+                // but must not replace a newer result for the same source.
+                if self
+                    .transcript_previews
+                    .get(&source)
+                    .is_none_or(|cached| generation > cached.generation)
+                {
+                    if self.transcript_previews.len() >= CACHE_CAP
+                        && !self.transcript_previews.contains_key(&source)
+                    {
+                        self.transcript_previews.clear();
+                    }
+                    self.transcript_previews.insert(
+                        source.clone(),
+                        CachedTranscript {
+                            generation,
+                            content: content.clone(),
+                        },
+                    );
+                }
                 if self.preview_in_flight != Some(generation) {
                     return;
                 }
@@ -496,9 +523,18 @@ impl App {
             self.preview_in_flight = None;
             self.preview_pending_since = self.has_preview().then(Instant::now);
             self.preview = self
-                .selected_pane
+                .selected_transcript
                 .as_ref()
-                .and_then(|pane| self.previews.get(&pane.id).cloned());
+                .and_then(|source| {
+                    self.transcript_previews
+                        .get(source)
+                        .map(|cached| cached.content.clone())
+                })
+                .or_else(|| {
+                    self.selected_pane
+                        .as_ref()
+                        .and_then(|pane| self.previews.get(&pane.id).cloned())
+                });
             self.needs_redraw = true;
         }
         let cwd = self

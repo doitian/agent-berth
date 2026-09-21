@@ -95,8 +95,9 @@ be located, the preview waits for a hook to provide its path. Run `setup` to
 install hooks, then send a prompt in the desktop session.
 
 Previews refresh about once a second as transcript records reach disk;
-they do not stream individual tokens. Recent history and long messages/tool
-results are bounded to keep the TUI responsive. Missing or unreadable files
+they do not stream individual tokens. Switching back to a session shows its
+cached preview immediately while fresh content loads. Recent history and long
+messages/tool results are bounded to keep the TUI responsive. Missing or unreadable files
 are retried automatically. These previews cover local Code sessions, not
 ordinary Claude chats or remote/cloud sessions. Claude's optional
 `MessageDisplay` hook is not required or installed.
