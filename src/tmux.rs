@@ -6,6 +6,9 @@ use anyhow::{Context, Result, bail};
 
 const DEFAULT_CONFIG: &str = ".tmux-up.conf";
 
+#[cfg(windows)]
+pub(crate) const PREVIEW_SHELL: &str = "powershell.exe -NoLogo -NoProfile -NonInteractive -Command";
+
 pub fn session_name(root: &Path) -> String {
     let mut session = root
         .file_name()
@@ -210,10 +213,28 @@ pub fn preview_command() -> String {
         parts.push("-f".into());
         parts.push(quote_arg(&config.display().to_string()));
     }
-    parts.push("capture-pane -p -e -t {1} | tail -n \"${FZF_PREVIEW_LINES:-40}\"".into());
-    parts.join(" ")
+    parts.push("capture-pane -p -e -t {1}".into());
+    let capture = parts.join(" ");
+    #[cfg(windows)]
+    {
+        format!(
+            "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); \
+             $lines = if ($env:FZF_PREVIEW_LINES) {{ [int]$env:FZF_PREVIEW_LINES }} else {{ 40 }}; \
+             {capture} | Select-Object -Last $lines"
+        )
+    }
+    #[cfg(not(windows))]
+    {
+        format!("{capture} | tail -n \"${{FZF_PREVIEW_LINES:-40}}\"")
+    }
 }
 
+#[cfg(windows)]
+fn quote_arg(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
+}
+
+#[cfg(not(windows))]
 fn quote_arg(value: &str) -> String {
     if value.chars().any(char::is_whitespace) {
         format!("\"{}\"", value.replace('"', "\\\""))

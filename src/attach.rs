@@ -176,6 +176,8 @@ fn fzf_args(query: Option<&str>, preview: bool) -> Vec<String> {
     .into_iter()
     .map(str::to_string)
     .collect();
+    #[cfg(windows)]
+    args.extend(["--with-shell".into(), tmux::PREVIEW_SHELL.into()]);
     if let Some(query) = query {
         args.push("-q".into());
         args.push(query.into());

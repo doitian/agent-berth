@@ -106,3 +106,13 @@ fn fzf_hides_preview_by_default() {
     );
     assert!(fzf_args(None, true).iter().any(|arg| arg == "up:80%"));
 }
+
+#[test]
+#[cfg(windows)]
+fn fzf_uses_powershell_for_preview() {
+    assert!(
+        fzf_args(None, true)
+            .windows(2)
+            .any(|pair| pair == ["--with-shell", tmux::PREVIEW_SHELL])
+    );
+}
