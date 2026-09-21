@@ -1,5 +1,5 @@
 use std::io::{self, Stdout};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result, bail};
@@ -27,8 +27,7 @@ const REFRESH: Duration = Duration::from_secs(1);
 const PREVIEW_DEBOUNCE: Duration = Duration::from_millis(150);
 const DEFAULT_IDLE: Duration = Duration::from_secs(20 * 60);
 
-const HINTS: &str =
-    "q quit · j/k move · / filter · ga/gr view · a attach · r resume · I idle · = zoom";
+const HINTS: &str = "q quit · j/k move · / filter · ga/gr view · a attach · r resume · I idle · = zoom · ␣gg lazygit · br/bp browse";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum View {
@@ -43,12 +42,28 @@ enum Input {
     Idle,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Pending {
+    G,
+    Space,
+    SpaceG,
+    B,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Browse {
+    Repo,
+    Pr,
+}
+
 #[derive(Debug)]
 pub(crate) enum Effect {
     None,
     Quit,
     Attach(Pane),
     Resume(ListedSession),
+    Lazygit(PathBuf),
+    Browse(PathBuf, Browse),
 }
 
 struct App {
@@ -65,7 +80,10 @@ struct App {
     idle_enabled: bool,
     idle: Duration,
     idle_input: String,
-    pending_g: bool,
+    pending: Option<Pending>,
+    git: Option<git::RepoInfo>,
+    git_cwd: Option<String>,
+    git_pending_since: Option<Instant>,
     message: Option<String>,
     dirty: bool,
 }
@@ -86,7 +104,10 @@ impl App {
             idle_enabled: false,
             idle: DEFAULT_IDLE,
             idle_input: String::new(),
-            pending_g: false,
+            pending: None,
+            git: None,
+            git_cwd: None,
+            git_pending_since: None,
             message: None,
             dirty: false,
         }
@@ -129,6 +150,11 @@ impl App {
             self.preview_pending_since.get_or_insert_with(Instant::now);
         }
         self.capture_preview();
+        // Refresh git status immediately so the details stay live.
+        if self.git_cwd.is_some() {
+            self.git_pending_since.get_or_insert_with(Instant::now);
+        }
+        self.capture_git();
         Ok(())
     }
 
@@ -160,6 +186,15 @@ impl App {
             self.preview_pending_since = Some(Instant::now());
         }
         self.selected_pane = pane;
+        let cwd = self
+            .selected_session()
+            .and_then(|session| session.cwd.clone())
+            .filter(|cwd| !cwd.is_empty());
+        if cwd != self.git_cwd {
+            self.git_cwd = cwd;
+            self.git = None;
+            self.git_pending_since = Some(Instant::now());
+        }
     }
 
     fn capture_preview(&mut self) {
@@ -170,6 +205,16 @@ impl App {
             .selected_pane
             .as_ref()
             .and_then(|pane| tmux::capture_pane(&pane.id).ok());
+    }
+
+    fn capture_git(&mut self) {
+        if self.git_pending_since.take().is_none() {
+            return;
+        }
+        self.git = self
+            .git_cwd
+            .as_ref()
+            .and_then(|cwd| git::repo_info(Path::new(cwd)));
     }
 
     fn move_by(&mut self, delta: i32) {
@@ -203,11 +248,14 @@ impl App {
             Input::Idle => return self.handle_idle_key(key),
             Input::Normal => {}
         }
-        if self.pending_g {
-            self.pending_g = false;
-            match key.code {
-                KeyCode::Char('a') => self.set_view(View::Active),
-                KeyCode::Char('r') => self.set_view(View::Resumable),
+        if let Some(pending) = self.pending.take() {
+            match (pending, key.code) {
+                (Pending::G, KeyCode::Char('a')) => self.set_view(View::Active),
+                (Pending::G, KeyCode::Char('r')) => self.set_view(View::Resumable),
+                (Pending::Space, KeyCode::Char('g')) => self.pending = Some(Pending::SpaceG),
+                (Pending::SpaceG, KeyCode::Char('g')) => return self.open_lazygit(),
+                (Pending::B, KeyCode::Char('r')) => return self.browse_selected(Browse::Repo),
+                (Pending::B, KeyCode::Char('p')) => return self.browse_selected(Browse::Pr),
                 _ => {}
             }
             return Effect::None;
@@ -233,7 +281,15 @@ impl App {
                 Effect::None
             }
             KeyCode::Char('g') => {
-                self.pending_g = true;
+                self.pending = Some(Pending::G);
+                Effect::None
+            }
+            KeyCode::Char(' ') => {
+                self.pending = Some(Pending::Space);
+                Effect::None
+            }
+            KeyCode::Char('b') => {
+                self.pending = Some(Pending::B);
                 Effect::None
             }
             KeyCode::Char('/') => {
@@ -346,6 +402,33 @@ impl App {
             }
         }
     }
+
+    fn open_lazygit(&mut self) -> Effect {
+        match self.selected_cwd() {
+            Some(cwd) => Effect::Lazygit(cwd),
+            None => {
+                self.message = Some("session has no working directory".into());
+                Effect::None
+            }
+        }
+    }
+
+    fn browse_selected(&mut self, target: Browse) -> Effect {
+        match self.selected_cwd() {
+            Some(cwd) => Effect::Browse(cwd, target),
+            None => {
+                self.message = Some("session has no working directory".into());
+                Effect::None
+            }
+        }
+    }
+
+    fn selected_cwd(&self) -> Option<PathBuf> {
+        self.selected_session()
+            .and_then(|session| session.cwd.clone())
+            .filter(|cwd| !cwd.is_empty())
+            .map(PathBuf::from)
+    }
 }
 
 struct TerminalGuard {
@@ -406,6 +489,8 @@ pub fn run(ctx: &Context) -> Result<()> {
                     Ok(pane) => attach_effect(&mut guard, &mut app, &pane),
                     Err(err) => app.message = Some(format!("{err:#}")),
                 },
+                Effect::Lazygit(cwd) => lazygit_effect(&mut guard, &mut app, &cwd),
+                Effect::Browse(cwd, target) => browse_effect(&mut app, &cwd, target),
             }
         }
         if app.dirty {
@@ -418,6 +503,12 @@ pub fn run(ctx: &Context) -> Result<()> {
             .is_some_and(|since| since.elapsed() >= PREVIEW_DEBOUNCE)
         {
             app.capture_preview();
+        }
+        if app
+            .git_pending_since
+            .is_some_and(|since| since.elapsed() >= PREVIEW_DEBOUNCE)
+        {
+            app.capture_git();
         }
     }
     Ok(())
@@ -436,6 +527,51 @@ fn attach_effect(guard: &mut TerminalGuard, app: &mut App, pane: &Pane) {
         app.message = Some(format!("attach: {err:#}"));
     }
     app.dirty = true;
+}
+
+fn lazygit_effect(guard: &mut TerminalGuard, app: &mut App, cwd: &Path) {
+    let _ = guard.suspend();
+    let result = std::process::Command::new("lazygit")
+        .current_dir(cwd)
+        .status()
+        .context("run lazygit")
+        .and_then(|status| {
+            if status.success() {
+                Ok(())
+            } else {
+                bail!("lazygit exited with {status}");
+            }
+        });
+    let resumed = guard.resume();
+    if let Err(err) = result.and(resumed) {
+        app.message = Some(format!("{err:#}"));
+    }
+    app.dirty = true;
+}
+
+fn browse_effect(app: &mut App, cwd: &Path, target: Browse) {
+    let args = match target {
+        Browse::Repo => ["repo", "view", "-w"],
+        Browse::Pr => ["pr", "view", "-w"],
+    };
+    match std::process::Command::new("gh")
+        .args(args)
+        .current_dir(cwd)
+        .stdin(std::process::Stdio::null())
+        .output()
+    {
+        Ok(output) if output.status.success() => {}
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let detail = stderr.trim();
+            app.message = Some(if detail.is_empty() {
+                format!("gh {} {} failed", args[0], args[1])
+            } else {
+                format!("gh: {detail}")
+            });
+        }
+        Err(err) => app.message = Some(format!("gh: {err:#}")),
+    }
 }
 
 fn resume_session(ctx: &Context, session: &ListedSession) -> Result<Pane> {
@@ -551,10 +687,18 @@ fn render_details(frame: &mut Frame, app: &App, area: Rect) {
         ),
         ("cwd", cwd),
         ("branch", branch),
+    ];
+    if let Some(info) = &app.git {
+        rows.push(("git", info.status.clone()));
+        if let Some(repo) = &info.github {
+            rows.push(("repo", repo.clone()));
+        }
+    }
+    rows.extend([
         ("title", session.title.clone().unwrap_or_else(|| "-".into())),
         ("age", age),
         ("command", command),
-    ];
+    ]);
     if let Some(pane) = &app.selected_pane {
         rows.push((
             "tmux",
@@ -604,10 +748,11 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
             frame.set_cursor_position((area.x + 13 + app.idle_input.len() as u16, area.y));
         }
         Input::Normal => {
-            let text = if app.pending_g {
-                "g — a active sessions · r resumable sessions".to_string()
-            } else {
-                app.message.clone().unwrap_or_else(|| HINTS.into())
+            let text = match app.pending {
+                Some(Pending::G) => "g — a active sessions · r resumable sessions".to_string(),
+                Some(Pending::Space) | Some(Pending::SpaceG) => "␣g — g open lazygit".to_string(),
+                Some(Pending::B) => "b — r repo in browser · p pr in browser".to_string(),
+                None => app.message.clone().unwrap_or_else(|| HINTS.into()),
             };
             frame.render_widget(Paragraph::new(text), area);
         }

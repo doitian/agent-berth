@@ -70,7 +70,7 @@ fn jk_navigates_and_clamps() {
 fn ga_gr_switch_views() {
     let mut app = app_with_sessions();
     app.handle_key(char_key('g'));
-    assert!(app.pending_g);
+    assert_eq!(app.pending, Some(Pending::G));
     app.handle_key(char_key('r'));
     assert_eq!(app.view, View::Resumable);
     assert!(app.dirty);
@@ -86,8 +86,66 @@ fn pending_g_is_cancelled_by_other_keys() {
     let mut app = app_with_sessions();
     app.handle_key(char_key('g'));
     app.handle_key(char_key('x'));
-    assert!(!app.pending_g);
+    assert_eq!(app.pending, None);
     assert_eq!(app.view, View::Active);
+}
+
+#[test]
+fn space_gg_opens_lazygit_in_session_cwd() {
+    let mut app = app_with_sessions();
+    app.handle_key(char_key(' '));
+    assert_eq!(app.pending, Some(Pending::Space));
+    app.handle_key(char_key('g'));
+    assert_eq!(app.pending, Some(Pending::SpaceG));
+    match app.handle_key(char_key('g')) {
+        Effect::Lazygit(cwd) => assert_eq!(cwd, PathBuf::from("/tmp/project")),
+        _ => panic!("expected lazygit effect"),
+    }
+    assert_eq!(app.pending, None);
+}
+
+#[test]
+fn space_g_followed_by_other_key_cancels() {
+    let mut app = app_with_sessions();
+    app.handle_key(char_key(' '));
+    app.handle_key(char_key('g'));
+    assert!(matches!(app.handle_key(char_key('x')), Effect::None));
+    assert_eq!(app.pending, None);
+}
+
+#[test]
+fn space_gg_without_cwd_shows_message() {
+    let mut app = app_with_sessions();
+    app.sessions[0].cwd = None;
+    app.handle_key(char_key(' '));
+    app.handle_key(char_key('g'));
+    assert!(matches!(app.handle_key(char_key('g')), Effect::None));
+    assert!(app.message.is_some());
+}
+
+#[test]
+fn br_browses_repo_and_bp_browses_pr() {
+    let mut app = app_with_sessions();
+    app.handle_key(char_key('b'));
+    assert_eq!(app.pending, Some(Pending::B));
+    match app.handle_key(char_key('r')) {
+        Effect::Browse(cwd, Browse::Repo) => assert_eq!(cwd, PathBuf::from("/tmp/project")),
+        _ => panic!("expected repo browse effect"),
+    }
+    app.handle_key(char_key('b'));
+    match app.handle_key(char_key('p')) {
+        Effect::Browse(cwd, Browse::Pr) => assert_eq!(cwd, PathBuf::from("/tmp/project")),
+        _ => panic!("expected pr browse effect"),
+    }
+    assert_eq!(app.pending, None);
+}
+
+#[test]
+fn b_followed_by_other_key_cancels() {
+    let mut app = app_with_sessions();
+    app.handle_key(char_key('b'));
+    assert!(matches!(app.handle_key(char_key('x')), Effect::None));
+    assert_eq!(app.pending, None);
 }
 
 #[test]
