@@ -73,54 +73,104 @@ fn parses_github_remote_urls() {
 
 #[test]
 fn parses_porcelain_status() {
-    let text = "# branch.oid abc\n# branch.head main\n# branch.ab +2 -1\n1 M. N... 100644 100644 100644 abc abc a.rs\n1 .M N... 100644 100644 100644 abc abc b.rs\n? new.rs\nu UU N... 100644 100644 100644 100644 abc abc abc c.rs\n";
+    let text = "# branch.head main\n# branch.ab +2 -1\n# stash 1\n1 M. N... 100644 100644 100644 abc abc a.rs\n1 .M N... 100644 100644 100644 abc abc b.rs\n? new.rs\nu UU N... 100644 100644 100644 100644 abc abc abc c.rs\n";
     assert_eq!(
         parse_porcelain(text),
         RepoStatus {
-            dirty: true,
-            ahead: 2,
-            behind: 1,
+            conflicted: true,
+            stashed: true,
+            modified: true,
+            staged: true,
+            untracked: true,
+            tracking: Some((2, 1)),
+            ..RepoStatus::default()
         }
     );
 }
 
 #[test]
-fn porcelain_marks_each_kind_of_change_dirty() {
-    for record in [
-        "1 M. N... 100644 100644 100644 abc abc staged.rs",
-        "1 .M N... 100644 100644 100644 abc abc modified.rs",
-        "1 .D N... 100644 100644 000000 abc abc deleted.rs",
-        "2 R. N... 100644 100644 100644 abc abc R100 new.rs\told.rs",
-        "u UU N... 100644 100644 100644 100644 abc abc abc conflict.rs",
-        "? untracked.rs",
-        "1 .M S..U 160000 160000 160000 abc abc submodule",
+fn porcelain_distinguishes_change_kinds() {
+    for (record, expected) in [
+        (
+            "1 M. N... 100644 100644 100644 abc abc staged.rs",
+            RepoStatus {
+                staged: true,
+                ..RepoStatus::default()
+            },
+        ),
+        (
+            "1 .M N... 100644 100644 100644 abc abc modified.rs",
+            RepoStatus {
+                modified: true,
+                ..RepoStatus::default()
+            },
+        ),
+        (
+            "1 MM N... 100644 100644 100644 abc abc both.rs",
+            RepoStatus {
+                staged: true,
+                modified: true,
+                ..RepoStatus::default()
+            },
+        ),
+        (
+            "1 .D N... 100644 100644 000000 abc abc deleted.rs",
+            RepoStatus {
+                deleted: true,
+                ..RepoStatus::default()
+            },
+        ),
+        (
+            "2 R. N... 100644 100644 100644 abc abc R100 new.rs\told.rs",
+            RepoStatus {
+                renamed: true,
+                staged: true,
+                ..RepoStatus::default()
+            },
+        ),
+        (
+            "u UU N... 100644 100644 100644 100644 abc abc abc conflict.rs",
+            RepoStatus {
+                conflicted: true,
+                ..RepoStatus::default()
+            },
+        ),
+        (
+            "? untracked.rs",
+            RepoStatus {
+                untracked: true,
+                ..RepoStatus::default()
+            },
+        ),
+        (
+            "1 .M S..U 160000 160000 160000 abc abc submodule",
+            RepoStatus {
+                modified: true,
+                ..RepoStatus::default()
+            },
+        ),
     ] {
-        assert!(parse_porcelain(record).dirty, "{record}");
+        assert_eq!(parse_porcelain(record), expected, "{record}");
     }
-    assert_eq!(
-        parse_porcelain("# branch.head main\n# branch.ab +0 -0\n! ignored.rs\n"),
-        RepoStatus::default()
-    );
 }
 
 #[test]
-fn status_line_matches_git_multistatus() {
-    for (dirty, ahead, behind, expected) in [
-        (false, 0, 0, "feature/v1.2 (≡)"),
-        (true, 0, 0, "feature/v1.2 (dirty)"),
-        (false, 2, 0, "feature/v1.2 (ahead 2 ↑)"),
-        (false, 0, 1, "feature/v1.2 (behind 1 ↓)"),
-        (false, 2, 1, "feature/v1.2 (ahead 2 ↑ behind 1 ↓)"),
-        (true, 2, 0, "feature/v1.2 (dirty) (ahead 2 ↑)"),
-        (true, 0, 1, "feature/v1.2 (dirty) (behind 1 ↓)"),
-        (true, 2, 1, "feature/v1.2 (dirty) (ahead 2 ↑ behind 1 ↓)"),
+fn porcelain_tracks_divergence_without_treating_headers_as_changes() {
+    for (header, tracking) in [
+        ("# branch.ab +0 -0", Some((0, 0))),
+        ("# branch.ab +2 -0", Some((2, 0))),
+        ("# branch.ab +0 -1", Some((0, 1))),
+        ("# branch.ab +2 -1", Some((2, 1))),
+        ("# branch.head main\n! ignored.rs\n# stash 0", None),
+        ("# branch.ab invalid", None),
     ] {
-        let state = RepoStatus {
-            dirty,
-            ahead,
-            behind,
-        };
-        assert_eq!(status_line("feature/v1.2", &state), expected);
+        assert_eq!(
+            parse_porcelain(header),
+            RepoStatus {
+                tracking,
+                ..RepoStatus::default()
+            }
+        );
     }
 }
 
@@ -144,7 +194,14 @@ fn repo_info_reads_real_repository() {
         .output()
         .unwrap();
     let info = repo_info(root.path()).unwrap();
-    assert_eq!(info.status, "main (dirty)");
+    assert_eq!(info.branch, "main");
+    assert_eq!(
+        info.status,
+        RepoStatus {
+            untracked: true,
+            ..RepoStatus::default()
+        }
+    );
     assert_eq!(info.github.as_deref(), Some("owner/repo"));
 }
 

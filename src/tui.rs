@@ -13,7 +13,7 @@ use crossterm::terminal::{
 };
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::{Frame, Terminal};
@@ -30,6 +30,23 @@ const REFRESH: Duration = Duration::from_secs(1);
 const PREVIEW_DEBOUNCE: Duration = Duration::from_millis(150);
 const DEFAULT_IDLE: Duration = Duration::from_secs(20 * 60);
 const CACHE_CAP: usize = 64;
+
+mod latte {
+    use ratatui::style::Color;
+
+    pub const BASE: Color = Color::Rgb(239, 241, 245);
+    pub const MANTLE: Color = Color::Rgb(230, 233, 239);
+    pub const SURFACE0: Color = Color::Rgb(204, 208, 218);
+    pub const SURFACE2: Color = Color::Rgb(172, 176, 190);
+    pub const TEXT: Color = Color::Rgb(76, 79, 105);
+    pub const SUBTEXT1: Color = Color::Rgb(92, 95, 119);
+    pub const MAUVE: Color = Color::Rgb(136, 57, 239);
+    pub const RED: Color = Color::Rgb(210, 15, 57);
+    pub const GREEN: Color = Color::Rgb(64, 160, 43);
+    pub const YELLOW: Color = Color::Rgb(223, 142, 29);
+    pub const TEAL: Color = Color::Rgb(23, 146, 153);
+    pub const BLUE: Color = Color::Rgb(30, 102, 245);
+}
 
 const HINTS: &str = "q quit · j/k move · / filter · ga/gr view · s sort · a attach · r resume · d delete · I idle · = zoom · ␣gg lazygit · br/bp browse";
 
@@ -912,6 +929,10 @@ fn remove_effect(app: &mut App, ctx: &Context, session: &ListedSession) {
 
 fn render(frame: &mut Frame, app: &App) {
     let area = frame.area();
+    frame.render_widget(
+        Block::default().style(Style::default().fg(latte::TEXT).bg(latte::BASE)),
+        area,
+    );
     if app.preview_maximized && app.selected_pane.is_some() {
         render_preview(frame, app, area);
         return;
@@ -942,7 +963,7 @@ fn render_list(frame: &mut Frame, app: &App, area: Rect) {
             let title = list::truncate(session.title.as_deref().unwrap_or("-"), title_width);
             ListItem::new(Line::from(vec![
                 Span::raw(" "),
-                Span::styled(logo(&session.provider), Style::default().fg(Color::Magenta)),
+                Span::styled(logo(&session.provider), Style::default().fg(latte::MAUVE)),
                 Span::raw(" "),
                 Span::styled(
                     session.status.as_str()[..1].to_ascii_uppercase(),
@@ -975,7 +996,11 @@ fn render_list(frame: &mut Frame, app: &App, area: Rect) {
                 .title(title)
                 .title_bottom(format!(" sort: {} ", app.sort.label())),
         )
-        .highlight_style(Style::default().add_modifier(Modifier::REVERSED));
+        .highlight_style(
+            Style::default()
+                .bg(latte::SURFACE0)
+                .add_modifier(Modifier::BOLD),
+        );
     let mut state = ListState::default();
     if count > 0 {
         state.select(Some(app.selected));
@@ -993,7 +1018,7 @@ fn render_details(frame: &mut Frame, app: &App, area: Rect) {
     let branch = app
         .git
         .as_ref()
-        .map(|info| info.status.clone())
+        .map(|info| info.branch.clone())
         .or_else(|| app.branch.clone())
         .unwrap_or_else(|| "-".into());
     let age = list::age_label(session.last_report_ms);
@@ -1034,10 +1059,27 @@ fn render_details(frame: &mut Frame, app: &App, area: Rect) {
     let lines: Vec<Line> = rows
         .into_iter()
         .map(|(label, value)| {
-            Line::from(vec![
-                Span::styled(format!("{label:<9}"), Style::default().fg(Color::DarkGray)),
-                Span::raw(value),
-            ])
+            let mut spans = vec![Span::styled(
+                format!("{label:<9}"),
+                Style::default().fg(latte::SUBTEXT1),
+            )];
+            if label == "branch" {
+                spans.extend(branch_spans(
+                    &value,
+                    app.git.as_ref().map(|info| &info.status),
+                ));
+                return Line::from(spans);
+            }
+            let style = match label {
+                "provider" => Style::default().fg(latte::MAUVE),
+                "status" => status_style(session.status),
+                "cwd" | "repo" => Style::default().fg(latte::BLUE),
+                "source" | "tmux" => Style::default().fg(latte::TEAL),
+                "title" => Style::default().add_modifier(Modifier::BOLD),
+                _ => Style::default(),
+            };
+            spans.push(Span::styled(value, style));
+            Line::from(spans)
         })
         .collect();
     frame.render_widget(
@@ -1046,6 +1088,57 @@ fn render_details(frame: &mut Frame, app: &App, area: Rect) {
             .wrap(Wrap { trim: false }),
         area,
     );
+}
+
+fn branch_spans(branch: &str, status: Option<&git::RepoStatus>) -> Vec<Span<'static>> {
+    let mut spans = vec![Span::styled(
+        branch.to_string(),
+        Style::default().fg(latte::GREEN),
+    )];
+    let Some(status) = status else {
+        return spans;
+    };
+    let bracket_style = Style::default()
+        .fg(latte::SURFACE2)
+        .add_modifier(Modifier::BOLD);
+    let (tracking_symbol, tracking_color) = match status.tracking {
+        Some((0, 0)) => ("≡", latte::GREEN),
+        Some((_, 0)) => ("↑", latte::RED),
+        Some((0, _)) => ("↓", latte::RED),
+        Some(_) => ("↕", latte::RED),
+        None => ("", latte::RED),
+    };
+    for (present, symbol, color, bold) in [
+        (status.conflicted, "!", latte::RED, false),
+        (status.stashed, "$", latte::RED, true),
+        (status.deleted, "✘", latte::RED, true),
+        (status.renamed, "»", latte::YELLOW, true),
+        (status.modified, "!", latte::YELLOW, true),
+        (status.staged, "+", latte::GREEN, true),
+        (status.untracked, "?", latte::RED, true),
+        (
+            status.tracking.is_some(),
+            tracking_symbol,
+            tracking_color,
+            true,
+        ),
+    ] {
+        if !present {
+            continue;
+        }
+        if spans.len() == 1 {
+            spans.push(Span::styled(" [", bracket_style));
+        }
+        let mut style = Style::default().fg(color);
+        if bold {
+            style = style.add_modifier(Modifier::BOLD);
+        }
+        spans.push(Span::styled(symbol, style));
+    }
+    if spans.len() > 1 {
+        spans.push(Span::styled("]", bracket_style));
+    }
+    spans
 }
 
 fn render_preview(frame: &mut Frame, app: &App, area: Rect) {
@@ -1063,6 +1156,10 @@ fn render_preview(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
+    frame.render_widget(
+        Block::default().style(Style::default().fg(latte::TEXT).bg(latte::MANTLE)),
+        area,
+    );
     match app.input {
         Input::Filter => {
             frame.render_widget(Paragraph::new(format!("/{}", app.filter)), area);
@@ -1080,7 +1177,7 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
             };
             frame.render_widget(
                 Paragraph::new(format!("delete {label}? (y/N)"))
-                    .style(Style::default().fg(Color::Red)),
+                    .style(Style::default().fg(latte::RED)),
                 area,
             );
         }
@@ -1128,10 +1225,10 @@ fn logo(provider: &str) -> &'static str {
 
 fn status_style(status: AgentStatus) -> Style {
     let color = match status {
-        AgentStatus::Working => Color::Green,
-        AgentStatus::Waiting => Color::Yellow,
-        AgentStatus::Idle => Color::Cyan,
-        AgentStatus::Done => Color::DarkGray,
+        AgentStatus::Working => latte::GREEN,
+        AgentStatus::Waiting => latte::YELLOW,
+        AgentStatus::Idle => latte::TEAL,
+        AgentStatus::Done => latte::SUBTEXT1,
     };
     Style::default().fg(color)
 }

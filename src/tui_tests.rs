@@ -43,18 +43,107 @@ fn app_with_sessions() -> App {
 }
 
 #[test]
+fn details_color_status_and_branch() {
+    for status in [
+        AgentStatus::Working,
+        AgentStatus::Waiting,
+        AgentStatus::Idle,
+        AgentStatus::Done,
+    ] {
+        let mut app = app_with_sessions();
+        app.sessions[0].status = status;
+        app.branch = Some("main".into());
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 20)).unwrap();
+        terminal
+            .draw(|frame| render_details(frame, &app, frame.area()))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        assert_eq!(buffer[(10, 3)].symbol(), &status.as_str()[..1]);
+        assert_eq!(buffer[(10, 3)].fg, status_style(status).fg.unwrap());
+        assert_eq!(buffer[(10, 7)].symbol(), "m");
+        assert_eq!(buffer[(10, 7)].fg, latte::GREEN);
+    }
+}
+
+#[test]
+fn details_color_git_status_symbols_independently() {
+    let mut app = app_with_sessions();
+    app.git = Some(git::RepoInfo {
+        branch: "main".into(),
+        status: git::RepoStatus {
+            conflicted: true,
+            stashed: true,
+            deleted: true,
+            renamed: true,
+            modified: true,
+            staged: true,
+            untracked: true,
+            tracking: Some((2, 1)),
+        },
+        github: None,
+    });
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 20)).unwrap();
+    terminal
+        .draw(|frame| render_details(frame, &app, frame.area()))
+        .unwrap();
+    let buffer = terminal.backend().buffer();
+    for (offset, symbol, color, bold) in [
+        (0, "m", latte::GREEN, false),
+        (5, "[", latte::SURFACE2, true),
+        (6, "!", latte::RED, false),
+        (7, "$", latte::RED, true),
+        (8, "✘", latte::RED, true),
+        (9, "»", latte::YELLOW, true),
+        (10, "!", latte::YELLOW, true),
+        (11, "+", latte::GREEN, true),
+        (12, "?", latte::RED, true),
+        (13, "↕", latte::RED, true),
+        (14, "]", latte::SURFACE2, true),
+    ] {
+        let cell = &buffer[(10 + offset, 7)];
+        assert_eq!(cell.symbol(), symbol);
+        assert_eq!(cell.fg, color, "{symbol}");
+        assert_eq!(cell.modifier.contains(Modifier::BOLD), bold, "{symbol}");
+    }
+}
+
+#[test]
+fn branch_tracking_symbols_match_starship_overrides() {
+    for (tracking, expected) in [
+        (None, "main"),
+        (Some((0, 0)), "main [≡]"),
+        (Some((2, 0)), "main [↑]"),
+        (Some((0, 1)), "main [↓]"),
+        (Some((2, 1)), "main [↕]"),
+    ] {
+        let status = git::RepoStatus {
+            tracking,
+            ..git::RepoStatus::default()
+        };
+        let spans = branch_spans("main", Some(&status));
+        let text: String = spans.iter().map(|span| span.content.as_ref()).collect();
+        assert_eq!(text, expected);
+    }
+    let spans = branch_spans("feature/!+", None);
+    assert_eq!(spans.len(), 1);
+    assert_eq!(spans[0].content, "feature/!+");
+}
+
+#[test]
 fn details_show_combined_branch_status_with_branch_only_fallback() {
     let mut app = app_with_sessions();
     app.branch = Some("main".into());
     app.git = Some(git::RepoInfo {
-        status: "main (dirty) (ahead 2 ↑ behind 1 ↓)".into(),
+        branch: "main".into(),
+        status: git::RepoStatus {
+            modified: true,
+            tracking: Some((2, 1)),
+            ..git::RepoStatus::default()
+        },
         github: Some("owner/repo".into()),
     });
-    for expected in [
-        "branch   main (dirty) (ahead 2 ↑ behind 1 ↓)",
-        "branch   main",
-        "branch   -",
-    ] {
+    for expected in ["branch   main [!↕]", "branch   main", "branch   -"] {
         let backend = ratatui::backend::TestBackend::new(80, 20);
         let mut terminal = ratatui::Terminal::new(backend).unwrap();
         terminal

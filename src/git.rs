@@ -19,8 +19,8 @@ pub fn branch(cwd: &Path) -> Option<String> {
 /// One-line repository summary for the details pane.
 #[derive(Debug, Clone)]
 pub struct RepoInfo {
-    /// Branch plus status, e.g. `main (dirty) (ahead 1 ↑ behind 2 ↓)`.
-    pub status: String,
+    pub branch: String,
+    pub status: RepoStatus,
     /// `owner/repo` when a remote points at GitHub.
     pub github: Option<String>,
 }
@@ -30,66 +30,66 @@ pub fn repo_info(cwd: &Path) -> Option<RepoInfo> {
     let output = Command::new("git")
         .arg("-C")
         .arg(cwd)
-        .args(["status", "--porcelain=v2", "--branch"])
+        .args(["status", "--porcelain=v2", "--branch", "--show-stash"])
         .output()
         .ok()?;
     if !output.status.success() {
         return None;
     }
-    let state = parse_porcelain(&String::from_utf8_lossy(&output.stdout));
-    let status = status_line(branch(cwd).as_deref().unwrap_or("-"), &state);
+    let status = parse_porcelain(&String::from_utf8_lossy(&output.stdout));
+    let branch = branch(cwd).unwrap_or_else(|| "-".into());
     let github = github_remote(cwd);
-    Some(RepoInfo { status, github })
+    Some(RepoInfo {
+        branch,
+        status,
+        github,
+    })
 }
 
-#[derive(Debug, Default, PartialEq, Eq)]
-struct RepoStatus {
-    dirty: bool,
-    ahead: u32,
-    behind: u32,
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RepoStatus {
+    pub conflicted: bool,
+    pub stashed: bool,
+    pub deleted: bool,
+    pub renamed: bool,
+    pub modified: bool,
+    pub staged: bool,
+    pub untracked: bool,
+    pub tracking: Option<(u32, u32)>,
 }
 
 fn parse_porcelain(text: &str) -> RepoStatus {
     let mut state = RepoStatus::default();
     for line in text.lines() {
         if let Some(ab) = line.strip_prefix("# branch.ab ") {
-            for part in ab.split_whitespace() {
-                if let Some(n) = part.strip_prefix('+') {
-                    state.ahead = n.parse().unwrap_or(0);
-                } else if let Some(n) = part.strip_prefix('-') {
-                    state.behind = n.parse().unwrap_or(0);
-                }
+            let mut parts = ab.split_whitespace();
+            if let (Some(ahead), Some(behind)) = (parts.next(), parts.next())
+                && let (Some(ahead), Some(behind)) =
+                    (ahead.strip_prefix('+'), behind.strip_prefix('-'))
+                && let (Ok(ahead), Ok(behind)) = (ahead.parse(), behind.parse())
+            {
+                state.tracking = Some((ahead, behind));
             }
-        } else if line.starts_with("1 ")
-            || line.starts_with("2 ")
-            || line.starts_with("u ")
-            || line.starts_with("? ")
-        {
-            state.dirty = true;
+        } else if let Some(count) = line.strip_prefix("# stash ") {
+            state.stashed = count.parse::<u32>().is_ok_and(|count| count > 0);
+        } else if line.starts_with("u ") {
+            state.conflicted = true;
+        } else if line.starts_with("? ") {
+            state.untracked = true;
+        } else if line.starts_with("1 ") || line.starts_with("2 ") {
+            let Some(xy) = line.split_whitespace().nth(1) else {
+                continue;
+            };
+            let [index, worktree] = xy.as_bytes() else {
+                continue;
+            };
+            state.staged |= *index != b'.';
+            state.modified |= matches!(worktree, b'M' | b'T');
+            state.deleted |= xy.contains('D');
+            state.renamed |= xy.contains('R');
         }
     }
     state
-}
-
-fn status_line(branch: &str, state: &RepoStatus) -> String {
-    let mut parts = vec![branch.to_string()];
-    if state.dirty {
-        parts.push("(dirty)".into());
-    }
-    let mut divergence = Vec::new();
-    if state.ahead > 0 {
-        divergence.push(format!("ahead {} ↑", state.ahead));
-    }
-    if state.behind > 0 {
-        divergence.push(format!("behind {} ↓", state.behind));
-    }
-    if !divergence.is_empty() {
-        parts.push(format!("({})", divergence.join(" ")));
-    }
-    if parts.len() == 1 {
-        parts.push("(≡)".into());
-    }
-    parts.join(" ")
 }
 
 fn github_remote(cwd: &Path) -> Option<String> {

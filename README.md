@@ -86,10 +86,12 @@ right column shows session details, plus a live tmux pane preview when the
 selected session runs in tmux.
 
 The details pane combines the Git branch and status in one row, for example
-`main (dirty) (ahead 2 ↑ behind 1 ↓)`. `(dirty)` includes staged, unstaged,
-untracked, and conflicted changes; ahead/behind counts compare with the local
-upstream tracking ref. `(≡)` means clean with no reported divergence, including
-branches without an upstream.
+`main [!+↕]`. It uses Starship-style symbols: red `!` for conflicts, `$` for
+stashes, `✘` for deletions, yellow `»` for renames, yellow `!` for modifications,
+green `+` for staged changes, and `?` for untracked files. Tracking status uses
+`↑` (ahead), `↓` (behind), `↕` (diverged), or green `≡` (up to date), relative to
+the local upstream tracking ref. Branches without an upstream omit the tracking
+symbol. Clean repositories without an upstream show only the branch name.
 
 | Key | Action |
 | --- | --- |
