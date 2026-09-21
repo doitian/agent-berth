@@ -293,6 +293,59 @@ fn resume_returns_selected_session() {
 }
 
 #[test]
+fn d_starts_confirmation_without_removing() {
+    let mut app = app_with_sessions();
+    app.handle_key(char_key('j'));
+    assert!(matches!(app.handle_key(char_key('d')), Effect::None));
+    assert_eq!(app.input, Input::Confirm);
+    assert_eq!(app.confirm_session.as_ref().unwrap().session_id, "def");
+}
+
+#[test]
+fn confirm_yes_removes_the_prompted_session() {
+    let mut app = app_with_sessions();
+    app.handle_key(char_key('j'));
+    app.handle_key(char_key('d'));
+    match app.handle_key(char_key('y')) {
+        Effect::Remove(session) => assert_eq!(session.session_id, "def"),
+        _ => panic!("expected remove effect"),
+    }
+    assert_eq!(app.input, Input::Normal);
+    assert!(app.confirm_session.is_none());
+}
+
+#[test]
+fn confirmation_target_is_fixed_at_prompt() {
+    let mut app = app_with_sessions();
+    app.handle_key(char_key('j'));
+    app.handle_key(char_key('d'));
+    app.sessions.reverse();
+    match app.handle_key(char_key('y')) {
+        Effect::Remove(session) => assert_eq!(session.session_id, "def"),
+        _ => panic!("expected remove effect"),
+    }
+}
+
+#[test]
+fn confirm_cancel_keys_keep_the_session() {
+    for cancel in [KeyCode::Esc, KeyCode::Char('n'), KeyCode::Char('N')] {
+        let mut app = app_with_sessions();
+        app.handle_key(char_key('d'));
+        assert!(matches!(app.handle_key(key(cancel)), Effect::None));
+        assert_eq!(app.input, Input::Normal);
+        assert!(app.confirm_session.is_none());
+    }
+}
+
+#[test]
+fn d_without_sessions_shows_message() {
+    let mut app = App::new();
+    assert!(matches!(app.handle_key(char_key('d')), Effect::None));
+    assert_eq!(app.input, Input::Normal);
+    assert!(app.message.is_some());
+}
+
+#[test]
 fn sort_sessions_orders_newest_first_with_stable_ties() {
     let mut a = listed("claude", "a", None);
     a.created_ms = 100;

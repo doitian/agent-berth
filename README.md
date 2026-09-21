@@ -94,6 +94,7 @@ selected session runs in tmux.
 | `=` | Toggle maximization of the tmux preview |
 | `a` | Attach to the session's tmux pane: switch-client inside tmux, attach outside; detaching returns to the TUI |
 | `r` | Resume the selected resumable session in tmux and attach to it |
+| `d` | Delete the selected session after confirming with `y` |
 | `q` | Quit |
 
 ### Resume behavior

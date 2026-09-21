@@ -31,7 +31,7 @@ const PREVIEW_DEBOUNCE: Duration = Duration::from_millis(150);
 const DEFAULT_IDLE: Duration = Duration::from_secs(20 * 60);
 const CACHE_CAP: usize = 64;
 
-const HINTS: &str = "q quit · j/k move · / filter · ga/gr view · a attach · r resume · I idle · = zoom · ␣gg lazygit · br/bp browse";
+const HINTS: &str = "q quit · j/k move · / filter · ga/gr view · a attach · r resume · d delete · I idle · = zoom · ␣gg lazygit · br/bp browse";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum View {
@@ -44,6 +44,7 @@ enum Input {
     Normal,
     Filter,
     Idle,
+    Confirm,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,6 +67,7 @@ pub(crate) enum Effect {
     Quit,
     Attach(Pane),
     Resume(ListedSession),
+    Remove(ListedSession),
     Lazygit(PathBuf),
     Browse(PathBuf, Browse),
 }
@@ -169,6 +171,7 @@ struct App {
     idle_enabled: bool,
     idle: Duration,
     idle_input: String,
+    confirm_session: Option<ListedSession>,
     pending: Option<Pending>,
     git: Option<git::RepoInfo>,
     branch: Option<String>,
@@ -204,6 +207,7 @@ impl App {
             idle_enabled: false,
             idle: DEFAULT_IDLE,
             idle_input: String::new(),
+            confirm_session: None,
             pending: None,
             git: None,
             branch: None,
@@ -470,6 +474,7 @@ impl App {
         match self.input {
             Input::Filter => return self.handle_filter_key(key),
             Input::Idle => return self.handle_idle_key(key),
+            Input::Confirm => return self.handle_confirm_key(key),
             Input::Normal => {}
         }
         if let Some(pending) = self.pending.take() {
@@ -530,6 +535,7 @@ impl App {
             }
             KeyCode::Char('a') => self.attach_selected(),
             KeyCode::Char('r') => self.resume_selected(),
+            KeyCode::Char('d') => self.confirm_remove(),
             _ => Effect::None,
         }
     }
@@ -581,6 +587,24 @@ impl App {
         Effect::None
     }
 
+    fn handle_confirm_key(&mut self, key: KeyEvent) -> Effect {
+        match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                self.input = Input::Normal;
+                match self.confirm_session.take() {
+                    Some(session) => Effect::Remove(session),
+                    None => Effect::None,
+                }
+            }
+            KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => {
+                self.input = Input::Normal;
+                self.confirm_session = None;
+                Effect::None
+            }
+            _ => Effect::None,
+        }
+    }
+
     fn toggle_idle(&mut self) {
         if self.view != View::Resumable {
             self.message = Some("idle filter applies to the resumable list (gr)".into());
@@ -625,6 +649,17 @@ impl App {
                 Effect::None
             }
         }
+    }
+
+    fn confirm_remove(&mut self) -> Effect {
+        match self.selected_session().cloned() {
+            Some(session) => {
+                self.confirm_session = Some(session);
+                self.input = Input::Confirm;
+            }
+            None => self.message = Some("no session selected".into()),
+        }
+        Effect::None
     }
 
     fn open_lazygit(&mut self) -> Effect {
@@ -716,6 +751,7 @@ pub fn run(ctx: &Context) -> Result<()> {
                         Ok(pane) => attach_effect(&mut guard, &mut app, &pane),
                         Err(err) => app.message = Some(format!("{err:#}")),
                     },
+                    Effect::Remove(session) => remove_effect(&mut app, ctx, &session),
                     Effect::Lazygit(cwd) => lazygit_effect(&mut guard, &mut app, &cwd),
                     Effect::Browse(cwd, target) => browse_effect(&mut app, &cwd, target),
                 },
@@ -817,6 +853,19 @@ fn resume_session(ctx: &Context, session: &ListedSession) -> Result<Pane> {
     let pane_id = tmux::spawn_window(&name, &window, &cwd, &session.cmdline)?;
     db::mark_removed(ctx, &session.provider, &session.session_id)?;
     tmux::find_pane(&pane_id)?.context("resumed pane not found")
+}
+
+fn remove_effect(app: &mut App, ctx: &Context, session: &ListedSession) {
+    match db::mark_removed(ctx, &session.provider, &session.session_id) {
+        Ok(()) => {
+            app.message = Some(format!(
+                "removed {} {}",
+                session.provider, session.session_id
+            ));
+            app.dirty = true;
+        }
+        Err(err) => app.message = Some(format!("remove: {err:#}")),
+    }
 }
 
 fn render(frame: &mut Frame, app: &App) {
@@ -971,6 +1020,17 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
             let prompt = format!("idle within: {}", app.idle_input);
             frame.render_widget(Paragraph::new(prompt), area);
             frame.set_cursor_position((area.x + 13 + app.idle_input.len() as u16, area.y));
+        }
+        Input::Confirm => {
+            let label = match &app.confirm_session {
+                Some(session) => format!("{} {}", session.provider, session.session_id),
+                None => "session".into(),
+            };
+            frame.render_widget(
+                Paragraph::new(format!("delete {label}? (y/N)"))
+                    .style(Style::default().fg(Color::Red)),
+                area,
+            );
         }
         Input::Normal => {
             let text = match app.pending {
