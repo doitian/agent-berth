@@ -1,5 +1,8 @@
+use std::collections::HashMap;
 use std::io::{self, Stdout};
 use std::path::{Path, PathBuf};
+use std::sync::mpsc::{self, Receiver, Sender};
+use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result, bail};
@@ -26,6 +29,7 @@ const TICK: Duration = Duration::from_millis(200);
 const REFRESH: Duration = Duration::from_secs(1);
 const PREVIEW_DEBOUNCE: Duration = Duration::from_millis(150);
 const DEFAULT_IDLE: Duration = Duration::from_secs(20 * 60);
+const CACHE_CAP: usize = 64;
 
 const HINTS: &str = "q quit · j/k move · / filter · ga/gr view · a attach · r resume · I idle · = zoom · ␣gg lazygit · br/bp browse";
 
@@ -66,6 +70,90 @@ pub(crate) enum Effect {
     Browse(PathBuf, Browse),
 }
 
+/// Blocking I/O (db, tmux, git) runs on worker threads so the UI never stalls.
+enum Fetch {
+    Refresh(Box<RefreshRequest>),
+    Preview { pane_id: String, generation: u64 },
+    Git { cwd: String, generation: u64 },
+}
+
+struct RefreshRequest {
+    ctx: Context,
+    resumable: bool,
+    idle: Option<Duration>,
+    generation: u64,
+}
+
+#[derive(Clone)]
+struct CachedGit {
+    branch: Option<String>,
+    info: Option<git::RepoInfo>,
+}
+
+enum Fetched {
+    Refresh {
+        generation: u64,
+        result: Result<(Vec<ListedSession>, Vec<Pane>)>,
+    },
+    Preview {
+        generation: u64,
+        pane_id: String,
+        content: Option<String>,
+    },
+    Git {
+        generation: u64,
+        cwd: String,
+        branch: Option<String>,
+        info: Option<git::RepoInfo>,
+    },
+}
+
+fn spawn_fetch(tx: &Sender<Fetched>, fetch: Fetch) {
+    let tx = tx.clone();
+    thread::spawn(move || {
+        let fetched = match fetch {
+            Fetch::Refresh(request) => {
+                let RefreshRequest {
+                    ctx,
+                    resumable,
+                    idle,
+                    generation,
+                } = *request;
+                let result = (|| {
+                    let mut sessions = db::query_sessions(&ctx, resumable, idle)?;
+                    sort_sessions(&mut sessions);
+                    let panes = tmux::list_panes(true).unwrap_or_default();
+                    Ok((sessions, panes))
+                })();
+                Fetched::Refresh { generation, result }
+            }
+            Fetch::Preview {
+                pane_id,
+                generation,
+            } => {
+                let content = tmux::capture_pane(&pane_id).ok();
+                Fetched::Preview {
+                    generation,
+                    pane_id,
+                    content,
+                }
+            }
+            Fetch::Git { cwd, generation } => {
+                let path = Path::new(&cwd);
+                let branch = git::branch(path);
+                let info = git::repo_info(path);
+                Fetched::Git {
+                    generation,
+                    cwd,
+                    branch,
+                    info,
+                }
+            }
+        };
+        let _ = tx.send(fetched);
+    });
+}
+
 struct App {
     view: View,
     sessions: Vec<ListedSession>,
@@ -74,6 +162,7 @@ struct App {
     selected_pane: Option<Pane>,
     preview: Option<String>,
     preview_pending_since: Option<Instant>,
+    preview_in_flight: Option<u64>,
     preview_maximized: bool,
     filter: String,
     input: Input,
@@ -82,14 +171,24 @@ struct App {
     idle_input: String,
     pending: Option<Pending>,
     git: Option<git::RepoInfo>,
+    branch: Option<String>,
     git_cwd: Option<String>,
     git_pending_since: Option<Instant>,
     message: Option<String>,
     dirty: bool,
+    needs_redraw: bool,
+    fetch_tx: Sender<Fetched>,
+    fetch_rx: Receiver<Fetched>,
+    refresh_generation: u64,
+    preview_generation: u64,
+    git_generation: u64,
+    previews: HashMap<String, String>,
+    gits: HashMap<String, CachedGit>,
 }
 
 impl App {
     fn new() -> Self {
+        let (fetch_tx, fetch_rx) = mpsc::channel();
         Self {
             view: View::Active,
             sessions: Vec::new(),
@@ -98,6 +197,7 @@ impl App {
             selected_pane: None,
             preview: None,
             preview_pending_since: None,
+            preview_in_flight: None,
             preview_maximized: false,
             filter: String::new(),
             input: Input::Normal,
@@ -106,10 +206,19 @@ impl App {
             idle_input: String::new(),
             pending: None,
             git: None,
+            branch: None,
             git_cwd: None,
             git_pending_since: None,
             message: None,
             dirty: false,
+            needs_redraw: true,
+            fetch_tx,
+            fetch_rx,
+            refresh_generation: 0,
+            preview_generation: 0,
+            git_generation: 0,
+            previews: HashMap::new(),
+            gits: HashMap::new(),
         }
     }
 
@@ -127,35 +236,114 @@ impl App {
     }
 
     fn refresh(&mut self, ctx: &Context) {
-        if let Err(err) = self.load(ctx) {
-            self.message = Some(format!("{err:#}"));
-        }
-    }
-
-    fn load(&mut self, ctx: &Context) -> Result<()> {
+        self.refresh_generation += 1;
         let (resumable, idle) = match self.view {
             View::Active => (false, None),
             View::Resumable => (true, self.idle_enabled.then_some(self.idle)),
         };
+        spawn_fetch(
+            &self.fetch_tx,
+            Fetch::Refresh(Box::new(RefreshRequest {
+                ctx: ctx.clone(),
+                resumable,
+                idle,
+                generation: self.refresh_generation,
+            })),
+        );
+    }
+
+    fn drain_fetched(&mut self) {
+        while let Ok(fetched) = self.fetch_rx.try_recv() {
+            self.handle_fetched(fetched);
+        }
+    }
+
+    fn handle_fetched(&mut self, fetched: Fetched) {
+        match fetched {
+            Fetched::Refresh { generation, result } => {
+                if generation != self.refresh_generation {
+                    return;
+                }
+                match result {
+                    Ok((sessions, panes)) => self.apply_refresh(sessions, panes),
+                    Err(err) => {
+                        self.message = Some(format!("{err:#}"));
+                        self.needs_redraw = true;
+                    }
+                }
+            }
+            Fetched::Preview {
+                generation,
+                pane_id,
+                content,
+            } => {
+                if self.preview_in_flight != Some(generation) {
+                    return;
+                }
+                self.preview_in_flight = None;
+                let Some(content) = content else {
+                    return;
+                };
+                if self.previews.get(&pane_id) != Some(&content) {
+                    if self.previews.len() >= CACHE_CAP && !self.previews.contains_key(&pane_id) {
+                        self.previews.clear();
+                    }
+                    self.previews.insert(pane_id.clone(), content.clone());
+                }
+                if self
+                    .selected_pane
+                    .as_ref()
+                    .is_some_and(|pane| pane.id == pane_id)
+                    && self.preview.as_ref() != Some(&content)
+                {
+                    self.preview = Some(content);
+                    self.needs_redraw = true;
+                }
+            }
+            Fetched::Git {
+                generation,
+                cwd,
+                branch,
+                info,
+            } => {
+                if self.gits.len() >= CACHE_CAP {
+                    self.gits.clear();
+                }
+                self.gits.insert(
+                    cwd.clone(),
+                    CachedGit {
+                        branch: branch.clone(),
+                        info: info.clone(),
+                    },
+                );
+                if generation != self.git_generation {
+                    return;
+                }
+                if self.git_cwd.as_deref() == Some(cwd.as_str()) {
+                    self.branch = branch;
+                    self.git = info;
+                    self.needs_redraw = true;
+                }
+            }
+        }
+    }
+
+    fn apply_refresh(&mut self, sessions: Vec<ListedSession>, panes: Vec<Pane>) {
         let keep = self
             .selected_session()
             .map(|session| (session.provider.clone(), session.session_id.clone()));
-        let mut sessions = db::query_sessions(ctx, resumable, idle)?;
-        sort_sessions(&mut sessions);
-        self.panes = tmux::list_panes(true).unwrap_or_default();
+        self.needs_redraw = true;
+        self.panes = panes;
         self.sessions = sessions;
         self.restore_selection(keep);
-        // Refresh captures immediately so the preview stays live.
-        if self.selected_pane.is_some() {
+        if self.selected_pane.is_some() && self.preview_in_flight.is_none() {
             self.preview_pending_since.get_or_insert_with(Instant::now);
         }
-        self.capture_preview();
         // Refresh git status immediately so the details stay live.
         if self.git_cwd.is_some() {
             self.git_pending_since.get_or_insert_with(Instant::now);
         }
-        self.capture_git();
-        Ok(())
+        self.request_git();
     }
 
     // Follow the previously selected session across reorders; fall back to
@@ -182,39 +370,74 @@ impl App {
             .selected_session()
             .and_then(|session| attach::pane_for_session(&self.panes, session))
             .cloned();
-        if pane.as_ref().map(|pane| &pane.id) != self.selected_pane.as_ref().map(|pane| &pane.id) {
-            self.preview_pending_since = Some(Instant::now());
-        }
-        self.selected_pane = pane;
+        self.select_preview(pane);
         let cwd = self
             .selected_session()
             .and_then(|session| session.cwd.clone())
             .filter(|cwd| !cwd.is_empty());
         if cwd != self.git_cwd {
             self.git_cwd = cwd;
-            self.git = None;
+            let cached = self.git_cwd.as_ref().and_then(|cwd| self.gits.get(cwd));
+            self.branch = cached.and_then(|cached| cached.branch.clone());
+            self.git = cached.and_then(|cached| cached.info.clone());
             self.git_pending_since = Some(Instant::now());
         }
     }
 
-    fn capture_preview(&mut self) {
-        if self.preview_pending_since.take().is_none() {
-            return;
+    fn select_preview(&mut self, pane: Option<Pane>) {
+        if pane != self.selected_pane {
+            self.needs_redraw = true;
         }
-        self.preview = self
-            .selected_pane
-            .as_ref()
-            .and_then(|pane| tmux::capture_pane(&pane.id).ok());
+        if pane.as_ref().map(|pane| &pane.id) != self.selected_pane.as_ref().map(|pane| &pane.id) {
+            self.preview_pending_since = pane.as_ref().map(|_| Instant::now());
+            self.preview = pane
+                .as_ref()
+                .and_then(|pane| self.previews.get(&pane.id).cloned());
+        }
+        self.selected_pane = pane;
     }
 
-    fn capture_git(&mut self) {
+    fn next_preview_fetch(&mut self, now: Instant) -> Option<Fetch> {
+        if self.preview_in_flight.is_some()
+            || !self
+                .preview_pending_since
+                .is_some_and(|since| now.duration_since(since) >= PREVIEW_DEBOUNCE)
+        {
+            return None;
+        }
+        self.preview_pending_since = None;
+        let pane = self.selected_pane.as_ref()?;
+        self.preview_generation += 1;
+        self.preview_in_flight = Some(self.preview_generation);
+        Some(Fetch::Preview {
+            pane_id: pane.id.clone(),
+            generation: self.preview_generation,
+        })
+    }
+
+    fn request_preview(&mut self) {
+        if let Some(fetch) = self.next_preview_fetch(Instant::now()) {
+            spawn_fetch(&self.fetch_tx, fetch);
+        }
+    }
+
+    fn request_git(&mut self) {
         if self.git_pending_since.take().is_none() {
             return;
         }
-        self.git = self
-            .git_cwd
-            .as_ref()
-            .and_then(|cwd| git::repo_info(Path::new(cwd)));
+        let Some(cwd) = self.git_cwd.clone() else {
+            self.git = None;
+            self.branch = None;
+            return;
+        };
+        self.git_generation += 1;
+        spawn_fetch(
+            &self.fetch_tx,
+            Fetch::Git {
+                cwd,
+                generation: self.git_generation,
+            },
+        );
     }
 
     fn move_by(&mut self, delta: i32) {
@@ -239,6 +462,7 @@ impl App {
         if key.kind != KeyEventKind::Press {
             return Effect::None;
         }
+        self.needs_redraw = true;
         self.message = None;
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
             return Effect::Quit;
@@ -477,20 +701,26 @@ pub fn run(ctx: &Context) -> Result<()> {
             app.refresh(ctx);
             last_refresh = Instant::now();
         }
-        guard.terminal.draw(|frame| render(frame, &app))?;
-        if event::poll(TICK).context("poll terminal events")?
-            && let Event::Key(key) = event::read().context("read terminal event")?
-        {
-            match app.handle_key(key) {
-                Effect::None => {}
-                Effect::Quit => break,
-                Effect::Attach(pane) => attach_effect(&mut guard, &mut app, &pane),
-                Effect::Resume(session) => match resume_session(ctx, &session) {
-                    Ok(pane) => attach_effect(&mut guard, &mut app, &pane),
-                    Err(err) => app.message = Some(format!("{err:#}")),
+        app.drain_fetched();
+        if app.needs_redraw {
+            guard.terminal.draw(|frame| render(frame, &app))?;
+            app.needs_redraw = false;
+        }
+        if event::poll(TICK).context("poll terminal events")? {
+            match event::read().context("read terminal event")? {
+                Event::Key(key) => match app.handle_key(key) {
+                    Effect::None => {}
+                    Effect::Quit => break,
+                    Effect::Attach(pane) => attach_effect(&mut guard, &mut app, &pane),
+                    Effect::Resume(session) => match resume_session(ctx, &session) {
+                        Ok(pane) => attach_effect(&mut guard, &mut app, &pane),
+                        Err(err) => app.message = Some(format!("{err:#}")),
+                    },
+                    Effect::Lazygit(cwd) => lazygit_effect(&mut guard, &mut app, &cwd),
+                    Effect::Browse(cwd, target) => browse_effect(&mut app, &cwd, target),
                 },
-                Effect::Lazygit(cwd) => lazygit_effect(&mut guard, &mut app, &cwd),
-                Effect::Browse(cwd, target) => browse_effect(&mut app, &cwd, target),
+                Event::Resize(..) => app.needs_redraw = true,
+                _ => {}
             }
         }
         if app.dirty {
@@ -498,17 +728,12 @@ pub fn run(ctx: &Context) -> Result<()> {
             app.dirty = false;
             last_refresh = Instant::now();
         }
-        if app
-            .preview_pending_since
-            .is_some_and(|since| since.elapsed() >= PREVIEW_DEBOUNCE)
-        {
-            app.capture_preview();
-        }
+        app.request_preview();
         if app
             .git_pending_since
             .is_some_and(|since| since.elapsed() >= PREVIEW_DEBOUNCE)
         {
-            app.capture_git();
+            app.request_git();
         }
     }
     Ok(())
@@ -666,7 +891,7 @@ fn render_details(frame: &mut Frame, app: &App, area: Rect) {
         return;
     };
     let cwd = session.cwd.clone().unwrap_or_else(|| "-".into());
-    let branch = git::branch(std::path::Path::new(&cwd)).unwrap_or_else(|| "-".into());
+    let branch = app.branch.clone().unwrap_or_else(|| "-".into());
     let age = list::age_label(session.last_report_ms);
     let command = if session.cmdline.is_empty() {
         "-".into()

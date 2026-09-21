@@ -338,6 +338,212 @@ fn restore_selection_clamps_when_session_is_gone() {
 }
 
 #[test]
+fn fetched_results_are_cached_and_applied() {
+    let mut app = App::new();
+    app.git_cwd = Some("/tmp/project".into());
+    app.git_generation = 1;
+    app.handle_fetched(Fetched::Git {
+        generation: 1,
+        cwd: "/tmp/project".into(),
+        branch: Some("main".into()),
+        info: None,
+    });
+    assert_eq!(app.branch.as_deref(), Some("main"));
+    assert_eq!(
+        app.gits
+            .get("/tmp/project")
+            .and_then(|cached| cached.branch.as_deref()),
+        Some("main")
+    );
+}
+
+#[test]
+fn fetched_refresh_preserves_selection_after_navigation_and_reorder() {
+    let mut app = app_with_sessions();
+    for session in &mut app.sessions {
+        session.cwd = None;
+    }
+    app.refresh_generation = 1;
+    let mut sessions = app.sessions.clone();
+    sessions.reverse();
+    app.handle_key(char_key('j'));
+    app.handle_key(char_key('j'));
+    app.handle_fetched(Fetched::Refresh {
+        generation: 1,
+        result: Ok((sessions, Vec::new())),
+    });
+    assert_eq!(app.selected, 0);
+    assert_eq!(app.selected_session().unwrap().session_id, "ghi");
+}
+
+#[test]
+fn stale_fetches_are_cached_but_not_applied() {
+    let mut app = App::new();
+    app.git_cwd = Some("/tmp/project".into());
+    app.git_generation = 2;
+    app.handle_fetched(Fetched::Git {
+        generation: 1,
+        cwd: "/tmp/project".into(),
+        branch: Some("main".into()),
+        info: None,
+    });
+    assert_eq!(app.branch, None);
+    assert!(app.gits.contains_key("/tmp/project"));
+}
+
+#[test]
+fn reselecting_restores_cached_git_details() {
+    let mut app = app_with_sessions();
+    app.sessions[1].cwd = Some("/tmp/other".into());
+    for (cwd, branch) in [("/tmp/project", "main"), ("/tmp/other", "dev")] {
+        app.gits.insert(
+            cwd.into(),
+            CachedGit {
+                branch: Some(branch.into()),
+                info: None,
+            },
+        );
+    }
+    app.handle_key(char_key('j'));
+    assert_eq!(app.branch.as_deref(), Some("dev"));
+    app.handle_key(char_key('k'));
+    assert_eq!(app.branch.as_deref(), Some("main"));
+}
+
+fn preview_pane(id: &str) -> Pane {
+    Pane {
+        id: id.into(),
+        pid: 1,
+        session: "test".into(),
+        window: "0".into(),
+        window_name: "agent".into(),
+        path: "/tmp/project".into(),
+    }
+}
+
+fn start_preview(app: &mut App) -> (String, u64) {
+    let now = app.preview_pending_since.unwrap() + PREVIEW_DEBOUNCE;
+    match app.next_preview_fetch(now) {
+        Some(Fetch::Preview {
+            pane_id,
+            generation,
+        }) => (pane_id, generation),
+        _ => panic!("expected preview fetch"),
+    }
+}
+
+fn finish_preview(app: &mut App, request: (String, u64), content: Option<&str>) {
+    app.handle_fetched(Fetched::Preview {
+        pane_id: request.0,
+        generation: request.1,
+        content: content.map(str::to_string),
+    });
+}
+
+#[test]
+fn preview_navigation_is_debounced_to_latest_selection() {
+    let mut app = App::new();
+    app.select_preview(Some(preview_pane("%1")));
+    let since = app.preview_pending_since.unwrap();
+    assert!(app.next_preview_fetch(since).is_none());
+    app.select_preview(Some(preview_pane("%2")));
+    let since = app.preview_pending_since.unwrap();
+    assert!(
+        app.next_preview_fetch(since + PREVIEW_DEBOUNCE - Duration::from_millis(1))
+            .is_none()
+    );
+    assert_eq!(start_preview(&mut app).0, "%2");
+    assert!(app.preview_pending_since.is_none());
+}
+
+#[test]
+fn preview_serializes_fetches_and_preserves_latest_pending_selection() {
+    let mut app = App::new();
+    app.select_preview(Some(preview_pane("%1")));
+    let first = start_preview(&mut app);
+    app.select_preview(Some(preview_pane("%2")));
+    app.select_preview(Some(preview_pane("%3")));
+    let since = app.preview_pending_since.unwrap();
+    assert!(app.next_preview_fetch(since + REFRESH).is_none());
+    assert_eq!(app.preview_pending_since, Some(since));
+    app.needs_redraw = false;
+    finish_preview(&mut app, first, Some("first pane"));
+    assert!(!app.needs_redraw);
+    assert!(app.preview.is_none());
+    assert_eq!(
+        app.previews.get("%1").map(String::as_str),
+        Some("first pane")
+    );
+    assert_eq!(start_preview(&mut app).0, "%3");
+}
+
+#[test]
+fn preview_reselection_keeps_cache_until_changed_content_arrives() {
+    let mut app = App::new();
+    app.select_preview(Some(preview_pane("%1")));
+    let first = start_preview(&mut app);
+    finish_preview(&mut app, first, Some("cached"));
+    app.select_preview(Some(preview_pane("%2")));
+    app.select_preview(Some(preview_pane("%1")));
+    assert_eq!(app.preview.as_deref(), Some("cached"));
+    let second = start_preview(&mut app);
+    assert_eq!(app.preview.as_deref(), Some("cached"));
+    app.needs_redraw = false;
+    finish_preview(&mut app, second, Some("cached"));
+    assert!(!app.needs_redraw);
+    app.preview_pending_since = Some(Instant::now());
+    let third = start_preview(&mut app);
+    finish_preview(&mut app, third, Some("updated"));
+    assert!(app.needs_redraw);
+    assert_eq!(app.preview.as_deref(), Some("updated"));
+}
+
+#[test]
+fn failed_preview_preserves_cache_and_allows_retry() {
+    let mut app = App::new();
+    app.previews.insert("%1".into(), "cached".into());
+    app.select_preview(Some(preview_pane("%1")));
+    let request = start_preview(&mut app);
+    app.needs_redraw = false;
+    finish_preview(&mut app, request, None);
+    assert!(app.preview_in_flight.is_none());
+    assert_eq!(app.preview.as_deref(), Some("cached"));
+    assert!(!app.needs_redraw);
+    app.preview_pending_since = Some(Instant::now());
+    assert_eq!(start_preview(&mut app).0, "%1");
+}
+
+#[test]
+fn outdated_preview_completion_cannot_release_current_fetch() {
+    let mut app = App::new();
+    app.select_preview(Some(preview_pane("%1")));
+    let first = start_preview(&mut app);
+    finish_preview(&mut app, first.clone(), Some("first"));
+    app.preview_pending_since = Some(Instant::now());
+    let second = start_preview(&mut app);
+    app.needs_redraw = false;
+    finish_preview(&mut app, first, Some("outdated"));
+    assert_eq!(app.preview_in_flight, Some(second.1));
+    assert_eq!(app.preview.as_deref(), Some("first"));
+    assert!(!app.needs_redraw);
+}
+
+#[test]
+fn deselecting_preview_clears_pending_work_and_ignores_completion() {
+    let mut app = App::new();
+    app.select_preview(Some(preview_pane("%1")));
+    let request = start_preview(&mut app);
+    app.select_preview(None);
+    app.needs_redraw = false;
+    finish_preview(&mut app, request, Some("old pane"));
+    assert!(app.preview.is_none());
+    assert!(app.preview_pending_since.is_none());
+    assert!(app.preview_in_flight.is_none());
+    assert!(!app.needs_redraw);
+    assert!(app.next_preview_fetch(Instant::now() + REFRESH).is_none());
+}
+
+#[test]
 fn logos_cover_known_providers() {
     for provider in ["claude", "codex", "grok", "opencode", "pi"] {
         assert_ne!(logo(provider), logo("unknown"), "{provider}");

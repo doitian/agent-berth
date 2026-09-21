@@ -17,6 +17,7 @@ pub fn branch(cwd: &Path) -> Option<String> {
 }
 
 /// One-line repository summary for the details pane.
+#[derive(Debug, Clone)]
 pub struct RepoInfo {
     /// Branch plus compact status, e.g. `main +1 ~2 ?3 ↑1 ↓2`.
     pub status: String,
