@@ -11,6 +11,7 @@ fn listed(cwd: Option<&str>, title: Option<&str>) -> ListedSession {
         cwd: cwd.map(str::to_string),
         cmdline: Vec::new(),
         pid: Some(1),
+        created_ms: 0,
         last_report_ms: 0,
         kind: SessionKind::Hook,
         parent_id: None,

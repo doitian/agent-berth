@@ -11,6 +11,7 @@ fn listed(provider: &str, session_id: &str, title: Option<&str>) -> ListedSessio
         cwd: Some("/tmp/project".into()),
         cmdline: Vec::new(),
         pid: Some(1),
+        created_ms: 0,
         last_report_ms: 0,
         kind: SessionKind::Hook,
         parent_id: None,
@@ -231,6 +232,51 @@ fn resume_returns_selected_session() {
         Effect::Resume(session) => assert_eq!(session.session_id, "def"),
         _ => panic!("expected resume effect"),
     }
+}
+
+#[test]
+fn sort_sessions_orders_newest_first_with_stable_ties() {
+    let mut a = listed("claude", "a", None);
+    a.created_ms = 100;
+    let mut b = listed("codex", "b", None);
+    b.created_ms = 300;
+    let mut c = listed("pi", "c", None);
+    c.created_ms = 200;
+    let mut d = listed("claude", "d", None);
+    d.created_ms = 200;
+    let mut sessions = vec![a, b, c, d];
+    sort_sessions(&mut sessions);
+    let order: Vec<&str> = sessions.iter().map(|s| s.session_id.as_str()).collect();
+    assert_eq!(order, ["b", "d", "c", "a"]);
+}
+
+#[test]
+fn restore_selection_follows_session_across_reorder() {
+    let mut app = app_with_sessions();
+    app.handle_key(char_key('j'));
+    app.handle_key(char_key('j'));
+    assert_eq!(app.selected, 2);
+    let keep = app
+        .selected_session()
+        .map(|s| (s.provider.clone(), s.session_id.clone()));
+    app.sessions.reverse();
+    app.restore_selection(keep);
+    assert_eq!(app.selected, 0);
+    assert_eq!(app.selected_session().unwrap().session_id, "ghi");
+}
+
+#[test]
+fn restore_selection_clamps_when_session_is_gone() {
+    let mut app = app_with_sessions();
+    app.handle_key(char_key('j'));
+    app.handle_key(char_key('j'));
+    let keep = app
+        .selected_session()
+        .map(|s| (s.provider.clone(), s.session_id.clone()));
+    app.sessions.pop();
+    app.restore_selection(keep);
+    assert_eq!(app.selected, 1);
+    assert_eq!(app.selected_session().unwrap().session_id, "def");
 }
 
 #[test]

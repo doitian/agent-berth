@@ -116,18 +116,34 @@ impl App {
             View::Active => (false, None),
             View::Resumable => (true, self.idle_enabled.then_some(self.idle)),
         };
+        let keep = self
+            .selected_session()
+            .map(|session| (session.provider.clone(), session.session_id.clone()));
         let mut sessions = db::query_sessions(ctx, resumable, idle)?;
-        sessions.sort_by_key(|session| std::cmp::Reverse(session.last_report_ms));
+        sort_sessions(&mut sessions);
         self.panes = tmux::list_panes(true).unwrap_or_default();
         self.sessions = sessions;
-        self.clamp_selection();
-        self.update_selection();
+        self.restore_selection(keep);
         // Refresh captures immediately so the preview stays live.
         if self.selected_pane.is_some() {
             self.preview_pending_since.get_or_insert_with(Instant::now);
         }
         self.capture_preview();
         Ok(())
+    }
+
+    // Follow the previously selected session across reorders; fall back to
+    // clamping the index when it is gone.
+    fn restore_selection(&mut self, keep: Option<(String, String)>) {
+        if let Some((provider, session_id)) = keep
+            && let Some(pos) = self.filtered().iter().position(|session| {
+                session.provider == provider && session.session_id == session_id
+            })
+        {
+            self.selected = pos;
+        }
+        self.clamp_selection();
+        self.update_selection();
     }
 
     fn clamp_selection(&mut self) {
@@ -596,6 +612,15 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
             frame.render_widget(Paragraph::new(text), area);
         }
     }
+}
+
+// Newest first; ties broken deterministically so the order is stable.
+fn sort_sessions(sessions: &mut [ListedSession]) {
+    sessions.sort_by(|a, b| {
+        b.created_ms
+            .cmp(&a.created_ms)
+            .then_with(|| (&a.provider, &a.session_id).cmp(&(&b.provider, &b.session_id)))
+    });
 }
 
 fn logo(provider: &str) -> &'static str {
