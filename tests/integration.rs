@@ -65,6 +65,7 @@ fn hook_clients_report_lifecycle_over_ipc() {
             assert_eq!(sessions[0]["session_id"], sid);
             assert_eq!(sessions[0]["status"], status, "{provider} {event}");
             assert_eq!(sessions[0]["cwd"], sandbox.project().to_str().unwrap());
+            assert_eq!(sessions[0]["pid"], std::process::id());
         }
         sandbox.hook(provider, &sid, "SessionEnd", Some(std::process::id()));
         assert!(sandbox.sessions(false).is_empty());
@@ -289,6 +290,72 @@ fn rm_hides_selected_sessions_until_they_report_again() {
             .any(|session| session["session_id"] == "drop-a"),
         "{sessions:?}"
     );
+}
+
+#[test]
+fn codex_hook_without_pid_detects_agent_and_tmux_pane() {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    let mut sandbox = Sandbox::new();
+    let mut paths: Vec<_> = std::env::split_paths(&sandbox.env[OsStr::new("PATH")]).collect();
+    paths.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
+    sandbox
+        .env
+        .insert("PATH".into(), std::env::join_paths(paths).unwrap());
+    sandbox
+        .env
+        .insert("FIXTURE_BERTH_BIN".into(), support::BERTH.into());
+    sandbox.start();
+
+    let mut agent = sandbox
+        .command(
+            sandbox
+                .root
+                .path()
+                .join("bin")
+                .join(format!("codex{}", std::env::consts::EXE_SUFFIX)),
+        )
+        .arg("test-hook")
+        .stdin(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let pid = agent.id();
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let payload = json!({
+            "session_id": "codex-no-pid",
+            "hook_event_name": "UserPromptSubmit",
+            "cwd": sandbox.project(),
+        });
+        write!(agent.stdin.take().unwrap(), "{payload}").unwrap();
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while !sandbox.root.path().join("agent-report.txt").exists() {
+            assert!(agent.try_wait().unwrap().is_none(), "Codex fixture exited");
+            assert!(Instant::now() < deadline, "Codex hook did not finish");
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        let sessions = sandbox.sessions(false);
+        assert_eq!(sessions.len(), 1, "{sessions:?}");
+        assert_eq!(sessions[0]["pid"], pid);
+
+        sandbox.env.insert(
+            "FIXTURE_TMUX_PANES".into(),
+            format!(
+                "%7\t{pid}\tproject\t0\tcodex\t{}",
+                sandbox.project().display()
+            )
+            .into(),
+        );
+        let output = success(sandbox.berth().args(["attach", "--dry-run"]));
+        let text = String::from_utf8_lossy(&output.stdout);
+        assert!(text.starts_with("%7\tcodex\tworking\t"), "{text}");
+        assert!(text.contains("codex-no-pid"), "{text}");
+    }));
+    let _ = agent.kill();
+    let _ = agent.wait();
+    if let Err(error) = result {
+        std::panic::resume_unwind(error);
+    }
 }
 
 #[test]

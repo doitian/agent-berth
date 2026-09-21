@@ -251,13 +251,19 @@ impl Sandbox {
     }
 
     pub fn hook(&self, provider: &str, sid: &str, event: &str, pid: Option<u32>) {
-        self.notify(
-            provider,
-            json!({
-                "session_id": sid, "hook_event_name": event,
-                "cwd": self.project(), "pid": pid,
-            }),
-        );
+        let payload = json!({
+            "session_id": sid, "hook_event_name": event,
+            "cwd": self.project(), "pid": pid,
+        });
+        if pid.is_some() {
+            self.notify(provider, payload);
+        } else {
+            // Synthetic sessions must not inherit a Codex process running the test suite.
+            let response = self.request(json!({
+                "op": "notify", "provider": provider, "payload": payload,
+            }));
+            assert_eq!(response["status"], "ok", "{response}");
+        }
     }
 
     pub fn fixture_agent(&self) -> PathBuf {
