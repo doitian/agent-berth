@@ -30,19 +30,27 @@ pub fn multi(sessions: &[ListedSession], patterns: &[String]) -> Result<Vec<List
 }
 
 fn filter(sessions: &[ListedSession], patterns: &[String]) -> Vec<ListedSession> {
+    let terms = terms(patterns);
     sessions
         .iter()
-        .filter(|session| matches(session, patterns))
+        .filter(|session| matches_terms(session, &terms))
         .cloned()
         .collect()
 }
 
 pub(crate) fn matches(session: &ListedSession, patterns: &[String]) -> bool {
-    let terms: Vec<String> = patterns
+    matches_terms(session, &terms(patterns))
+}
+
+fn terms(patterns: &[String]) -> Vec<String> {
+    patterns
         .iter()
         .flat_map(|pattern| pattern.split_whitespace())
         .map(str::to_ascii_lowercase)
-        .collect();
+        .collect()
+}
+
+fn matches_terms(session: &ListedSession, terms: &[String]) -> bool {
     let haystack = search_text(session);
     terms.iter().all(|term| haystack.contains(term.as_str()))
 }
