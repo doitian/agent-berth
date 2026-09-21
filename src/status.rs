@@ -7,6 +7,7 @@ pub enum AgentEventKind {
     PromptSubmit,
     ToolStart,
     ToolComplete,
+    PermissionReview,
     PermissionRequest,
     QuestionAsked,
     Notification,
@@ -144,7 +145,7 @@ impl AgentSession {
             self.parent_id = event.parent_id.clone();
         }
         match event.kind {
-            AgentEventKind::PromptSubmit => {
+            AgentEventKind::PromptSubmit | AgentEventKind::PermissionReview => {
                 self.status = AgentStatus::Working;
                 self.background_only = false;
             }

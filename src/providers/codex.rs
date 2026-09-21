@@ -37,7 +37,11 @@ pub fn apply_hook(sessions: &mut BTreeMap<String, AgentSession>, event: &Value) 
         "PreToolUse" => Some(AgentEventKind::ToolStart),
         "PostToolUse" => Some(AgentEventKind::ToolComplete),
         "SessionEnd" => Some(AgentEventKind::SessionEnd),
-        "PermissionRequest" if !uses_auto_review(event) => Some(AgentEventKind::PermissionRequest),
+        "PermissionRequest" => Some(if uses_auto_review(event) {
+            AgentEventKind::PermissionReview
+        } else {
+            AgentEventKind::PermissionRequest
+        }),
         "Stop" | "Interrupt" => Some(AgentEventKind::Stop),
         "SubagentStop" => {
             if string_field(event, &["agent_id", "agentId"]).is_none() {

@@ -31,6 +31,31 @@ fn automatic_approval_review_does_not_wait_for_user_input() {
 }
 
 #[test]
+fn automatic_approval_review_recovers_a_persisted_waiting_session() {
+    let root = tempdir().unwrap();
+    let transcript = root.path().join("rollout.jsonl");
+    std::fs::write(
+        &transcript,
+        "{\"type\":\"turn_context\",\"payload\":{\"turn_id\":\"turn\",\"approvals_reviewer\":\"auto_review\"}}\n",
+    )
+    .unwrap();
+    let mut sessions: BTreeMap<String, AgentSession> = serde_json::from_value(json!({
+        "s": {"status":"waiting", "background_only":true, "title":"Keep this title"}
+    }))
+    .unwrap();
+    apply_hook(
+        &mut sessions,
+        &json!({
+            "session_id":"s", "hook_event_name":"PermissionRequest",
+            "turn_id":"turn", "transcript_path":transcript
+        }),
+    );
+    assert_eq!(sessions["s"].status, AgentStatus::Working);
+    assert!(!sessions["s"].background_only);
+    assert_eq!(sessions["s"].title.as_deref(), Some("Keep this title"));
+}
+
+#[test]
 fn permission_requests_wait_unless_active_turn_confirms_auto_review() {
     let root = tempdir().unwrap();
     let transcript = root.path().join("rollout.jsonl");
