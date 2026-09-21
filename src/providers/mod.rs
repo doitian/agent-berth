@@ -125,11 +125,11 @@ pub fn discover_claude(
     claude::discover(ctx, sessions)
 }
 
-pub fn drop_archived_codex(
+pub fn discover_codex(
     ctx: &AppContext,
     sessions: &mut std::collections::BTreeMap<String, AgentSession>,
 ) -> bool {
-    codex::drop_archived(ctx, sessions)
+    codex::discover(ctx, sessions)
 }
 
 pub fn apply_hook(

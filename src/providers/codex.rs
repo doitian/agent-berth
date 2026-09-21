@@ -74,6 +74,36 @@ fn source_for(event: &Value) -> Source {
     Source::Cli
 }
 
+pub fn discover(ctx: &Context, sessions: &mut BTreeMap<String, AgentSession>) -> bool {
+    let mut changed = drop_archived(ctx, sessions);
+    let Ok(index) = std::fs::read_to_string(ctx.codex_home.join("session_index.jsonl")) else {
+        return changed;
+    };
+    let mut seen = HashSet::new();
+    // The index is append-only; the last valid name for each session wins.
+    for line in index.lines().rev() {
+        let Ok(row) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        let (Some(id), Some(title)) = (
+            string_field(&row, &["id"]),
+            string_field(&row, &["thread_name"]),
+        ) else {
+            continue;
+        };
+        if !seen.insert(id.to_string()) {
+            continue;
+        }
+        if let Some(session) = sessions.get_mut(id)
+            && session.title.as_deref() != Some(title)
+        {
+            session.title = Some(title.to_string());
+            changed = true;
+        }
+    }
+    changed
+}
+
 pub fn drop_archived(ctx: &Context, sessions: &mut BTreeMap<String, AgentSession>) -> bool {
     let archived = session_ids_in(&ctx.codex_home.join("archived_sessions"));
     let known = {

@@ -74,6 +74,36 @@ fn hook_clients_report_lifecycle_over_ipc() {
 }
 
 #[test]
+fn codex_titles_refresh_from_index_without_hook_events() {
+    use std::io::Write;
+
+    let mut sandbox = Sandbox::new();
+    sandbox.start();
+    sandbox.hook("codex", "s", "UserPromptSubmit", None);
+    assert!(sandbox.sessions(false)[0]["title"].is_null());
+
+    let mut index = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(sandbox.root.path().join("codex/session_index.jsonl"))
+        .unwrap();
+    for title in ["Original title", "Manually renamed title"] {
+        writeln!(
+            index,
+            "{}",
+            json!({"id": "s", "thread_name": title, "updated_at": "2026-09-22T00:00:00Z"})
+        )
+        .unwrap();
+        assert_eq!(sandbox.sessions(false)[0]["title"], title);
+    }
+
+    sandbox.stop();
+    let offline = success(sandbox.berth().args(["list", "--json", "--resumable"]));
+    let sessions: Vec<Value> = serde_json::from_slice(&offline.stdout).unwrap();
+    assert_eq!(sessions[0]["title"], "Manually renamed title");
+}
+
+#[test]
 fn plugin_clients_report_snapshots_and_blocking_over_ipc() {
     let mut sandbox = Sandbox::new();
     sandbox.start();

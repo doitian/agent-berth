@@ -4,6 +4,57 @@ use crate::status::AgentStatus;
 use tempfile::tempdir;
 
 #[test]
+fn discovers_latest_index_title_without_changing_activity() {
+    let root = tempdir().unwrap();
+    let ctx = AppContext::for_test(root.path(), &root.path().join("agent-berth"));
+    std::fs::create_dir_all(&ctx.codex_home).unwrap();
+    std::fs::write(
+        ctx.codex_home.join("session_index.jsonl"),
+        concat!(
+            "{\"id\":\"s\",\"thread_name\":\"Original title\"}\n",
+            "invalid json\n",
+            "{\"id\":\"untracked\",\"thread_name\":\"Other session\"}\n",
+            "{\"id\":\"s\",\"thread_name\":\"Renamed session\"}\n",
+            "{\"id\":\"s\",\"thread_name\":42}\n",
+            "{\"id\":\"s\",\"thread_name\":\"\"}\n",
+            "{\"id\":\"s\",\"thread_name\":",
+        ),
+    )
+    .unwrap();
+    let mut sessions = BTreeMap::from([(
+        "s".into(),
+        AgentSession {
+            status: AgentStatus::Done,
+            last_report_ms: 123,
+            ..AgentSession::default()
+        },
+    )]);
+
+    assert!(discover(&ctx, &mut sessions));
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions["s"].title.as_deref(), Some("Renamed session"));
+    assert_eq!(sessions["s"].status, AgentStatus::Done);
+    assert_eq!(sessions["s"].last_report_ms, 123);
+    assert!(!discover(&ctx, &mut sessions));
+}
+
+#[test]
+fn missing_index_preserves_hook_title() {
+    let root = tempdir().unwrap();
+    let ctx = AppContext::for_test(root.path(), &root.path().join("agent-berth"));
+    let mut sessions = BTreeMap::from([(
+        "s".into(),
+        AgentSession {
+            title: Some("Hook title".into()),
+            ..AgentSession::default()
+        },
+    )]);
+
+    assert!(!discover(&ctx, &mut sessions));
+    assert_eq!(sessions["s"].title.as_deref(), Some("Hook title"));
+}
+
+#[test]
 fn drops_sessions_moved_to_archived_sessions() {
     let root = tempdir().unwrap();
     let ctx = AppContext::for_test(root.path(), &root.path().join("agent-berth"));

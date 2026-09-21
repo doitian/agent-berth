@@ -240,10 +240,8 @@ impl Store {
     pub fn discover(&mut self, ctx: &crate::paths::Context) -> bool {
         let claude =
             crate::providers::discover_claude(ctx, self.hooks.entry("claude".into()).or_default());
-        let codex = crate::providers::drop_archived_codex(
-            ctx,
-            self.hooks.entry("codex".into()).or_default(),
-        );
+        let codex =
+            crate::providers::discover_codex(ctx, self.hooks.entry("codex".into()).or_default());
         claude || codex
     }
 
