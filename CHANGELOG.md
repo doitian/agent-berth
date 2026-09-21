@@ -2,6 +2,28 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.1.0](https://github.com/doitian/agent-berth/releases/tag/v1.1.0) - 2026-09-21
+
+### Added
+
+- Add interactive TUI mode (#1) ([cebd277](https://github.com/doitian/agent-berth/commit/cebd2778b146a87caa664e6ac25e278411128d37))
+- Add: rewrite pi skill block titles as slash commands ([58d9d39](https://github.com/doitian/agent-berth/commit/58d9d3972e35161aa3566e015a256d8f5a654437))
+- Add git status and GitHub shortcuts to the tui ([272c9dc](https://github.com/doitian/agent-berth/commit/272c9dcc6728fc1b8e478cb76130805e3c34920c))
+- Add d shortcut to delete a session from the tui ([80707e2](https://github.com/doitian/agent-berth/commit/80707e2fd97573c655a814b003b83267b6247a3b))
+- Add session sort shortcuts to the tui ([5ff2ea5](https://github.com/doitian/agent-berth/commit/5ff2ea5b02a4d6ad53975fdc80ca9ca72e9cd3a1))
+
+### Changed
+
+- Always scroll attach preview to the pane bottom ([74bd172](https://github.com/doitian/agent-berth/commit/74bd1724aca5bbe72424e5249022beb63ad550c6))
+- Make the TUI session list order stable (#3) ([1b5830a](https://github.com/doitian/agent-berth/commit/1b5830a4ea0873f0dd718b22175859badb70bfcc))
+- Rework git branch and status display in tui details (#5) ([71cc06d](https://github.com/doitian/agent-berth/commit/71cc06d9d11f7acf7b46f6392f5d160bb1f101a6))
+
+### Fixed
+
+- Fix: wait for server shutdown on Windows service stop ([21bd27c](https://github.com/doitian/agent-berth/commit/21bd27cd833d04a26ee13c7237882434b47d82bb))
+- Fix blocking session navigation and cache pane previews ([b67014c](https://github.com/doitian/agent-berth/commit/b67014c274ec441c46d4af80c6601bb6832a5e2b))
+- Fix missing codex session titles ([99841d7](https://github.com/doitian/agent-berth/commit/99841d795185825a502ee7b13134f8b576ab567a))
+
 ## [1.0.1](https://github.com/doitian/agent-berth/releases/tag/v1.0.1) - 2026-09-20
 
 ### Added
