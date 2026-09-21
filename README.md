@@ -103,12 +103,20 @@ symbol. Clean repositories without an upstream show only the branch name.
 | `sa` | Sort by agent provider alphabetically |
 | `ss` | Sort by status alphabetically |
 | `sd` | Sort by working directory alphabetically, missing directories last |
+| `w` | Toggle group headers for the current sort (hidden by default) |
 | `I` | In the resumable list, toggle idle sessions; asks for the idle window (default `20m`, prefilled) |
 | `=` | Toggle maximization of the tmux preview |
 | `a` | Attach to the session's tmux pane: switch-client inside tmux, attach outside; detaching returns to the TUI |
 | `r` | Resume the selected resumable session in tmux and attach to it |
 | `d` | Delete the selected session after confirming with `y` |
 | `q` | Quit |
+
+Group headers use `1h`, `1d`, `7d`, and `>7d` for creation/activity sorting:
+up to one hour, over one hour through one day, over one day through seven
+days, and older than seven days. Other sorts group by agent name, status,
+or full working directory. Directory labels show the last two components
+with `/` separators, such as `codebase/agent-berth`; missing directories show
+`-`. Headers are skipped when moving between sessions.
 
 ### Resume behavior
 

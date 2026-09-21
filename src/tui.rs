@@ -49,7 +49,7 @@ mod latte {
     pub const BLUE: Color = Color::Rgb(30, 102, 245);
 }
 
-const HINTS: &str = "q quit · j/k move · / filter · ga/gr view · s sort · a attach · r resume · d delete · I idle · = zoom · ␣gg lazygit · br/bp browse";
+const HINTS: &str = "q quit · j/k move · / filter · ga/gr view · s sort · w groups · a attach · r resume · d delete · I idle · = zoom · ␣gg lazygit · br/bp browse";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Sort {
@@ -198,6 +198,7 @@ fn spawn_fetch(tx: &Sender<Fetched>, fetch: Fetch) {
 struct App {
     view: View,
     sort: Sort,
+    group_headers: bool,
     sessions: Vec<ListedSession>,
     panes: Vec<Pane>,
     selected: usize,
@@ -235,6 +236,7 @@ impl App {
         Self {
             view: View::Active,
             sort: Sort::Created,
+            group_headers: false,
             sessions: Vec::new(),
             panes: Vec::new(),
             selected: 0,
@@ -571,6 +573,10 @@ impl App {
             }
             KeyCode::Char('s') => {
                 self.pending = Some(Pending::S);
+                Effect::None
+            }
+            KeyCode::Char('w') => {
+                self.group_headers = !self.group_headers;
                 Effect::None
             }
             KeyCode::Char(' ') => {
@@ -958,24 +964,48 @@ fn render_list(frame: &mut Frame, app: &App, area: Rect) {
     let title_width = (area.width as usize)
         .saturating_sub(2 + 1 + 2 + 2 + 1)
         .max(1);
-    let items: Vec<ListItem> = sessions
-        .iter()
-        .map(|session| {
-            let title = list::truncate(session.title.as_deref().unwrap_or("-"), title_width);
-            ListItem::new(Line::from(vec![
-                Span::raw(" "),
-                Span::styled(logo(&session.provider), Style::default().fg(latte::MAUVE)),
-                Span::raw(" "),
-                Span::styled(
-                    session.status.as_str()[..1].to_ascii_uppercase(),
-                    status_style(session.status),
-                ),
-                Span::raw(" "),
-                Span::raw(title),
-                Span::raw(" "),
-            ]))
-        })
-        .collect();
+    let now = crate::store::now_ms();
+    let mut items = Vec::new();
+    let mut previous_group = None;
+    let mut selected_row = None;
+    for (index, session) in sessions.iter().enumerate() {
+        if app.group_headers {
+            let group = session_group(session, app.sort, now);
+            if previous_group.as_ref() != Some(&group) {
+                let label = if app.sort == Sort::Directory {
+                    directory_group_label(&group)
+                } else {
+                    group.clone()
+                };
+                let label = list::truncate(&label, area.width.saturating_sub(4) as usize);
+                items.push(
+                    ListItem::new(format!(" {label} ")).style(
+                        Style::default()
+                            .fg(latte::BLUE)
+                            .bg(latte::MANTLE)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                );
+                previous_group = Some(group);
+            }
+        }
+        if index == app.selected {
+            selected_row = Some(items.len());
+        }
+        let title = list::truncate(session.title.as_deref().unwrap_or("-"), title_width);
+        items.push(ListItem::new(Line::from(vec![
+            Span::raw(" "),
+            Span::styled(logo(&session.provider), Style::default().fg(latte::MAUVE)),
+            Span::raw(" "),
+            Span::styled(
+                session.status.as_str()[..1].to_ascii_uppercase(),
+                status_style(session.status),
+            ),
+            Span::raw(" "),
+            Span::raw(title),
+            Span::raw(" "),
+        ])));
+    }
     let count = sessions.len();
     let mut title = match app.view {
         View::Active => format!(" Active ({count}) "),
@@ -1003,10 +1033,47 @@ fn render_list(frame: &mut Frame, app: &App, area: Rect) {
                 .add_modifier(Modifier::BOLD),
         );
     let mut state = ListState::default();
-    if count > 0 {
-        state.select(Some(app.selected));
-    }
+    state.select(selected_row);
     frame.render_stateful_widget(list_widget, area, &mut state);
+}
+
+fn session_group(session: &ListedSession, sort: Sort, now: u64) -> String {
+    match sort {
+        Sort::Created | Sort::Activity => {
+            let timestamp = if sort == Sort::Created {
+                session.created_ms
+            } else {
+                session.last_report_ms
+            };
+            match now.saturating_sub(timestamp) {
+                0..=3_600_000 => "1h",
+                3_600_001..=86_400_000 => "1d",
+                86_400_001..=604_800_000 => "7d",
+                _ => ">7d",
+            }
+            .into()
+        }
+        Sort::Provider => session.provider.clone(),
+        Sort::Status => session.status.as_str().into(),
+        Sort::Directory => session.cwd.clone().unwrap_or_else(|| "-".into()),
+    }
+}
+
+fn directory_group_label(path: &str) -> String {
+    let normalized = path.replace('\\', "/");
+    let mut components: Vec<&str> = normalized
+        .rsplit('/')
+        .filter(|component| !component.is_empty())
+        .take(2)
+        .collect();
+    components.reverse();
+    if components.is_empty() {
+        if normalized.contains('/') { "/" } else { "-" }.into()
+    } else if components.len() == 1 && components[0].ends_with(':') {
+        format!("{}/", components[0])
+    } else {
+        components.join("/")
+    }
 }
 
 fn render_details(frame: &mut Frame, app: &App, area: Rect) {

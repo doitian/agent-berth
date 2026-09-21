@@ -524,6 +524,145 @@ fn d_without_sessions_shows_message() {
 }
 
 #[test]
+fn w_toggles_group_headers_without_changing_selection() {
+    let mut app = app_with_sessions();
+    app.selected = 1;
+    assert!(!app.group_headers);
+    app.needs_redraw = false;
+    app.handle_key(char_key('w'));
+    assert!(app.group_headers);
+    assert!(app.needs_redraw);
+    assert_eq!(app.selected_session().unwrap().session_id, "def");
+    app.handle_key(char_key('j'));
+    assert_eq!(app.selected_session().unwrap().session_id, "ghi");
+    app.handle_key(char_key('k'));
+    assert_eq!(app.selected_session().unwrap().session_id, "def");
+    app.handle_key(char_key('w'));
+    assert!(!app.group_headers);
+    assert_eq!(app.selected_session().unwrap().session_id, "def");
+    app.handle_key(char_key('/'));
+    app.handle_key(char_key('w'));
+    assert_eq!(app.filter, "w");
+    assert!(!app.group_headers);
+}
+
+#[test]
+fn time_groups_use_sort_timestamp_and_exact_bucket_boundaries() {
+    let now = 1_000_000_000;
+    let mut session = listed("claude", "a", None);
+    for (age, expected) in [
+        (0, "1h"),
+        (3_600_000, "1h"),
+        (3_600_001, "1d"),
+        (86_400_000, "1d"),
+        (86_400_001, "7d"),
+        (604_800_000, "7d"),
+        (604_800_001, ">7d"),
+    ] {
+        session.created_ms = now - age;
+        session.last_report_ms = now;
+        assert_eq!(session_group(&session, Sort::Created, now), expected);
+        assert_eq!(session_group(&session, Sort::Activity, now), "1h");
+        session.last_report_ms = now - age;
+        assert_eq!(session_group(&session, Sort::Activity, now), expected);
+    }
+    session.created_ms = now + 1;
+    assert_eq!(session_group(&session, Sort::Created, now), "1h");
+}
+
+#[test]
+fn directory_headers_use_two_components_and_forward_slashes() {
+    for (path, expected) in [
+        (r"C:\Users\me\codebase\agent-berth", "codebase/agent-berth"),
+        ("/home/me/codebase/agent-berth/", "codebase/agent-berth"),
+        (r"C:\Users/me\codebase/agent-berth\", "codebase/agent-berth"),
+        (r"\\server\share\project", "share/project"),
+        ("project", "project"),
+        ("/project", "project"),
+        ("/", "/"),
+        (r"C:\", "C:/"),
+        ("", "-"),
+    ] {
+        assert_eq!(directory_group_label(path), expected, "{path}");
+    }
+}
+
+fn list_buffer(app: &App, height: u16) -> ratatui::buffer::Buffer {
+    let mut terminal =
+        ratatui::Terminal::new(ratatui::backend::TestBackend::new(60, height)).unwrap();
+    terminal
+        .draw(|frame| render_list(frame, app, frame.area()))
+        .unwrap();
+    terminal.backend().buffer().clone()
+}
+
+fn group_headers(buffer: &ratatui::buffer::Buffer) -> Vec<String> {
+    (1..buffer.area.height - 1)
+        .filter(|&y| buffer[(1, y)].bg == latte::MANTLE)
+        .map(|y| {
+            (1..buffer.area.width - 1)
+                .map(|x| buffer[(x, y)].symbol())
+                .collect::<String>()
+                .trim()
+                .to_string()
+        })
+        .collect()
+}
+
+#[test]
+fn list_groups_follow_sort_and_filter_without_selecting_headers() {
+    let mut app = app_with_sessions();
+    app.group_headers = true;
+    app.sessions[1].status = AgentStatus::Waiting;
+    app.sessions[2].status = AgentStatus::Done;
+    let now = crate::store::now_ms();
+    for (i, session) in app.sessions.iter_mut().enumerate() {
+        session.created_ms = now - [1_000, 7_200_000, 172_800_000][i];
+        session.last_report_ms = now - [700_000_000, 172_800_000, 7_200_000][i];
+    }
+    for (sort, expected) in [
+        (Sort::Created, vec!["1h", "1d", "7d"]),
+        (Sort::Activity, vec!["1d", "7d", ">7d"]),
+        (Sort::Provider, vec!["claude", "codex", "pi"]),
+        (Sort::Status, vec!["done", "waiting", "working"]),
+        (Sort::Directory, vec!["tmp/project"]),
+    ] {
+        app.set_sort(sort);
+        assert_eq!(group_headers(&list_buffer(&app, 12)), expected);
+        assert_eq!(app.selected_session().unwrap().session_id, "abc");
+    }
+    app.set_sort(Sort::Provider);
+    app.selected = 1;
+    let buffer = list_buffer(&app, 12);
+    assert_eq!(buffer[(1, 3)].bg, latte::MANTLE);
+    assert_eq!(buffer[(1, 4)].bg, latte::SURFACE0);
+    assert_eq!(buffer[(6, 4)].symbol(), "W");
+    let small = list_buffer(&app, 4);
+    assert!((1..3).any(|y| small[(1, y)].bg == latte::SURFACE0 && small[(6, y)].symbol() == "W"));
+    app.filter = "docs".into();
+    app.clamp_selection();
+    assert_eq!(group_headers(&list_buffer(&app, 12)), ["codex"]);
+    app.filter = "no matching sessions".into();
+    assert!(group_headers(&list_buffer(&app, 12)).is_empty());
+}
+
+#[test]
+fn directory_groups_do_not_merge_paths_with_identical_short_labels() {
+    let mut app = app_with_sessions();
+    app.group_headers = true;
+    app.sessions[0].cwd = Some("/a/codebase/project".into());
+    app.sessions[1].cwd = Some("/b/codebase/project".into());
+    app.sessions[2].cwd = None;
+    app.set_sort(Sort::Directory);
+    assert_eq!(
+        group_headers(&list_buffer(&app, 12)),
+        ["codebase/project", "codebase/project", "-"]
+    );
+    app.handle_key(char_key('w'));
+    assert!(group_headers(&list_buffer(&app, 12)).is_empty());
+}
+
+#[test]
 fn sort_sessions_orders_newest_first_with_stable_ties() {
     let mut a = listed("claude", "a", None);
     a.created_ms = 100;
