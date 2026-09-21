@@ -59,7 +59,7 @@ jobs:
           }
       - name: Install psmux
         if: runner.os == 'Windows'
-        run: mbx install psmux --version 3.3.8 --locked
+        run: scoop install 'psmux@3.3.8'
       - name: Run real tmux integration test
         run: mbx test --locked --test integration real_tmux -- --ignored
       - name: Upload failure diagnostics
