@@ -20,6 +20,7 @@ mod setup;
 mod status;
 mod store;
 mod tmux;
+mod tui;
 
 pub use cli::run;
 pub use duration::parse_duration;

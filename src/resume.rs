@@ -96,7 +96,7 @@ pub fn run(
     Ok(())
 }
 
-fn window_name(session: &ListedSession) -> String {
+pub(crate) fn window_name(session: &ListedSession) -> String {
     let short = session
         .session_id
         .chars()

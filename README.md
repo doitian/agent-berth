@@ -66,6 +66,7 @@ uses [fzf](https://github.com/junegunn/fzf).
 
 | Command | Description |
 | --- | --- |
+| `agent-berth tui` | Interactive TUI (also the default with no subcommand) |
 | `agent-berth setup [--no-service]` | Install the user service and agent hooks |
 | `agent-berth teardown` | Stop the service and remove all agent hooks |
 | `agent-berth service start\|stop\|restart` | Manage the background server |
@@ -76,6 +77,24 @@ uses [fzf](https://github.com/junegunn/fzf).
 | `agent-berth rm [patterns...]` | Hide sessions so they are never resumed |
 | `agent-berth doctor` | Check server, service, and hook installation |
 | `agent-berth notify --provider <name>` | Report agent status (used by hooks) |
+
+### TUI
+
+`agent-berth tui` (or bare `agent-berth`) opens an interactive dashboard.
+The left column lists sessions with the agent logo, status, and title; the
+right column shows session details, plus a live tmux pane preview when the
+selected session runs in tmux.
+
+| Key | Action |
+| --- | --- |
+| `j`/`k` | Move the selection |
+| `/` | Filter sessions by keywords (Enter applies, Esc clears) |
+| `ga` / `gr` | Switch to the active / resumable session list |
+| `I` | In the resumable list, toggle idle sessions; asks for the idle window (default `20m`, prefilled) |
+| `=` | Toggle maximization of the tmux preview |
+| `a` | Attach to the session's tmux pane: switch-client inside tmux, attach outside; detaching returns to the TUI |
+| `r` | Resume the selected resumable session in tmux and attach to it |
+| `q` | Quit |
 
 ### Resume behavior
 
