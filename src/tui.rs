@@ -497,7 +497,7 @@ fn render_details(frame: &mut Frame, app: &App, area: Rect) {
     } else {
         session.cmdline.join(" ")
     };
-    let rows = vec![
+    let mut rows = vec![
         ("provider", session.provider.clone()),
         ("session", session.session_id.clone()),
         ("status", session.status.as_str().to_string()),
@@ -515,7 +515,13 @@ fn render_details(frame: &mut Frame, app: &App, area: Rect) {
         ("age", age),
         ("command", command),
     ];
-    let mut lines: Vec<Line> = rows
+    if let Some(pane) = &app.selected_pane {
+        rows.push((
+            "tmux",
+            format!("{}:{} ({})", pane.session, pane.window_name, pane.id),
+        ));
+    }
+    let lines: Vec<Line> = rows
         .into_iter()
         .map(|(label, value)| {
             Line::from(vec![
@@ -524,18 +530,6 @@ fn render_details(frame: &mut Frame, app: &App, area: Rect) {
             ])
         })
         .collect();
-    if let Some(pane) = &app.selected_pane {
-        lines.push(Line::from(vec![
-            Span::styled(
-                format!("{:<9}", "tmux"),
-                Style::default().fg(Color::DarkGray),
-            ),
-            Span::raw(format!(
-                "{}:{} ({})",
-                pane.session, pane.window_name, pane.id
-            )),
-        ]));
-    }
     frame.render_widget(
         Paragraph::new(lines)
             .block(block)

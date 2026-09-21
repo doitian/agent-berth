@@ -27,6 +27,10 @@ fn char_key(ch: char) -> KeyEvent {
     key(KeyCode::Char(ch))
 }
 
+fn shift_char_key(ch: char) -> KeyEvent {
+    KeyEvent::new(KeyCode::Char(ch), KeyModifiers::SHIFT)
+}
+
 fn app_with_sessions() -> App {
     let mut app = App::new();
     app.sessions = vec![
@@ -135,7 +139,7 @@ fn q_and_ctrl_c_quit() {
 #[test]
 fn idle_toggle_requires_resumable_view() {
     let mut app = app_with_sessions();
-    app.handle_key(KeyEvent::new(KeyCode::Char('I'), KeyModifiers::SHIFT));
+    app.handle_key(shift_char_key('I'));
     assert_eq!(app.input, Input::Normal);
     assert!(!app.idle_enabled);
     assert!(app.message.is_some());
@@ -145,7 +149,7 @@ fn idle_toggle_requires_resumable_view() {
 fn idle_toggle_prefills_current_duration() {
     let mut app = app_with_sessions();
     app.set_view(View::Resumable);
-    app.handle_key(KeyEvent::new(KeyCode::Char('I'), KeyModifiers::SHIFT));
+    app.handle_key(shift_char_key('I'));
     assert_eq!(app.input, Input::Idle);
     assert_eq!(app.idle_input, "20m");
 }
@@ -154,7 +158,7 @@ fn idle_toggle_prefills_current_duration() {
 fn idle_enter_applies_and_marks_dirty() {
     let mut app = app_with_sessions();
     app.set_view(View::Resumable);
-    app.handle_key(KeyEvent::new(KeyCode::Char('I'), KeyModifiers::SHIFT));
+    app.handle_key(shift_char_key('I'));
     app.idle_input = "1h".into();
     app.handle_key(key(KeyCode::Enter));
     assert!(app.idle_enabled);
@@ -167,7 +171,7 @@ fn idle_enter_applies_and_marks_dirty() {
 fn idle_enter_rejects_invalid_duration() {
     let mut app = app_with_sessions();
     app.set_view(View::Resumable);
-    app.handle_key(KeyEvent::new(KeyCode::Char('I'), KeyModifiers::SHIFT));
+    app.handle_key(shift_char_key('I'));
     app.idle_input = "bogus".into();
     app.handle_key(key(KeyCode::Enter));
     assert!(!app.idle_enabled);
@@ -179,7 +183,7 @@ fn idle_enter_rejects_invalid_duration() {
 fn idle_esc_cancels_without_enabling() {
     let mut app = app_with_sessions();
     app.set_view(View::Resumable);
-    app.handle_key(KeyEvent::new(KeyCode::Char('I'), KeyModifiers::SHIFT));
+    app.handle_key(shift_char_key('I'));
     app.handle_key(key(KeyCode::Esc));
     assert_eq!(app.input, Input::Normal);
     assert!(!app.idle_enabled);
@@ -190,7 +194,7 @@ fn idle_toggle_off_when_enabled() {
     let mut app = app_with_sessions();
     app.set_view(View::Resumable);
     app.idle_enabled = true;
-    app.handle_key(KeyEvent::new(KeyCode::Char('I'), KeyModifiers::SHIFT));
+    app.handle_key(shift_char_key('I'));
     assert!(!app.idle_enabled);
     assert!(app.dirty);
     assert_eq!(app.input, Input::Normal);
