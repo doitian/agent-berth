@@ -115,10 +115,18 @@ pub fn run() -> Result<()> {
     let cli = Cli::parse();
     let ctx = Context::from_env()?;
     let Some(command) = cli.command else {
+        if !std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+            return list::run(&ctx, false, false, None, false);
+        }
         return tui::run(&ctx);
     };
     match command {
-        Command::Tui => tui::run(&ctx),
+        Command::Tui => {
+            if !std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+                anyhow::bail!("tui requires a terminal");
+            }
+            tui::run(&ctx)
+        }
         Command::Server => server::run(&ctx),
         Command::Setup { no_service } => setup::setup(&ctx, no_service),
         Command::Teardown => setup::teardown(&ctx),
