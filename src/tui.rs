@@ -24,7 +24,7 @@ use crate::paths::Context;
 use crate::status::{AgentStatus, Source};
 use crate::store::ListedSession;
 use crate::tmux::{self, Pane};
-use crate::{attach, db, git, list, pick, resume};
+use crate::{attach, db, git, list, pick, resume, transcript};
 
 const TICK: Duration = Duration::from_millis(200);
 const REFRESH: Duration = Duration::from_secs(1);
@@ -115,8 +115,19 @@ pub(crate) enum Effect {
 /// Blocking I/O (db, tmux, git) runs on worker threads so the UI never stalls.
 enum Fetch {
     Refresh(Box<RefreshRequest>),
-    Preview { pane_id: String, generation: u64 },
-    Git { cwd: String, generation: u64 },
+    Preview {
+        pane_id: String,
+        generation: u64,
+    },
+    Transcript {
+        source: transcript::Source,
+        reader: Box<transcript::Reader>,
+        generation: u64,
+    },
+    Git {
+        cwd: String,
+        generation: u64,
+    },
 }
 
 struct RefreshRequest {
@@ -133,6 +144,12 @@ struct CachedGit {
 }
 
 enum Fetched {
+    Transcript {
+        source: transcript::Source,
+        reader: Box<transcript::Reader>,
+        content: String,
+        generation: u64,
+    },
     Refresh {
         generation: u64,
         result: Result<(Vec<ListedSession>, Vec<Pane>)>,
@@ -179,6 +196,19 @@ fn spawn_fetch(tx: &Sender<Fetched>, fetch: Fetch) {
                     content,
                 }
             }
+            Fetch::Transcript {
+                source,
+                mut reader,
+                generation,
+            } => {
+                let content = reader.preview(&source);
+                Fetched::Transcript {
+                    source,
+                    reader,
+                    content,
+                    generation,
+                }
+            }
             Fetch::Git { cwd, generation } => {
                 let path = Path::new(&cwd);
                 let branch = git::branch(path);
@@ -203,6 +233,9 @@ struct App {
     panes: Vec<Pane>,
     selected: usize,
     selected_pane: Option<Pane>,
+    selected_transcript: Option<transcript::Source>,
+    transcript_reader: Box<transcript::Reader>,
+    transcript_roots: HashMap<String, PathBuf>,
     preview: Option<String>,
     preview_pending_since: Option<Instant>,
     preview_in_flight: Option<u64>,
@@ -241,6 +274,9 @@ impl App {
             panes: Vec::new(),
             selected: 0,
             selected_pane: None,
+            selected_transcript: None,
+            transcript_reader: Box::default(),
+            transcript_roots: HashMap::new(),
             preview: None,
             preview_pending_since: None,
             preview_in_flight: None,
@@ -283,6 +319,10 @@ impl App {
     }
 
     fn refresh(&mut self, ctx: &Context) {
+        self.transcript_roots
+            .insert("claude".into(), ctx.claude_config_dir.join("projects"));
+        self.transcript_roots
+            .insert("codex".into(), ctx.codex_home.join("sessions"));
         self.refresh_generation += 1;
         let (resumable, idle) = match self.view {
             View::Active => (false, None),
@@ -307,6 +347,24 @@ impl App {
 
     fn handle_fetched(&mut self, fetched: Fetched) {
         match fetched {
+            Fetched::Transcript {
+                source,
+                reader,
+                content,
+                generation,
+            } => {
+                if self.preview_in_flight != Some(generation) {
+                    return;
+                }
+                self.preview_in_flight = None;
+                if self.selected_transcript.as_ref() == Some(&source) {
+                    self.transcript_reader = reader;
+                    if self.preview.as_ref() != Some(&content) {
+                        self.preview = Some(content);
+                        self.needs_redraw = true;
+                    }
+                }
+            }
             Fetched::Refresh { generation, result } => {
                 if generation != self.refresh_generation {
                     return;
@@ -384,7 +442,7 @@ impl App {
         self.sessions = sessions;
         sort_sessions(&mut self.sessions, self.sort);
         self.restore_selection(keep);
-        if self.selected_pane.is_some() && self.preview_in_flight.is_none() {
+        if self.has_preview() && self.preview_in_flight.is_none() {
             self.preview_pending_since.get_or_insert_with(Instant::now);
         }
         // Refresh git status immediately so the details stay live.
@@ -419,6 +477,30 @@ impl App {
             .and_then(|session| attach::pane_for_session(&self.panes, session))
             .cloned();
         self.select_preview(pane);
+        let transcript = self
+            .selected_session()
+            .filter(|session| {
+                session.source == Source::Desktop
+                    && matches!(session.provider.as_str(), "claude" | "codex")
+            })
+            .map(|session| transcript::Source {
+                provider: session.provider.clone(),
+                session_id: session.session_id.clone(),
+                path: session.transcript_path.clone(),
+                root: self.transcript_roots.get(&session.provider).cloned(),
+            });
+        if transcript != self.selected_transcript {
+            self.selected_transcript = transcript;
+            *self.transcript_reader = Default::default();
+            // Invalidate any transcript or pane fetch from the old selection.
+            self.preview_in_flight = None;
+            self.preview_pending_since = self.has_preview().then(Instant::now);
+            self.preview = self
+                .selected_pane
+                .as_ref()
+                .and_then(|pane| self.previews.get(&pane.id).cloned());
+            self.needs_redraw = true;
+        }
         let cwd = self
             .selected_session()
             .and_then(|session| session.cwd.clone())
@@ -430,6 +512,10 @@ impl App {
             self.git = cached.and_then(|cached| cached.info.clone());
             self.git_pending_since = Some(Instant::now());
         }
+    }
+
+    fn has_preview(&self) -> bool {
+        self.selected_pane.is_some() || self.selected_transcript.is_some()
     }
 
     fn select_preview(&mut self, pane: Option<Pane>) {
@@ -447,18 +533,27 @@ impl App {
 
     fn next_preview_fetch(&mut self, now: Instant) -> Option<Fetch> {
         if self.preview_in_flight.is_some()
-            || !self
+            || self
                 .preview_pending_since
-                .is_some_and(|since| now.duration_since(since) >= PREVIEW_DEBOUNCE)
+                .is_none_or(|since| now.duration_since(since) < PREVIEW_DEBOUNCE)
         {
             return None;
         }
         self.preview_pending_since = None;
-        let pane = self.selected_pane.as_ref()?;
+        if !self.has_preview() {
+            return None;
+        }
         self.preview_generation += 1;
         self.preview_in_flight = Some(self.preview_generation);
+        if let Some(source) = &self.selected_transcript {
+            return Some(Fetch::Transcript {
+                source: source.clone(),
+                reader: std::mem::take(&mut self.transcript_reader),
+                generation: self.preview_generation,
+            });
+        }
         Some(Fetch::Preview {
-            pane_id: pane.id.clone(),
+            pane_id: self.selected_pane.as_ref()?.id.clone(),
             generation: self.preview_generation,
         })
     }
@@ -686,8 +781,8 @@ impl App {
     }
 
     fn toggle_maximized(&mut self) {
-        if self.selected_pane.is_none() {
-            self.message = Some("no tmux preview for the selected session".into());
+        if !self.has_preview() {
+            self.message = Some("no preview for the selected session".into());
             return;
         }
         self.preview_maximized = !self.preview_maximized;
@@ -940,7 +1035,7 @@ fn render(frame: &mut Frame, app: &App) {
         Block::default().style(Style::default().fg(latte::TEXT).bg(latte::BASE)),
         area,
     );
-    if app.preview_maximized && app.selected_pane.is_some() {
+    if app.preview_maximized && app.has_preview() {
         render_preview(frame, app, area);
         return;
     }
@@ -948,7 +1043,7 @@ fn render(frame: &mut Frame, app: &App) {
     let cols =
         Layout::horizontal([Constraint::Percentage(35), Constraint::Percentage(65)]).split(rows[0]);
     render_list(frame, app, cols[0]);
-    if app.selected_pane.is_some() {
+    if app.has_preview() {
         let right = Layout::vertical([Constraint::Percentage(40), Constraint::Percentage(60)])
             .split(cols[1]);
         render_details(frame, app, right[0]);
@@ -1212,21 +1307,36 @@ fn branch_spans(branch: &str, status: Option<&git::RepoStatus>) -> Vec<Span<'sta
 fn render_preview(frame: &mut Frame, app: &App, area: Rect) {
     let title = match &app.selected_pane {
         Some(pane) => format!(" {}:{} ({}) ", pane.session, pane.window_name, pane.id),
+        None if app.selected_transcript.is_some() => " Conversation · live transcript ".into(),
         None => " Preview ".into(),
     };
     let block = Block::bordered().title(title);
     let inner = block.inner(area);
     frame.render_widget(block, area);
-    let text = app
-        .preview
-        .as_deref()
-        .unwrap_or_default()
-        .into_text()
-        .unwrap_or_else(|_| Text::raw("Unable to render pane preview"));
-    let scroll = text.lines.len().saturating_sub(inner.height as usize) as u16;
-    let preview = Paragraph::new(text)
-        .style(Style::default().fg(Color::Reset).bg(Color::Reset))
-        .scroll((scroll, 0));
+    let transcript = app.selected_transcript.is_some();
+    let content = app.preview.as_deref().unwrap_or(if transcript {
+        "Loading conversation…"
+    } else {
+        ""
+    });
+    let text = if transcript {
+        Text::raw(content)
+    } else {
+        content
+            .into_text()
+            .unwrap_or_else(|_| Text::raw("Unable to render pane preview"))
+    };
+    let mut preview = Paragraph::new(text);
+    if transcript {
+        preview = preview.wrap(Wrap { trim: false });
+    } else {
+        preview = preview.style(Style::default().fg(Color::Reset).bg(Color::Reset));
+    }
+    let scroll = preview
+        .line_count(inner.width)
+        .saturating_sub(inner.height as usize)
+        .min(u16::MAX as usize) as u16;
+    let preview = preview.scroll((scroll, 0));
     frame.render_widget(preview, inner);
 }
 

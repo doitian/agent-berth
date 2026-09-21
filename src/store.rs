@@ -91,6 +91,8 @@ pub struct ListedSession {
     pub exited: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transcript_path: Option<String>,
 }
 
 impl Store {
@@ -267,6 +269,7 @@ impl Store {
                     parent_id: session.parent_id.clone(),
                     exited: session.exited,
                     title: session.title.clone(),
+                    transcript_path: session.transcript_path.clone(),
                 });
             }
         }
@@ -300,6 +303,7 @@ impl Store {
                         parent_id: None,
                         exited: false,
                         title: snapshot.titles.get(sid).cloned(),
+                        transcript_path: None,
                     });
                 }
             }
@@ -447,6 +451,18 @@ fn idle_age_ms(session: &ListedSession, store: &Store, now_ms: u64) -> u64 {
 }
 
 fn touch_session(session: &mut AgentSession, payload: &Value, provider: &str) {
+    // Child hooks may carry the parent's transcript_path. Never show it as the
+    // child's conversation; use the explicitly supplied child transcript instead.
+    let keys: &[&str] = if session.parent_id.is_some() {
+        &["agent_transcript_path"]
+    } else {
+        &["transcript_path"]
+    };
+    if matches!(provider, "claude" | "codex")
+        && let Some(path) = string_field(payload, keys).filter(|path| !path.is_empty())
+    {
+        session.transcript_path = Some(path.to_string());
+    }
     session.last_report_ms = now_ms();
     if let Some(cwd) = cwd_field(payload) {
         session.cwd = Some(cwd);
