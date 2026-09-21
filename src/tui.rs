@@ -933,20 +933,24 @@ fn render(frame: &mut Frame, app: &App) {
 
 fn render_list(frame: &mut Frame, app: &App, area: Rect) {
     let sessions = app.filtered();
-    let title_width = (area.width as usize).saturating_sub(2 + 2 + 8 + 1).max(1);
+    let title_width = (area.width as usize)
+        .saturating_sub(2 + 1 + 2 + 2 + 1)
+        .max(1);
     let items: Vec<ListItem> = sessions
         .iter()
         .map(|session| {
             let title = list::truncate(session.title.as_deref().unwrap_or("-"), title_width);
             ListItem::new(Line::from(vec![
+                Span::raw(" "),
                 Span::styled(logo(&session.provider), Style::default().fg(Color::Magenta)),
                 Span::raw(" "),
                 Span::styled(
-                    format!("{:<7}", session.status.as_str()),
+                    session.status.as_str()[..1].to_ascii_uppercase(),
                     status_style(session.status),
                 ),
                 Span::raw(" "),
                 Span::raw(title),
+                Span::raw(" "),
             ]))
         })
         .collect();
