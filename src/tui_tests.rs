@@ -131,6 +131,54 @@ fn branch_tracking_symbols_match_starship_overrides() {
 }
 
 #[test]
+fn preview_preserves_ansi_colors_attributes_and_resets() {
+    let mut app = App::new();
+    app.preview = Some(
+        "\x1b[31;1mR\x1b[0mN\x1b[38;5;123;48;5;234mI\x1b[0m\x1b[38;2;12;34;56;48;2;65;43;21mT\x1b[0m".into(),
+    );
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(40, 5)).unwrap();
+    terminal
+        .draw(|frame| {
+            frame.render_widget(
+                Block::default().style(Style::default().fg(latte::TEXT).bg(latte::BASE)),
+                frame.area(),
+            );
+            render_preview(frame, &app, frame.area());
+        })
+        .unwrap();
+    let buffer = terminal.backend().buffer();
+    assert_eq!(buffer[(1, 1)].symbol(), "R");
+    assert_eq!(buffer[(1, 1)].fg, Color::Red);
+    assert!(buffer[(1, 1)].modifier.contains(Modifier::BOLD));
+    assert_eq!(buffer[(2, 1)].symbol(), "N");
+    assert_eq!(buffer[(2, 1)].fg, Color::Reset);
+    assert_eq!(buffer[(2, 1)].bg, Color::Reset);
+    assert!(!buffer[(2, 1)].modifier.contains(Modifier::BOLD));
+    assert_eq!(buffer[(3, 1)].symbol(), "I");
+    assert_eq!(buffer[(3, 1)].fg, Color::Indexed(123));
+    assert_eq!(buffer[(3, 1)].bg, Color::Indexed(234));
+    assert_eq!(buffer[(4, 1)].symbol(), "T");
+    assert_eq!(buffer[(4, 1)].fg, Color::Rgb(12, 34, 56));
+    assert_eq!(buffer[(4, 1)].bg, Color::Rgb(65, 43, 21));
+    assert_eq!(buffer[(0, 0)].bg, latte::BASE);
+}
+
+#[test]
+fn preview_keeps_colors_when_scrolled_to_bottom() {
+    let mut app = App::new();
+    app.preview = Some("hidden\n\x1b[32mgreen\nlast\x1b[0m".into());
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(20, 4)).unwrap();
+    terminal
+        .draw(|frame| render_preview(frame, &app, frame.area()))
+        .unwrap();
+    let buffer = terminal.backend().buffer();
+    assert_eq!(buffer[(1, 1)].symbol(), "g");
+    assert_eq!(buffer[(1, 2)].symbol(), "l");
+    assert_eq!(buffer[(1, 1)].fg, Color::Green);
+    assert_eq!(buffer[(1, 2)].fg, Color::Green);
+}
+
+#[test]
 fn details_show_combined_branch_status_with_branch_only_fallback() {
     let mut app = app_with_sessions();
     app.branch = Some("main".into());

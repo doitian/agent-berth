@@ -5,6 +5,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use ansi_to_tui::IntoText;
 use anyhow::{Context as _, Result, bail};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crossterm::execute;
@@ -13,8 +14,8 @@ use crossterm::terminal::{
 };
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Modifier, Style};
-use ratatui::text::{Line, Span};
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::{Frame, Terminal};
 
@@ -1146,13 +1147,20 @@ fn render_preview(frame: &mut Frame, app: &App, area: Rect) {
         Some(pane) => format!(" {}:{} ({}) ", pane.session, pane.window_name, pane.id),
         None => " Preview ".into(),
     };
-    let text = app.preview.clone().unwrap_or_default();
-    let inner_height = area.height.saturating_sub(2) as usize;
-    let scroll = text.lines().count().saturating_sub(inner_height) as u16;
+    let block = Block::bordered().title(title);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    let text = app
+        .preview
+        .as_deref()
+        .unwrap_or_default()
+        .into_text()
+        .unwrap_or_else(|_| Text::raw("Unable to render pane preview"));
+    let scroll = text.lines.len().saturating_sub(inner.height as usize) as u16;
     let preview = Paragraph::new(text)
-        .block(Block::bordered().title(title))
+        .style(Style::default().fg(Color::Reset).bg(Color::Reset))
         .scroll((scroll, 0));
-    frame.render_widget(preview, area);
+    frame.render_widget(preview, inner);
 }
 
 fn render_footer(frame: &mut Frame, app: &App, area: Rect) {

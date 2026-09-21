@@ -152,10 +152,10 @@ pub fn find_pane(id: &str) -> Result<Option<Pane>> {
     Ok(list_panes(true)?.into_iter().find(|pane| pane.id == id))
 }
 
-/// Visible content of a pane, without escape sequences.
+/// Visible content of a pane, including ANSI colors and attributes.
 pub fn capture_pane(id: &str) -> Result<String> {
     let output = command()
-        .args(["capture-pane", "-p", "-t", id])
+        .args(["capture-pane", "-p", "-e", "-t", id])
         .output()
         .context("tmux is not available")?;
     if !output.status.success() {
