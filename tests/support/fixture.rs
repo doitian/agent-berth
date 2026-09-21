@@ -31,6 +31,26 @@ fn main() {
         let output = command(&berth).args(["list", "--json"]).output().unwrap();
         assert!(output.status.success());
         fs::write(dir.join(format!("{id}.sessions")), output.stdout).unwrap();
+    } else if name == "codex" && args == ["test-hook"] {
+        let mut payload = String::new();
+        io::stdin().read_to_string(&mut payload).unwrap();
+        let recorder = exe.with_file_name(format!("hook-recorder{}", env::consts::EXE_SUFFIX));
+        let mut child = command(recorder.as_os_str())
+            .args(["notify", "--provider", "codex"])
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(payload.as_bytes())
+            .unwrap();
+        assert!(child.wait().unwrap().success());
+        fs::write(env::var_os("FIXTURE_AGENT_REPORT").unwrap(), "ready").unwrap();
+        loop {
+            std::thread::sleep(Duration::from_secs(1));
+        }
     } else if name == "claude" && args == ["agents", "--json"] {
         println!("[]");
     } else if name == "fzf" {
