@@ -96,6 +96,11 @@ branches without an upstream.
 | `j`/`k` | Move the selection |
 | `/` | Filter sessions by keywords (Enter applies, Esc clears) |
 | `ga` / `gr` | Switch to the active / resumable session list |
+| `st` | Sort by creation time, newest first (default) |
+| `sr` | Sort by activity, most recent first |
+| `sa` | Sort by agent provider alphabetically |
+| `ss` | Sort by status alphabetically |
+| `sd` | Sort by working directory alphabetically, missing directories last |
 | `I` | In the resumable list, toggle idle sessions; asks for the idle window (default `20m`, prefilled) |
 | `=` | Toggle maximization of the tmux preview |
 | `a` | Attach to the session's tmux pane: switch-client inside tmux, attach outside; detaching returns to the TUI |

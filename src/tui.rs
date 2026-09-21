@@ -31,7 +31,28 @@ const PREVIEW_DEBOUNCE: Duration = Duration::from_millis(150);
 const DEFAULT_IDLE: Duration = Duration::from_secs(20 * 60);
 const CACHE_CAP: usize = 64;
 
-const HINTS: &str = "q quit · j/k move · / filter · ga/gr view · a attach · r resume · d delete · I idle · = zoom · ␣gg lazygit · br/bp browse";
+const HINTS: &str = "q quit · j/k move · / filter · ga/gr view · s sort · a attach · r resume · d delete · I idle · = zoom · ␣gg lazygit · br/bp browse";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Sort {
+    Created,
+    Activity,
+    Provider,
+    Status,
+    Directory,
+}
+
+impl Sort {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Created => "created",
+            Self::Activity => "activity",
+            Self::Provider => "provider",
+            Self::Status => "status",
+            Self::Directory => "directory",
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum View {
@@ -50,6 +71,7 @@ enum Input {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Pending {
     G,
+    S,
     Space,
     SpaceG,
     B,
@@ -122,8 +144,7 @@ fn spawn_fetch(tx: &Sender<Fetched>, fetch: Fetch) {
                     generation,
                 } = *request;
                 let result = (|| {
-                    let mut sessions = db::query_sessions(&ctx, resumable, idle)?;
-                    sort_sessions(&mut sessions);
+                    let sessions = db::query_sessions(&ctx, resumable, idle)?;
                     let panes = tmux::list_panes(true).unwrap_or_default();
                     Ok((sessions, panes))
                 })();
@@ -158,6 +179,7 @@ fn spawn_fetch(tx: &Sender<Fetched>, fetch: Fetch) {
 
 struct App {
     view: View,
+    sort: Sort,
     sessions: Vec<ListedSession>,
     panes: Vec<Pane>,
     selected: usize,
@@ -194,6 +216,7 @@ impl App {
         let (fetch_tx, fetch_rx) = mpsc::channel();
         Self {
             view: View::Active,
+            sort: Sort::Created,
             sessions: Vec::new(),
             panes: Vec::new(),
             selected: 0,
@@ -339,6 +362,7 @@ impl App {
         self.needs_redraw = true;
         self.panes = panes;
         self.sessions = sessions;
+        sort_sessions(&mut self.sessions, self.sort);
         self.restore_selection(keep);
         if self.selected_pane.is_some() && self.preview_in_flight.is_none() {
             self.preview_pending_since.get_or_insert_with(Instant::now);
@@ -462,6 +486,15 @@ impl App {
         self.dirty = true;
     }
 
+    fn set_sort(&mut self, sort: Sort) {
+        let keep = self
+            .selected_session()
+            .map(|session| (session.provider.clone(), session.session_id.clone()));
+        self.sort = sort;
+        sort_sessions(&mut self.sessions, sort);
+        self.restore_selection(keep);
+    }
+
     fn handle_key(&mut self, key: KeyEvent) -> Effect {
         if key.kind != KeyEventKind::Press {
             return Effect::None;
@@ -481,6 +514,11 @@ impl App {
             match (pending, key.code) {
                 (Pending::G, KeyCode::Char('a')) => self.set_view(View::Active),
                 (Pending::G, KeyCode::Char('r')) => self.set_view(View::Resumable),
+                (Pending::S, KeyCode::Char('t')) => self.set_sort(Sort::Created),
+                (Pending::S, KeyCode::Char('r')) => self.set_sort(Sort::Activity),
+                (Pending::S, KeyCode::Char('a')) => self.set_sort(Sort::Provider),
+                (Pending::S, KeyCode::Char('s')) => self.set_sort(Sort::Status),
+                (Pending::S, KeyCode::Char('d')) => self.set_sort(Sort::Directory),
                 (Pending::Space, KeyCode::Char('g')) => self.pending = Some(Pending::SpaceG),
                 (Pending::SpaceG, KeyCode::Char('g')) => return self.open_lazygit(),
                 (Pending::B, KeyCode::Char('r')) => return self.browse_selected(Browse::Repo),
@@ -511,6 +549,10 @@ impl App {
             }
             KeyCode::Char('g') => {
                 self.pending = Some(Pending::G);
+                Effect::None
+            }
+            KeyCode::Char('s') => {
+                self.pending = Some(Pending::S);
                 Effect::None
             }
             KeyCode::Char(' ') => {
@@ -924,7 +966,11 @@ fn render_list(frame: &mut Frame, app: &App, area: Rect) {
         title = format!("{}· /{} ", title.trim_end(), app.filter);
     }
     let list_widget = List::new(items)
-        .block(Block::bordered().title(title))
+        .block(
+            Block::bordered()
+                .title(title)
+                .title_bottom(format!(" sort: {} ", app.sort.label())),
+        )
         .highlight_style(Style::default().add_modifier(Modifier::REVERSED));
     let mut state = ListState::default();
     if count > 0 {
@@ -1037,6 +1083,10 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
         Input::Normal => {
             let text = match app.pending {
                 Some(Pending::G) => "g — a active sessions · r resumable sessions".to_string(),
+                Some(Pending::S) => {
+                    "s — t creation · r recent activity · a agent provider · s status · d directory"
+                        .to_string()
+                }
                 Some(Pending::Space) | Some(Pending::SpaceG) => "␣g — g open lazygit".to_string(),
                 Some(Pending::B) => "b — r repo in browser · p pr in browser".to_string(),
                 None => app.message.clone().unwrap_or_else(|| HINTS.into()),
@@ -1046,11 +1096,17 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
     }
 }
 
-// Newest first; ties broken deterministically so the order is stable.
-fn sort_sessions(sessions: &mut [ListedSession]) {
+fn sort_sessions(sessions: &mut [ListedSession], sort: Sort) {
     sessions.sort_by(|a, b| {
-        b.created_ms
-            .cmp(&a.created_ms)
+        let order = match sort {
+            Sort::Created => b.created_ms.cmp(&a.created_ms),
+            Sort::Activity => b.last_report_ms.cmp(&a.last_report_ms),
+            Sort::Provider => a.provider.cmp(&b.provider),
+            Sort::Status => a.status.as_str().cmp(b.status.as_str()),
+            Sort::Directory => (a.cwd.is_none(), &a.cwd).cmp(&(b.cwd.is_none(), &b.cwd)),
+        };
+        order
+            .then_with(|| b.created_ms.cmp(&a.created_ms))
             .then_with(|| (&a.provider, &a.session_id).cmp(&(&b.provider, &b.session_id)))
     });
 }

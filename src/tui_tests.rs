@@ -86,6 +86,7 @@ fn details_show_combined_branch_status_with_branch_only_fallback() {
 fn starts_on_active_view() {
     let app = App::new();
     assert_eq!(app.view, View::Active);
+    assert_eq!(app.sort, Sort::Created);
     assert_eq!(app.input, Input::Normal);
     assert!(!app.idle_enabled);
 }
@@ -396,9 +397,87 @@ fn sort_sessions_orders_newest_first_with_stable_ties() {
     let mut d = listed("claude", "d", None);
     d.created_ms = 200;
     let mut sessions = vec![a, b, c, d];
-    sort_sessions(&mut sessions);
+    sort_sessions(&mut sessions, Sort::Created);
     let order: Vec<&str> = sessions.iter().map(|s| s.session_id.as_str()).collect();
     assert_eq!(order, ["b", "d", "c", "a"]);
+}
+
+#[test]
+fn sort_keys_reorder_sessions_and_preserve_selection() {
+    for (key, sort, expected) in [
+        ('t', Sort::Created, ["b", "d", "c", "a"]),
+        ('r', Sort::Activity, ["c", "b", "d", "a"]),
+        ('a', Sort::Provider, ["d", "a", "b", "c"]),
+        ('s', Sort::Status, ["b", "d", "a", "c"]),
+        ('d', Sort::Directory, ["d", "c", "a", "b"]),
+    ] {
+        let mut app = App::new();
+        for (provider, id, created, activity, status, cwd) in [
+            ("claude", "a", 100, 100, AgentStatus::Waiting, Some("/z")),
+            ("codex", "b", 300, 200, AgentStatus::Done, None),
+            ("pi", "c", 200, 300, AgentStatus::Working, Some("/a")),
+            ("claude", "d", 200, 100, AgentStatus::Idle, Some("/a")),
+        ] {
+            let mut session = listed(provider, id, None);
+            session.created_ms = created;
+            session.last_report_ms = activity;
+            session.status = status;
+            session.cwd = cwd.map(str::to_string);
+            app.sessions.push(session);
+        }
+        app.selected = 2;
+        app.handle_key(char_key('s'));
+        assert_eq!(app.pending, Some(Pending::S));
+        assert!(matches!(app.handle_key(char_key(key)), Effect::None));
+        assert_eq!(app.pending, None);
+        assert_eq!(app.input, Input::Normal);
+        assert_eq!(app.sort, sort);
+        let order: Vec<&str> = app.sessions.iter().map(|s| s.session_id.as_str()).collect();
+        assert_eq!(order, expected, "sort key: s{key}");
+        assert_eq!(app.selected_session().unwrap().session_id, "c");
+    }
+}
+
+#[test]
+fn sort_prefix_can_be_cancelled_and_filter_input_stays_literal() {
+    let mut app = app_with_sessions();
+    app.handle_key(char_key('s'));
+    assert!(matches!(app.handle_key(key(KeyCode::Esc)), Effect::None));
+    assert_eq!(app.pending, None);
+    assert_eq!(app.sort, Sort::Created);
+    app.handle_key(char_key('/'));
+    app.handle_key(char_key('s'));
+    app.handle_key(char_key('r'));
+    assert_eq!(app.filter, "sr");
+    assert_eq!(app.sort, Sort::Created);
+}
+
+#[test]
+fn refresh_uses_current_sort_after_mode_change_and_preserves_filtered_selection() {
+    let mut app = app_with_sessions();
+    for session in &mut app.sessions {
+        session.cwd = None;
+    }
+    app.filter = "docs".into();
+    app.refresh_generation = 1;
+    let mut sessions = app.sessions.clone();
+    sessions[2].last_report_ms = 300;
+    sessions[1].last_report_ms = 200;
+    app.handle_key(char_key('s'));
+    app.handle_key(char_key('r'));
+    app.set_view(View::Resumable);
+    app.handle_fetched(Fetched::Refresh {
+        generation: 1,
+        result: Ok((sessions, Vec::new())),
+    });
+    assert_eq!(app.sort, Sort::Activity);
+    assert_eq!(app.sessions[0].session_id, "ghi");
+    assert_eq!(app.selected_session().unwrap().session_id, "def");
+    app.handle_key(key(KeyCode::Esc));
+    app.handle_key(char_key('s'));
+    app.handle_key(char_key('t'));
+    assert_eq!(app.sort, Sort::Created);
+    assert_eq!(app.sessions[0].session_id, "abc");
 }
 
 #[test]
@@ -458,6 +537,7 @@ fn fetched_refresh_preserves_selection_after_navigation_and_reorder() {
     }
     app.refresh_generation = 1;
     let mut sessions = app.sessions.clone();
+    sessions[2].created_ms = 100;
     sessions.reverse();
     app.handle_key(char_key('j'));
     app.handle_key(char_key('j'));
