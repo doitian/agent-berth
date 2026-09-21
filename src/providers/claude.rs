@@ -115,7 +115,7 @@ fn is_present(value: &Value) -> bool {
 pub fn discover(ctx: &Context, sessions: &mut BTreeMap<String, AgentSession>) -> bool {
     let index = desktop_index(ctx);
     if let Some(rows) = list_agents() {
-        apply_agents(sessions, &rows, &index.live);
+        apply_agents(ctx, sessions, &rows, &index.live);
     }
     drop_archived(sessions, &index.archived)
 }
@@ -237,6 +237,7 @@ fn collect_desktop_ids(root: &Path, index: &mut DesktopIndex) {
 }
 
 pub fn apply_agents(
+    ctx: &Context,
     sessions: &mut BTreeMap<String, AgentSession>,
     rows: &[Value],
     desktop_ids: &HashSet<String>,
@@ -247,6 +248,9 @@ pub fn apply_agents(
         let Some(sid) = string_field(row, &["sessionId", "id"]).map(str::to_string) else {
             continue;
         };
+        if is_desktop_helper(ctx, row, &sid, desktop_ids) {
+            continue;
+        }
         let state = string_field(row, &["state"]).unwrap_or("");
         if matches!(state, "done" | "failed" | "stopped") {
             apply_event(sessions, AgentEvent::new(sid, AgentEventKind::SessionEnd));
@@ -309,6 +313,33 @@ pub fn apply_agents(
     sessions.retain(|sid, session| {
         live.contains(sid) || (!session.discovered && session.source != Source::Desktop)
     });
+}
+
+fn is_desktop_helper(ctx: &Context, row: &Value, sid: &str, desktop_ids: &HashSet<String>) -> bool {
+    if desktop_ids.contains(sid) || string_field(row, &["kind"]) == Some("background") {
+        return false;
+    }
+    let Some(pid) = u32_field(row, &["pid"]) else {
+        return false;
+    };
+    // `claude agents --json` omits the entrypoint and host session identity.
+    // Desktop also registers temporary config queries, which have no host
+    // session. Consult the matching registration to avoid listing those helpers.
+    let path = ctx
+        .claude_config_dir
+        .join("sessions")
+        .join(format!("{pid}.json"));
+    let Some(registration) = std::fs::read(&path)
+        .ok()
+        .and_then(|data| serde_json::from_slice::<Value>(&data).ok())
+    else {
+        return false;
+    };
+    u32_field(&registration, &["pid"]) == Some(pid)
+        && string_field(&registration, &["sessionId"]) == Some(sid)
+        && source_for(&registration) == Source::Desktop
+        && string_field(&registration, &["hostSessionId"]).is_none()
+        && string_field(&registration, &["kind"]) != Some("bg")
 }
 
 fn now_ms() -> u64 {
