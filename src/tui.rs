@@ -24,6 +24,7 @@ use crate::{attach, db, git, list, pick, resume};
 
 const TICK: Duration = Duration::from_millis(200);
 const REFRESH: Duration = Duration::from_secs(1);
+const PREVIEW_DEBOUNCE: Duration = Duration::from_millis(150);
 const DEFAULT_IDLE: Duration = Duration::from_secs(20 * 60);
 
 const HINTS: &str =
@@ -57,6 +58,7 @@ struct App {
     selected: usize,
     selected_pane: Option<Pane>,
     preview: Option<String>,
+    preview_pending_since: Option<Instant>,
     preview_maximized: bool,
     filter: String,
     input: Input,
@@ -77,6 +79,7 @@ impl App {
             selected: 0,
             selected_pane: None,
             preview: None,
+            preview_pending_since: None,
             preview_maximized: false,
             filter: String::new(),
             input: Input::Normal,
@@ -119,6 +122,11 @@ impl App {
         self.sessions = sessions;
         self.clamp_selection();
         self.update_selection();
+        // Refresh captures immediately so the preview stays live.
+        if self.selected_pane.is_some() {
+            self.preview_pending_since.get_or_insert_with(Instant::now);
+        }
+        self.capture_preview();
         Ok(())
     }
 
@@ -132,10 +140,20 @@ impl App {
             .selected_session()
             .and_then(|session| attach::pane_for_session(&self.panes, session))
             .cloned();
-        self.preview = pane
+        if pane.as_ref().map(|pane| &pane.id) != self.selected_pane.as_ref().map(|pane| &pane.id) {
+            self.preview_pending_since = Some(Instant::now());
+        }
+        self.selected_pane = pane;
+    }
+
+    fn capture_preview(&mut self) {
+        if self.preview_pending_since.take().is_none() {
+            return;
+        }
+        self.preview = self
+            .selected_pane
             .as_ref()
             .and_then(|pane| tmux::capture_pane(&pane.id).ok());
-        self.selected_pane = pane;
     }
 
     fn move_by(&mut self, delta: i32) {
@@ -378,6 +396,12 @@ pub fn run(ctx: &Context) -> Result<()> {
             app.refresh(ctx);
             app.dirty = false;
             last_refresh = Instant::now();
+        }
+        if app
+            .preview_pending_since
+            .is_some_and(|since| since.elapsed() >= PREVIEW_DEBOUNCE)
+        {
+            app.capture_preview();
         }
     }
     Ok(())
