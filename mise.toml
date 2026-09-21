@@ -34,6 +34,16 @@ depends = ["pre-commit:*"]
 [tasks.default]
 run = "cargo build"
 
+[tasks."install:stop"]
+hide = true
+run = '"{{ env.HOME }}/.local/bin/agent-berth" service stop || true'
+
 [tasks.install]
 description = "Build release and install into ~/.local/bin"
-run = "cargo install --path . --force --root \"{{env.HOME}}/.local\""
+depends = ["install:stop"]
+depends_post = ["install:start"]
+run = 'cargo install --path . --force --root "{{env.HOME}}/.local"'
+
+[tasks."install:start"]
+hide = true
+run = '"{{ env.HOME }}/.local/bin/agent-berth" service start || true'
