@@ -26,3 +26,24 @@ fn idle_is_explicit() {
         Some(Duration::from_secs(30 * 60))
     );
 }
+
+#[test]
+fn formats_largest_exact_unit() {
+    assert_eq!(format_duration(Duration::from_secs(1200)), "20m");
+    assert_eq!(format_duration(Duration::from_secs(3600)), "1h");
+    assert_eq!(format_duration(Duration::from_secs(86400)), "1d");
+    assert_eq!(format_duration(Duration::from_secs(45)), "45s");
+    assert_eq!(format_duration(Duration::from_secs(90)), "90s");
+    assert_eq!(format_duration(Duration::ZERO), "0s");
+}
+
+#[test]
+fn format_round_trips_through_parse() {
+    for secs in [1200, 3600, 86400, 45] {
+        let duration = Duration::from_secs(secs);
+        assert_eq!(
+            parse_duration(&format_duration(duration)).unwrap(),
+            duration
+        );
+    }
+}

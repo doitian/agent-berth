@@ -3,18 +3,20 @@ use clap::{Parser, Subcommand};
 
 use crate::duration::parse_idle;
 use crate::paths::Context;
-use crate::{attach, doctor, list, notify, resume, rm, server, service, setup};
+use crate::{attach, doctor, list, notify, resume, rm, server, service, setup, tui};
 
 /// Monitor coding agents and resume their sessions.
 #[derive(Debug, Parser)]
 #[command(name = "agent-berth", version, about, propagate_version = true)]
 struct Cli {
     #[command(subcommand)]
-    command: Command,
+    command: Option<Command>,
 }
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Launch the interactive TUI (default when no subcommand is given)
+    Tui,
     /// Start the server
     Server,
     /// Install the user service and agent hooks
@@ -112,7 +114,19 @@ enum ServiceAction {
 pub fn run() -> Result<()> {
     let cli = Cli::parse();
     let ctx = Context::from_env()?;
-    match cli.command {
+    let Some(command) = cli.command else {
+        if !std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+            return list::run(&ctx, false, false, None, false);
+        }
+        return tui::run(&ctx);
+    };
+    match command {
+        Command::Tui => {
+            if !std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+                anyhow::bail!("tui requires a terminal");
+            }
+            tui::run(&ctx)
+        }
         Command::Server => server::run(&ctx),
         Command::Setup { no_service } => setup::setup(&ctx, no_service),
         Command::Teardown => setup::teardown(&ctx),

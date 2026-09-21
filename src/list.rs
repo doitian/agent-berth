@@ -81,7 +81,7 @@ fn print_table(sessions: &[ListedSession]) -> Result<()> {
     Ok(())
 }
 
-fn truncate(text: &str, max: usize) -> String {
+pub(crate) fn truncate(text: &str, max: usize) -> String {
     let count = text.chars().count();
     if count <= max {
         return text.to_string();
@@ -91,7 +91,7 @@ fn truncate(text: &str, max: usize) -> String {
     out
 }
 
-fn age_label(last_report_ms: u64) -> String {
+pub(crate) fn age_label(last_report_ms: u64) -> String {
     let now = crate::store::now_ms();
     let secs = now.saturating_sub(last_report_ms) / 1000;
     if secs < 60 {

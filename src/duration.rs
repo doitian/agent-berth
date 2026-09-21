@@ -36,6 +36,19 @@ pub fn parse_idle(input: Option<&str>) -> Result<Option<Duration>> {
     input.map(parse_duration).transpose()
 }
 
+pub fn format_duration(duration: Duration) -> String {
+    let secs = duration.as_secs();
+    if secs > 0 && secs.is_multiple_of(86400) {
+        format!("{}d", secs / 86400)
+    } else if secs > 0 && secs.is_multiple_of(3600) {
+        format!("{}h", secs / 3600)
+    } else if secs > 0 && secs.is_multiple_of(60) {
+        format!("{}m", secs / 60)
+    } else {
+        format!("{secs}s")
+    }
+}
+
 #[cfg(test)]
 #[path = "duration_tests.rs"]
 mod tests;

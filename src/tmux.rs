@@ -42,9 +42,18 @@ pub fn ensure_session(root: &Path) -> Result<String> {
 }
 
 pub fn new_window(session: &str, name: &str, cwd: &Path, cmd: &[String]) -> Result<()> {
+    spawn_window(session, name, cwd, cmd)?;
+    Ok(())
+}
+
+/// Like [`new_window`] but returns the id of the created pane.
+pub fn spawn_window(session: &str, name: &str, cwd: &Path, cmd: &[String]) -> Result<String> {
     let target = format!("={session}");
     let mut args = vec![
         "new-window".into(),
+        "-P".into(),
+        "-F".into(),
+        "#{pane_id}".into(),
         "-t".into(),
         target,
         "-n".into(),
@@ -54,11 +63,18 @@ pub fn new_window(session: &str, name: &str, cwd: &Path, cmd: &[String]) -> Resu
         "--".into(),
     ];
     args.extend(cmd.iter().cloned());
-    let status = tmux(args)?;
-    if !status.success() {
+    let output = command()
+        .args(&args)
+        .output()
+        .context("tmux is not available")?;
+    if !output.status.success() {
         bail!("tmux new-window failed for {name}");
     }
-    Ok(())
+    let pane_id = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if pane_id.is_empty() {
+        bail!("tmux new-window did not report a pane id");
+    }
+    Ok(pane_id)
 }
 
 pub fn attach_or_switch(session: &str) -> Result<()> {
@@ -130,6 +146,22 @@ pub fn list_panes(all: bool) -> Result<Vec<Pane>> {
     }
     let text = String::from_utf8_lossy(&output.stdout);
     Ok(text.lines().filter_map(Pane::parse).collect())
+}
+
+pub fn find_pane(id: &str) -> Result<Option<Pane>> {
+    Ok(list_panes(true)?.into_iter().find(|pane| pane.id == id))
+}
+
+/// Visible content of a pane, without escape sequences.
+pub fn capture_pane(id: &str) -> Result<String> {
+    let output = command()
+        .args(["capture-pane", "-p", "-t", id])
+        .output()
+        .context("tmux is not available")?;
+    if !output.status.success() {
+        bail!("tmux capture-pane failed for {id}");
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
 pub fn attach_pane(pane: &Pane) -> Result<()> {

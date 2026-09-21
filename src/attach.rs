@@ -80,6 +80,18 @@ fn pane_for_pid<'a>(panes: &'a [Pane], chain: &[u32]) -> Option<&'a Pane> {
     panes.iter().find(|pane| chain.contains(&pane.pid))
 }
 
+/// Pane running the given session's agent process, if any.
+pub(crate) fn pane_for_session<'a>(panes: &'a [Pane], session: &ListedSession) -> Option<&'a Pane> {
+    if session.source != Source::Cli {
+        return None;
+    }
+    let pid = session.pid?;
+    if !process::pid_alive(pid) {
+        return None;
+    }
+    pane_for_pid(panes, &process::ancestors(pid))
+}
+
 fn select(lines: &[String], query: Option<&str>, preview: bool) -> Result<Option<String>> {
     let mut command = Command::new("fzf");
     command.args(fzf_args(query, preview));
