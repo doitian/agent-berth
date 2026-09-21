@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, HashSet};
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
@@ -36,7 +37,7 @@ pub fn apply_hook(sessions: &mut BTreeMap<String, AgentSession>, event: &Value) 
         "PreToolUse" => Some(AgentEventKind::ToolStart),
         "PostToolUse" => Some(AgentEventKind::ToolComplete),
         "SessionEnd" => Some(AgentEventKind::SessionEnd),
-        "PermissionRequest" => Some(AgentEventKind::PermissionRequest),
+        "PermissionRequest" if !uses_auto_review(event) => Some(AgentEventKind::PermissionRequest),
         "Stop" | "Interrupt" => Some(AgentEventKind::Stop),
         "SubagentStop" => {
             if string_field(event, &["agent_id", "agentId"]).is_none() {
@@ -65,6 +66,39 @@ pub fn apply_hook(sessions: &mut BTreeMap<String, AgentSession>, event: &Value) 
             background_running: false,
         },
     );
+}
+
+fn uses_auto_review(event: &Value) -> bool {
+    let (Some(path), Some(turn_id)) = (
+        string_field(event, &["transcript_path"]),
+        string_field(event, &["turn_id"]),
+    ) else {
+        return false;
+    };
+    let Ok(file) = std::fs::File::open(path) else {
+        return false;
+    };
+    // PermissionRequest also fires for automatic reviews. The hook omits the
+    // reviewer, but Codex records it in the active turn's transcript context.
+    let mut auto_review = false;
+    for line in BufReader::new(file).lines().map_while(Result::ok) {
+        if !line.contains("\"turn_context\"") {
+            continue;
+        }
+        let Ok(row) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        if row.get("type").and_then(Value::as_str) != Some("turn_context") {
+            continue;
+        }
+        let Some(context) = row.get("payload") else {
+            continue;
+        };
+        if string_field(context, &["turn_id"]) == Some(turn_id) {
+            auto_review = string_field(context, &["approvals_reviewer"]) == Some("auto_review");
+        }
+    }
+    auto_review
 }
 
 fn source_for(event: &Value) -> Source {

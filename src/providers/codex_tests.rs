@@ -4,6 +4,95 @@ use crate::status::AgentStatus;
 use tempfile::tempdir;
 
 #[test]
+fn automatic_approval_review_does_not_wait_for_user_input() {
+    let root = tempdir().unwrap();
+    let transcript = root.path().join("rollout.jsonl");
+    std::fs::write(
+        &transcript,
+        format!(
+            "{}\n",
+            json!({"type":"turn_context","payload":{
+                "turn_id":"turn", "approvals_reviewer":"auto_review"
+            }})
+        ),
+    )
+    .unwrap();
+    let mut sessions = BTreeMap::new();
+    for event in ["UserPromptSubmit", "PreToolUse", "PermissionRequest"] {
+        apply_hook(
+            &mut sessions,
+            &json!({
+                "session_id":"s", "hook_event_name":event,
+                "turn_id":"turn", "transcript_path":transcript
+            }),
+        );
+        assert_eq!(sessions["s"].status, AgentStatus::Working, "{event}");
+    }
+}
+
+#[test]
+fn permission_requests_wait_unless_active_turn_confirms_auto_review() {
+    let root = tempdir().unwrap();
+    let transcript = root.path().join("rollout.jsonl");
+    for contexts in [
+        vec![],
+        vec![json!({"turn_id":"turn", "approvals_reviewer":"user"})],
+        vec![json!({"turn_id":"other", "approvals_reviewer":"auto_review"})],
+        vec![json!({"turn_id":"turn"})],
+        vec![json!({"turn_id":"turn", "approvals_reviewer":"unknown"})],
+        vec![
+            json!({"turn_id":"turn", "approvals_reviewer":"auto_review"}),
+            json!({"turn_id":"turn", "approvals_reviewer":"user"}),
+        ],
+    ] {
+        let text: String = contexts
+            .iter()
+            .map(|context| format!("{}\n", json!({"type":"turn_context","payload":context})))
+            .collect();
+        std::fs::write(&transcript, text).unwrap();
+        let mut sessions = BTreeMap::new();
+        apply_hook(
+            &mut sessions,
+            &json!({
+                "session_id":"s", "hook_event_name":"PermissionRequest",
+                "turn_id":"turn", "transcript_path":transcript
+            }),
+        );
+        assert_eq!(sessions["s"].status, AgentStatus::Waiting, "{contexts:?}");
+    }
+}
+
+#[test]
+fn unavailable_approval_context_preserves_permission_waiting() {
+    let root = tempdir().unwrap();
+    let transcript = root.path().join("missing.jsonl");
+    let mut event = json!({
+        "session_id":"s", "hook_event_name":"PermissionRequest",
+        "turn_id":"turn", "transcript_path":transcript
+    });
+    for contents in [
+        None,
+        Some("not json\n{\"type\":\"turn_context\",\"payload\":"),
+    ] {
+        if let Some(contents) = contents {
+            std::fs::write(&transcript, contents).unwrap();
+        }
+        let mut sessions = BTreeMap::new();
+        apply_hook(&mut sessions, &event);
+        assert_eq!(sessions["s"].status, AgentStatus::Waiting);
+    }
+    std::fs::write(
+        &transcript,
+        "{\"type\":\"turn_context\",\"payload\":{\"turn_id\":\"turn\",\"approvals_reviewer\":\"auto_review\"}}\n",
+    )
+    .unwrap();
+    event.as_object_mut().unwrap().remove("turn_id");
+    let mut sessions = BTreeMap::new();
+    apply_hook(&mut sessions, &event);
+    assert_eq!(sessions["s"].status, AgentStatus::Waiting);
+}
+
+#[test]
 fn discovers_latest_index_title_without_changing_activity() {
     let root = tempdir().unwrap();
     let ctx = AppContext::for_test(root.path(), &root.path().join("agent-berth"));
