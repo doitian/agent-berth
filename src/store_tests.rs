@@ -35,6 +35,41 @@ fn plugin_payload_title_is_listed() {
 }
 
 #[test]
+fn pi_skill_block_title_is_listed_as_slash_command() {
+    let mut store = Store::default();
+    store
+        .update(
+            "pi",
+            serde_json::json!({
+                "id":"p",
+                "status":{"s":"busy"},
+                "titles":{"s":"<skill name=\"review-code\" location=\"/s/SKILL.md\">body</skill>"}
+            }),
+        )
+        .unwrap();
+    assert_eq!(store.listed()[0].title.as_deref(), Some("/review-code"));
+}
+
+#[test]
+fn other_providers_keep_skill_like_titles() {
+    let mut store = Store::default();
+    store
+        .update(
+            "opencode",
+            serde_json::json!({
+                "id":"p",
+                "status":{"s":"busy"},
+                "titles":{"s":"<skill name=\"review-code\" location=\"/s/SKILL.md\">body</skill>"}
+            }),
+        )
+        .unwrap();
+    assert_eq!(
+        store.listed()[0].title.as_deref(),
+        Some("<skill name=\"review-code\" location=\"/s/SKILL.md\">body</skill>")
+    );
+}
+
+#[test]
 fn plugin_and_hook_identities_do_not_collide() {
     let mut store = Store::default();
     store

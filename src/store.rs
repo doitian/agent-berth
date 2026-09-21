@@ -179,7 +179,7 @@ impl Store {
                     let title = title
                         .as_str()
                         .ok_or_else(|| anyhow::anyhow!("titles must be an object of strings"))?;
-                    out.insert(sid.clone(), title.to_string());
+                    out.insert(sid.clone(), providers::normalize_title(provider, title));
                 }
                 out
             }

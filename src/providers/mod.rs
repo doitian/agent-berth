@@ -145,6 +145,13 @@ pub fn apply_hook(
     }
 }
 
+pub fn normalize_title(provider: &str, title: &str) -> String {
+    match provider {
+        "pi" => pi::normalize_title(title),
+        _ => title.to_string(),
+    }
+}
+
 pub fn resume_cmd(provider: &str, session_id: &str) -> Vec<String> {
     match provider {
         "claude" => vec!["claude".into(), "--resume".into(), session_id.into()],

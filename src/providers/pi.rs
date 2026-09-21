@@ -25,3 +25,32 @@ fn extension_source(ctx: &Context) -> String {
         &serde_json::to_string(&ctx.berth_bin.display().to_string()).unwrap(),
     )
 }
+
+/// Pi expands `/skill:name` into a `<skill name=… location=…>…</skill>` user
+/// message, which the plugin reports as the session title. Show the slash
+/// command instead of the raw block.
+pub fn normalize_title(title: &str) -> String {
+    let Some(rest) = title.strip_prefix("<skill name=\"") else {
+        return title.to_string();
+    };
+    let Some(end) = rest.find('"') else {
+        return title.to_string();
+    };
+    let name = &rest[..end];
+    if name.is_empty() || !rest[end..].starts_with("\" location=\"") {
+        return title.to_string();
+    }
+    let Some(close) = rest.find("</skill>") else {
+        return title.to_string();
+    };
+    let tail = rest[close + "</skill>".len()..].trim();
+    if tail.is_empty() {
+        format!("/{name}")
+    } else {
+        format!("/{name} {tail}")
+    }
+}
+
+#[cfg(test)]
+#[path = "pi_tests.rs"]
+mod tests;
