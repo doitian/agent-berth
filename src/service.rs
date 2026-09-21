@@ -301,6 +301,7 @@ switch ($Action) {{
     }}
     'stop' {{
         if (Test-AgentBerthTask) {{ schtasks /End /TN $TaskName | Out-Null }}
+        Wait-AgentBerthStopped
     }}
     'restart' {{
         if (Test-AgentBerthTask) {{ schtasks /End /TN $TaskName | Out-Null }}
