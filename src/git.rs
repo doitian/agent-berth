@@ -19,7 +19,7 @@ pub fn branch(cwd: &Path) -> Option<String> {
 /// One-line repository summary for the details pane.
 #[derive(Debug, Clone)]
 pub struct RepoInfo {
-    /// Branch plus compact status, e.g. `main +1 ~2 ?3 ↑1 ↓2`.
+    /// Branch plus status, e.g. `main (dirty) (ahead 1 ↑ behind 2 ↓)`.
     pub status: String,
     /// `owner/repo` when a remote points at GitHub.
     pub github: Option<String>,
@@ -36,72 +36,58 @@ pub fn repo_info(cwd: &Path) -> Option<RepoInfo> {
     if !output.status.success() {
         return None;
     }
-    let counts = parse_porcelain(&String::from_utf8_lossy(&output.stdout));
-    let status = status_line(branch(cwd).as_deref().unwrap_or("-"), &counts);
+    let state = parse_porcelain(&String::from_utf8_lossy(&output.stdout));
+    let status = status_line(branch(cwd).as_deref().unwrap_or("-"), &state);
     let github = github_remote(cwd);
     Some(RepoInfo { status, github })
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
-struct Counts {
-    staged: u32,
-    modified: u32,
-    unmerged: u32,
-    untracked: u32,
+struct RepoStatus {
+    dirty: bool,
     ahead: u32,
     behind: u32,
 }
 
-fn parse_porcelain(text: &str) -> Counts {
-    let mut counts = Counts::default();
+fn parse_porcelain(text: &str) -> RepoStatus {
+    let mut state = RepoStatus::default();
     for line in text.lines() {
         if let Some(ab) = line.strip_prefix("# branch.ab ") {
             for part in ab.split_whitespace() {
                 if let Some(n) = part.strip_prefix('+') {
-                    counts.ahead = n.parse().unwrap_or(0);
+                    state.ahead = n.parse().unwrap_or(0);
                 } else if let Some(n) = part.strip_prefix('-') {
-                    counts.behind = n.parse().unwrap_or(0);
+                    state.behind = n.parse().unwrap_or(0);
                 }
             }
-        } else if line.starts_with("1 ") || line.starts_with("2 ") {
-            let mut xy = line[2..].chars();
-            if xy.next().is_some_and(|x| x != '.') {
-                counts.staged += 1;
-            }
-            if xy.next().is_some_and(|y| y != '.') {
-                counts.modified += 1;
-            }
-        } else if line.starts_with("u ") {
-            counts.unmerged += 1;
-        } else if line.starts_with("? ") {
-            counts.untracked += 1;
+        } else if line.starts_with("1 ")
+            || line.starts_with("2 ")
+            || line.starts_with("u ")
+            || line.starts_with("? ")
+        {
+            state.dirty = true;
         }
     }
-    counts
+    state
 }
 
-fn status_line(branch: &str, counts: &Counts) -> String {
+fn status_line(branch: &str, state: &RepoStatus) -> String {
     let mut parts = vec![branch.to_string()];
-    if counts.staged > 0 {
-        parts.push(format!("+{}", counts.staged));
+    if state.dirty {
+        parts.push("(dirty)".into());
     }
-    if counts.modified > 0 {
-        parts.push(format!("~{}", counts.modified));
+    let mut divergence = Vec::new();
+    if state.ahead > 0 {
+        divergence.push(format!("ahead {} ↑", state.ahead));
     }
-    if counts.unmerged > 0 {
-        parts.push(format!("!{}", counts.unmerged));
+    if state.behind > 0 {
+        divergence.push(format!("behind {} ↓", state.behind));
     }
-    if counts.untracked > 0 {
-        parts.push(format!("?{}", counts.untracked));
-    }
-    if counts.ahead > 0 {
-        parts.push(format!("↑{}", counts.ahead));
-    }
-    if counts.behind > 0 {
-        parts.push(format!("↓{}", counts.behind));
+    if !divergence.is_empty() {
+        parts.push(format!("({})", divergence.join(" ")));
     }
     if parts.len() == 1 {
-        parts.push("(clean)".into());
+        parts.push("(≡)".into());
     }
     parts.join(" ")
 }

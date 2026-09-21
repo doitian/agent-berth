@@ -940,7 +940,12 @@ fn render_details(frame: &mut Frame, app: &App, area: Rect) {
         return;
     };
     let cwd = session.cwd.clone().unwrap_or_else(|| "-".into());
-    let branch = app.branch.clone().unwrap_or_else(|| "-".into());
+    let branch = app
+        .git
+        .as_ref()
+        .map(|info| info.status.clone())
+        .or_else(|| app.branch.clone())
+        .unwrap_or_else(|| "-".into());
     let age = list::age_label(session.last_report_ms);
     let command = if session.cmdline.is_empty() {
         "-".into()
@@ -962,11 +967,8 @@ fn render_details(frame: &mut Frame, app: &App, area: Rect) {
         ("cwd", cwd),
         ("branch", branch),
     ];
-    if let Some(info) = &app.git {
-        rows.push(("git", info.status.clone()));
-        if let Some(repo) = &info.github {
-            rows.push(("repo", repo.clone()));
-        }
+    if let Some(repo) = app.git.as_ref().and_then(|info| info.github.as_ref()) {
+        rows.push(("repo", repo.clone()));
     }
     rows.extend([
         ("title", session.title.clone().unwrap_or_else(|| "-".into())),

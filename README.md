@@ -85,6 +85,12 @@ The left column lists sessions with the agent logo, status, and title; the
 right column shows session details, plus a live tmux pane preview when the
 selected session runs in tmux.
 
+The details pane combines the Git branch and status in one row, for example
+`main (dirty) (ahead 2 ↑ behind 1 ↓)`. `(dirty)` includes staged, unstaged,
+untracked, and conflicted changes; ahead/behind counts compare with the local
+upstream tracking ref. `(≡)` means clean with no reported divergence, including
+branches without an upstream.
+
 | Key | Action |
 | --- | --- |
 | `j`/`k` | Move the selection |

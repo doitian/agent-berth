@@ -72,15 +72,12 @@ fn parses_github_remote_urls() {
 }
 
 #[test]
-fn parses_porcelain_counts() {
+fn parses_porcelain_status() {
     let text = "# branch.oid abc\n# branch.head main\n# branch.ab +2 -1\n1 M. N... 100644 100644 100644 abc abc a.rs\n1 .M N... 100644 100644 100644 abc abc b.rs\n? new.rs\nu UU N... 100644 100644 100644 100644 abc abc abc c.rs\n";
     assert_eq!(
         parse_porcelain(text),
-        Counts {
-            staged: 1,
-            modified: 1,
-            unmerged: 1,
-            untracked: 1,
+        RepoStatus {
+            dirty: true,
             ahead: 2,
             behind: 1,
         }
@@ -88,21 +85,43 @@ fn parses_porcelain_counts() {
 }
 
 #[test]
-fn status_line_formats_compactly() {
-    let counts = Counts {
-        staged: 1,
-        modified: 2,
-        untracked: 3,
-        ..Counts::default()
-    };
-    assert_eq!(status_line("main", &counts), "main +1 ~2 ?3");
-    assert_eq!(status_line("main", &Counts::default()), "main (clean)");
-    let ab = Counts {
-        ahead: 2,
-        behind: 1,
-        ..Counts::default()
-    };
-    assert_eq!(status_line("dev", &ab), "dev ↑2 ↓1");
+fn porcelain_marks_each_kind_of_change_dirty() {
+    for record in [
+        "1 M. N... 100644 100644 100644 abc abc staged.rs",
+        "1 .M N... 100644 100644 100644 abc abc modified.rs",
+        "1 .D N... 100644 100644 000000 abc abc deleted.rs",
+        "2 R. N... 100644 100644 100644 abc abc R100 new.rs\told.rs",
+        "u UU N... 100644 100644 100644 100644 abc abc abc conflict.rs",
+        "? untracked.rs",
+        "1 .M S..U 160000 160000 160000 abc abc submodule",
+    ] {
+        assert!(parse_porcelain(record).dirty, "{record}");
+    }
+    assert_eq!(
+        parse_porcelain("# branch.head main\n# branch.ab +0 -0\n! ignored.rs\n"),
+        RepoStatus::default()
+    );
+}
+
+#[test]
+fn status_line_matches_git_multistatus() {
+    for (dirty, ahead, behind, expected) in [
+        (false, 0, 0, "feature/v1.2 (≡)"),
+        (true, 0, 0, "feature/v1.2 (dirty)"),
+        (false, 2, 0, "feature/v1.2 (ahead 2 ↑)"),
+        (false, 0, 1, "feature/v1.2 (behind 1 ↓)"),
+        (false, 2, 1, "feature/v1.2 (ahead 2 ↑ behind 1 ↓)"),
+        (true, 2, 0, "feature/v1.2 (dirty) (ahead 2 ↑)"),
+        (true, 0, 1, "feature/v1.2 (dirty) (behind 1 ↓)"),
+        (true, 2, 1, "feature/v1.2 (dirty) (ahead 2 ↑ behind 1 ↓)"),
+    ] {
+        let state = RepoStatus {
+            dirty,
+            ahead,
+            behind,
+        };
+        assert_eq!(status_line("feature/v1.2", &state), expected);
+    }
 }
 
 #[test]
@@ -125,7 +144,7 @@ fn repo_info_reads_real_repository() {
         .output()
         .unwrap();
     let info = repo_info(root.path()).unwrap();
-    assert_eq!(info.status, "main ?1");
+    assert_eq!(info.status, "main (dirty)");
     assert_eq!(info.github.as_deref(), Some("owner/repo"));
 }
 
