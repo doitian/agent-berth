@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.2.1](https://github.com/doitian/agent-berth/releases/tag/v1.2.1) - 2026-09-21
+
+### Fixed
+
+- Fix attach preview on windows ([b6f2bb8](https://github.com/doitian/agent-berth/commit/b6f2bb8b78d5c8445bab3b40f35b6ae389cac5c8))
+
 ## [1.2.0](https://github.com/doitian/agent-berth/releases/tag/v1.2.0) - 2026-09-21
 
 ### Added
