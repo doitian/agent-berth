@@ -104,6 +104,8 @@ pub struct AgentSession {
     #[serde(default)]
     pub cmdline: Vec<String>,
     #[serde(default)]
+    pub created_ms: u64,
+    #[serde(default)]
     pub last_report_ms: u64,
     #[serde(default)]
     pub exited: bool,
@@ -123,6 +125,7 @@ impl Default for AgentSession {
             background_only: false,
             cwd: None,
             cmdline: Vec::new(),
+            created_ms: 0,
             last_report_ms: 0,
             exited: false,
             discovered: false,
@@ -226,7 +229,13 @@ pub fn apply_event(
         if kind == AgentEventKind::Stop && !event.background_running {
             return;
         }
-        sessions.insert(sid.clone(), AgentSession::default());
+        sessions.insert(
+            sid.clone(),
+            AgentSession {
+                created_ms: crate::store::now_ms(),
+                ..AgentSession::default()
+            },
+        );
     }
     let parent_id;
     let source;

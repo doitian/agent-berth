@@ -42,6 +42,8 @@ pub struct PluginSnapshot {
     #[serde(default)]
     pub pid: Option<u32>,
     #[serde(default)]
+    pub created_ms: u64,
+    #[serde(default)]
     pub last_report_ms: u64,
 }
 
@@ -80,6 +82,7 @@ pub struct ListedSession {
     pub cwd: Option<String>,
     pub cmdline: Vec<String>,
     pub pid: Option<u32>,
+    pub created_ms: u64,
     pub last_report_ms: u64,
     pub kind: SessionKind,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -186,6 +189,13 @@ impl Store {
             Some(_) => anyhow::bail!("titles must be an object of strings"),
         };
         let pid = u32_field(&payload, &["pid"]).or_else(|| instance.parse().ok());
+        let created_ms = self
+            .snapshots
+            .get(provider)
+            .and_then(|instances| instances.get(instance))
+            .map(|existing| existing.created_ms)
+            .filter(|created| *created > 0)
+            .unwrap_or_else(now_ms);
         let snapshot = PluginSnapshot {
             status,
             blocking,
@@ -193,6 +203,7 @@ impl Store {
             cwd: cwd_field(&payload),
             cmdline: string_list(&payload, "cmdline"),
             pid,
+            created_ms,
             last_report_ms: now_ms(),
         };
         self.snapshots
@@ -252,6 +263,7 @@ impl Store {
                     cwd: session.cwd.clone(),
                     cmdline,
                     pid: session.pid,
+                    created_ms: created_or(session.created_ms, session.last_report_ms),
                     last_report_ms: session.last_report_ms,
                     kind: SessionKind::Hook,
                     parent_id: session.parent_id.clone(),
@@ -284,6 +296,7 @@ impl Store {
                         cwd: snapshot.cwd.clone(),
                         cmdline,
                         pid: snapshot.pid,
+                        created_ms: created_or(snapshot.created_ms, snapshot.last_report_ms),
                         last_report_ms: snapshot.last_report_ms,
                         kind: SessionKind::Plugin,
                         parent_id: None,
@@ -415,6 +428,14 @@ impl ListedSession {
             return false;
         };
         idle_age_ms(self, store, now_ms) <= idle.as_millis() as u64
+    }
+}
+
+fn created_or(created_ms: u64, fallback_ms: u64) -> u64 {
+    if created_ms > 0 {
+        created_ms
+    } else {
+        fallback_ms
     }
 }
 

@@ -11,6 +11,7 @@ fn session(provider: &str, title: &str, cwd: &str) -> ListedSession {
         cwd: Some(cwd.into()),
         cmdline: Vec::new(),
         pid: None,
+        created_ms: 0,
         last_report_ms: 0,
         kind: SessionKind::Hook,
         parent_id: None,

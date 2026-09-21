@@ -283,6 +283,7 @@ pub fn apply_agents(
         }
         let item = sessions.entry(sid.clone()).or_insert_with(|| AgentSession {
             discovered: true,
+            created_ms: crate::store::now_ms(),
             ..AgentSession::default()
         });
         item.status = status;
