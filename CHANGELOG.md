@@ -2,6 +2,23 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.2.0](https://github.com/doitian/agent-berth/releases/tag/v1.2.0) - 2026-09-21
+
+### Added
+
+- Add catppuccin latte styling and git status symbols ([5e12575](https://github.com/doitian/agent-berth/commit/5e125751319361f073277f42be233f031d04a2ce))
+- Add toggleable group headers to the tui list ([ad960f4](https://github.com/doitian/agent-berth/commit/ad960f4c1b98728a6a7658f3a70078c0f0e1952c))
+
+### Changed
+
+- Rework tui list rows with padded status initials ([7b798b2](https://github.com/doitian/agent-berth/commit/7b798b284d857c5b559b2adffacf6d433a08cee4))
+
+### Fixed
+
+- Fix codex waiting status during automatic approval review ([7be7940](https://github.com/doitian/agent-berth/commit/7be794015202b1ed2e58f0c7ea2d49795dcbb6d3))
+- Fix stale codex waiting state during automatic approval review ([5671fba](https://github.com/doitian/agent-berth/commit/5671fba646f9da2886498cff931dabfccccc1241))
+- Fix tmux preview losing terminal colors ([98efd3c](https://github.com/doitian/agent-berth/commit/98efd3c242ab71e217cc788e0eee86e716b238b5))
+
 ## [1.1.0](https://github.com/doitian/agent-berth/releases/tag/v1.1.0) - 2026-09-21
 
 ### Added
