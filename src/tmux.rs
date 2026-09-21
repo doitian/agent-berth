@@ -165,6 +165,9 @@ where
 }
 
 /// fzf preview command for `{1}`, the pane id, including the active socket and config.
+///
+/// The output is trimmed to the preview height so fzf, which opens previews
+/// scrolled to the top, shows the pane bottom (last message and status bar).
 pub fn preview_command() -> String {
     let mut parts = vec!["tmux".to_string(), "-u".to_string()];
     if let Some(socket) = crate::paths::env_path("AGENT_BERTH_TMUX_SOCKET") {
@@ -175,7 +178,7 @@ pub fn preview_command() -> String {
         parts.push("-f".into());
         parts.push(quote_arg(&config.display().to_string()));
     }
-    parts.push("capture-pane -p -e -t {1}".into());
+    parts.push("capture-pane -p -e -t {1} | tail -n \"${FZF_PREVIEW_LINES:-40}\"".into());
     parts.join(" ")
 }
 
