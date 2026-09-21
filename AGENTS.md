@@ -12,3 +12,9 @@ the first line of each commit. Start it with a prefix:
 
 Use imperative mood, lowercase verb, no trailing period; details go in the
 body. Regenerate with `mise run changelog` before tagging a release.
+
+## Pull requests
+
+Title PRs with the same naming pattern as commit messages (prefix + imperative
+mood). Prefer squash merging so the PR title lands on `main` as a single,
+changelog-friendly commit.
