@@ -454,31 +454,37 @@ fn attach_without_pane_shows_message() {
 }
 
 #[test]
-fn attach_focuses_selected_claude_desktop_session() {
+fn attach_focuses_selected_desktop_session() {
     let mut app = desktop_app();
     app.selected_pane = Some(preview_pane("%1"));
     assert!(matches!(
         app.handle_key(char_key('a')),
-        Effect::FocusClaudeDesktop(id) if id == "one"
+        Effect::FocusDesktop { provider, session_id } if provider == "claude" && session_id == "one"
     ));
-    // Other desktop providers keep their existing behavior.
     app.selected = 1;
     app.update_selection();
-    assert!(matches!(app.handle_key(char_key('a')), Effect::None));
+    app.selected_pane = Some(preview_pane("%2"));
+    assert!(matches!(
+        app.handle_key(char_key('a')),
+        Effect::FocusDesktop { provider, session_id } if provider == "codex" && session_id == "two"
+    ));
 }
 
 #[test]
-fn attach_keeps_tmux_for_claude_cli() {
-    let mut app = app_with_sessions();
-    app.selected_pane = Some(preview_pane("%1"));
-    assert!(matches!(app.handle_key(char_key('a')), Effect::Attach(_)));
+fn attach_keeps_tmux_for_cli_sessions() {
+    for provider in ["claude", "codex"] {
+        let mut app = app_with_sessions();
+        app.sessions[0].provider = provider.into();
+        app.selected_pane = Some(preview_pane("%1"));
+        assert!(matches!(app.handle_key(char_key('a')), Effect::Attach(_)));
+    }
 }
 
 #[test]
 fn desktop_focus_error_is_displayed() {
     let mut app = desktop_app();
     app.needs_redraw = false;
-    app.handle_fetched(Fetched::FocusClaudeDesktop(Err(anyhow::anyhow!(
+    app.handle_fetched(Fetched::FocusDesktop(Err(anyhow::anyhow!(
         "no matching active Claude Desktop session found"
     ))));
     assert_eq!(
@@ -1149,10 +1155,7 @@ fn desktop_preview_refreshes_and_supports_zoom_and_focus() {
     assert!(app.has_preview());
     app.toggle_maximized();
     assert!(app.preview_maximized);
-    assert!(matches!(
-        app.attach_selected(),
-        Effect::FocusClaudeDesktop(_)
-    ));
+    assert!(matches!(app.attach_selected(), Effect::FocusDesktop { .. }));
     app.apply_refresh(app.sessions.clone(), Vec::new());
     let result = transcript_completion(&mut app, "Assistant: updated");
     app.handle_fetched(result);

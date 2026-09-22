@@ -106,7 +106,10 @@ pub(crate) enum Effect {
     None,
     Quit,
     Attach(Pane),
-    FocusClaudeDesktop(String),
+    FocusDesktop {
+        provider: String,
+        session_id: String,
+    },
     Resume(ListedSession),
     Remove(ListedSession),
     Lazygit(PathBuf),
@@ -115,8 +118,9 @@ pub(crate) enum Effect {
 
 /// Blocking I/O (db, tmux, git) runs on worker threads so the UI never stalls.
 enum Fetch {
-    FocusClaudeDesktop {
+    FocusDesktop {
         ctx: Box<Context>,
+        provider: String,
         session_id: String,
     },
     Refresh(Box<RefreshRequest>),
@@ -154,7 +158,7 @@ struct CachedTranscript {
 }
 
 enum Fetched {
-    FocusClaudeDesktop(Result<()>),
+    FocusDesktop(Result<()>),
     Transcript {
         source: transcript::Source,
         reader: Box<transcript::Reader>,
@@ -182,9 +186,15 @@ fn spawn_fetch(tx: &Sender<Fetched>, fetch: Fetch) {
     let tx = tx.clone();
     thread::spawn(move || {
         let fetched = match fetch {
-            Fetch::FocusClaudeDesktop { ctx, session_id } => Fetched::FocusClaudeDesktop(
-                crate::providers::focus_claude_desktop(&ctx, &session_id),
-            ),
+            Fetch::FocusDesktop {
+                ctx,
+                provider,
+                session_id,
+            } => Fetched::FocusDesktop(crate::providers::focus_desktop(
+                &ctx,
+                &provider,
+                &session_id,
+            )),
             Fetch::Refresh(request) => {
                 let RefreshRequest {
                     ctx,
@@ -363,9 +373,9 @@ impl App {
 
     fn handle_fetched(&mut self, fetched: Fetched) {
         match fetched {
-            Fetched::FocusClaudeDesktop(result) => {
+            Fetched::FocusDesktop(result) => {
                 self.message = Some(match result {
-                    Ok(()) => "sent focus request to Claude Desktop".into(),
+                    Ok(()) => "sent focus request to desktop app".into(),
                     Err(err) => format!("focus: {err:#}"),
                 });
                 self.needs_redraw = true;
@@ -842,10 +852,13 @@ impl App {
 
     fn attach_selected(&mut self) -> Effect {
         if let Some(session) = self.selected_session()
-            && session.provider == "claude"
+            && matches!(session.provider.as_str(), "claude" | "codex")
             && session.source == Source::Desktop
         {
-            return Effect::FocusClaudeDesktop(session.session_id.clone());
+            return Effect::FocusDesktop {
+                provider: session.provider.clone(),
+                session_id: session.session_id.clone(),
+            };
         }
         match self.selected_pane.clone() {
             Some(pane) => Effect::Attach(pane),
@@ -966,10 +979,14 @@ pub fn run(ctx: &Context) -> Result<()> {
                     Effect::None => {}
                     Effect::Quit => break,
                     Effect::Attach(pane) => attach_effect(&mut guard, &mut app, &pane),
-                    Effect::FocusClaudeDesktop(session_id) => spawn_fetch(
+                    Effect::FocusDesktop {
+                        provider,
+                        session_id,
+                    } => spawn_fetch(
                         &app.fetch_tx,
-                        Fetch::FocusClaudeDesktop {
+                        Fetch::FocusDesktop {
                             ctx: Box::new(ctx.clone()),
+                            provider,
                             session_id,
                         },
                     ),

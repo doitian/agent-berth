@@ -4,6 +4,26 @@ use crate::status::AgentStatus;
 use tempfile::tempdir;
 
 #[test]
+fn desktop_focus_links_to_the_session_and_rejects_invalid_ids() {
+    let id = "01a0b525-b641-7472-90cf-14dba7db3162";
+    assert_eq!(
+        desktop_url(id).unwrap(),
+        "codex://threads/01a0b525-b641-7472-90cf-14dba7db3162"
+    );
+    for invalid in [
+        "",
+        "new",
+        "../settings",
+        "01a0b525-b641-7472-90cf-14dba7db3162?prompt=hello",
+        "01a0b525-b641-7472-90cf-14dba7db3162&command",
+        "01a0b525-b641-7472-90cf-14dba7db316g",
+        "01a0b525/b641-7472-90cf-14dba7db3162",
+    ] {
+        assert!(desktop_url(invalid).is_err(), "{invalid}");
+    }
+}
+
+#[test]
 fn hooks_preserve_known_source_and_children_inherit_the_parent_source() {
     let mut sessions = BTreeMap::new();
     for (originator, expected) in [

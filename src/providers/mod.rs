@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 
 use anyhow::{Context, Result};
 use serde_json::{Value, json};
@@ -13,7 +14,38 @@ mod grok;
 mod opencode;
 mod pi;
 
-pub(crate) use claude::focus_desktop as focus_claude_desktop;
+pub(crate) fn focus_desktop(ctx: &AppContext, provider: &str, session_id: &str) -> Result<()> {
+    match provider {
+        "claude" => claude::focus_desktop(ctx, session_id),
+        "codex" => codex::focus_desktop(session_id),
+        _ => anyhow::bail!("desktop focus is unavailable for {provider}"),
+    }
+}
+
+fn open_desktop_url(url: &str) -> Result<()> {
+    #[cfg(target_os = "macos")]
+    let mut command = Command::new("open");
+    #[cfg(windows)]
+    let mut command = {
+        let mut command = Command::new("cmd");
+        command.args(["/C", "start", ""]);
+        command
+    };
+    #[cfg(not(any(target_os = "macos", windows)))]
+    let mut command = Command::new("xdg-open");
+    let mut child = command
+        .arg(url)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .context("open desktop session")?;
+    // Reap the launcher without waiting for the app to handle the deep link.
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+    Ok(())
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProviderKind {

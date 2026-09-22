@@ -116,6 +116,25 @@ fn source_for(event: &Value, existing: Option<&AgentSession>) -> Source {
     existing.map(|session| session.source).unwrap_or_default()
 }
 
+fn desktop_url(session_id: &str) -> Result<String> {
+    anyhow::ensure!(
+        session_id.len() == 36
+            && session_id.bytes().enumerate().all(|(index, byte)| {
+                if matches!(index, 8 | 13 | 18 | 23) {
+                    byte == b'-'
+                } else {
+                    byte.is_ascii_hexdigit()
+                }
+            }),
+        "invalid Codex desktop session ID"
+    );
+    Ok(format!("codex://threads/{session_id}"))
+}
+
+pub fn focus_desktop(session_id: &str) -> Result<()> {
+    super::open_desktop_url(&desktop_url(session_id)?)
+}
+
 pub fn discover(ctx: &Context, sessions: &mut BTreeMap<String, AgentSession>) -> bool {
     let mut changed = drop_archived(ctx, sessions);
     let Ok(index) = std::fs::read_to_string(ctx.codex_home.join("session_index.jsonl")) else {

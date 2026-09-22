@@ -267,28 +267,7 @@ pub fn focus_desktop(ctx: &Context, session_id: &str) -> Result<()> {
         let _ = raise_niri_window();
     }
     let url = desktop_url(ctx, session_id)?;
-    #[cfg(target_os = "macos")]
-    let mut command = Command::new("open");
-    #[cfg(windows)]
-    let mut command = {
-        let mut command = Command::new("cmd");
-        command.args(["/C", "start", ""]);
-        command
-    };
-    #[cfg(not(any(target_os = "macos", windows)))]
-    let mut command = Command::new("xdg-open");
-    let mut child = command
-        .arg(url)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .context("open Claude Desktop session")?;
-    // Reap the launcher without waiting for the app to handle the deep link.
-    thread::spawn(move || {
-        let _ = child.wait();
-    });
-    Ok(())
+    super::open_desktop_url(&url)
 }
 
 #[cfg(target_os = "linux")]

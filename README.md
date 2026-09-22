@@ -102,9 +102,11 @@ are retried automatically. These previews cover local Code sessions, not
 ordinary Claude chats or remote/cloud sessions. Claude's optional
 `MessageDisplay` hook is not required or installed.
 
-Press `a` on a Claude Desktop session to open it in the app. On Linux under
-niri, agent-berth first tries to raise the Claude window, ignoring errors,
-then launches the session deep link without waiting for the app to exit.
+Press `a` on a Claude or Codex desktop session to open it in the app.
+Codex uses `codex://threads/<session-id>` to select the session and raise the
+desktop app. For Claude on Linux under niri, agent-berth first tries to raise
+the Claude window, ignoring errors, then launches the session deep link.
+Both launch without waiting for the app to exit.
 
 The details pane combines the Git branch and status in one row, for example
 `main [!+↕]`. It uses Starship-style symbols: red `!` for conflicts, `$` for
@@ -127,7 +129,7 @@ symbol. Clean repositories without an upstream show only the branch name.
 | `w` | Toggle group headers for the current sort (hidden by default) |
 | `I` | In the resumable list, toggle idle sessions; asks for the idle window (default `20m`, prefilled) |
 | `=` | Toggle maximization of the tmux or conversation preview |
-| `a` | Focus a Claude Desktop session, or attach to a terminal session's tmux pane: switch-client inside tmux, attach outside; detaching returns to the TUI |
+| `a` | Focus a Claude or Codex desktop session, or attach to a terminal session's tmux pane: switch-client inside tmux, attach outside; detaching returns to the TUI |
 | `r` | Resume the selected resumable session in tmux and attach to it |
 | `d` | Delete the selected session after confirming with `y` |
 | `q` | Quit |
