@@ -1,5 +1,13 @@
 use super::*;
 
+#[test]
+fn status_deserializes_legacy_working() {
+    let status: AgentStatus = serde_json::from_str("\"working\"").unwrap();
+    assert_eq!(status, AgentStatus::Running);
+    let session: AgentSession = serde_json::from_str("{\"status\":\"working\"}").unwrap();
+    assert_eq!(session.status, AgentStatus::Running);
+}
+
 fn emit(
     sessions: &mut std::collections::BTreeMap<String, AgentSession>,
     name: AgentEventKind,
@@ -19,14 +27,14 @@ fn turn_waits_resumes_and_ignores_late_tool_events() {
     emit(&mut sessions, AgentEventKind::ToolStart, "s");
     assert_eq!(sessions["s"].status, AgentStatus::Waiting);
     emit(&mut sessions, AgentEventKind::ToolComplete, "s");
-    assert_eq!(sessions["s"].status, AgentStatus::Working);
+    assert_eq!(sessions["s"].status, AgentStatus::Running);
     emit(&mut sessions, AgentEventKind::Stop, "s");
     emit(&mut sessions, AgentEventKind::ToolComplete, "s");
     emit(&mut sessions, AgentEventKind::ToolStart, "s");
     emit(&mut sessions, AgentEventKind::Stop, "s");
     assert_eq!(sessions["s"].status, AgentStatus::Done);
     emit(&mut sessions, AgentEventKind::PromptSubmit, "s");
-    assert_eq!(sessions["s"].status, AgentStatus::Working);
+    assert_eq!(sessions["s"].status, AgentStatus::Running);
     emit(&mut sessions, AgentEventKind::SessionEnd, "s");
     emit(&mut sessions, AgentEventKind::ToolComplete, "s");
     assert!(sessions.is_empty());
@@ -130,7 +138,7 @@ fn title_field_reads_common_names() {
 }
 
 #[test]
-fn stop_with_background_work_stays_working() {
+fn stop_with_background_work_stays_running() {
     let mut sessions = std::collections::BTreeMap::new();
     apply_event(
         &mut sessions,
@@ -147,7 +155,7 @@ fn stop_with_background_work_stays_working() {
             background_running: true,
         },
     );
-    assert_eq!(sessions["s"].status, AgentStatus::Working);
+    assert_eq!(sessions["s"].status, AgentStatus::Running);
     assert!(sessions["s"].background_only);
 }
 

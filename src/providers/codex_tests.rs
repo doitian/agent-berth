@@ -26,7 +26,7 @@ fn automatic_approval_review_does_not_wait_for_user_input() {
                 "turn_id":"turn", "transcript_path":transcript
             }),
         );
-        assert_eq!(sessions["s"].status, AgentStatus::Working, "{event}");
+        assert_eq!(sessions["s"].status, AgentStatus::Running, "{event}");
     }
 }
 
@@ -50,7 +50,7 @@ fn automatic_approval_review_recovers_a_persisted_waiting_session() {
             "turn_id":"turn", "transcript_path":transcript
         }),
     );
-    assert_eq!(sessions["s"].status, AgentStatus::Working);
+    assert_eq!(sessions["s"].status, AgentStatus::Running);
     assert!(!sessions["s"].background_only);
     assert_eq!(sessions["s"].title.as_deref(), Some("Keep this title"));
 }
@@ -199,7 +199,7 @@ fn drops_desktop_sessions_without_session_files() {
         "test-desktop".into(),
         AgentSession {
             source: Source::Desktop,
-            status: AgentStatus::Working,
+            status: AgentStatus::Running,
             ..AgentSession::default()
         },
     );
@@ -207,7 +207,7 @@ fn drops_desktop_sessions_without_session_files() {
         "cli-keep".into(),
         AgentSession {
             source: Source::Cli,
-            status: AgentStatus::Working,
+            status: AgentStatus::Running,
             ..AgentSession::default()
         },
     );

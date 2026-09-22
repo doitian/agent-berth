@@ -281,7 +281,7 @@ impl Store {
                     let status = if blocking.contains(sid) {
                         AgentStatus::Waiting
                     } else if matches!(kind.as_str(), "busy" | "retry") {
-                        AgentStatus::Working
+                        AgentStatus::Running
                     } else {
                         AgentStatus::Idle
                     };

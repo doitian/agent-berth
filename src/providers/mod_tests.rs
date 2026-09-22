@@ -27,14 +27,14 @@ fn hook_providers_share_turn_lifecycle() {
         emit(provider, &mut sessions, "PreToolUse");
         assert_eq!(sessions["s"].status, AgentStatus::Waiting, "{provider}");
         emit(provider, &mut sessions, "PostToolUse");
-        assert_eq!(sessions["s"].status, AgentStatus::Working, "{provider}");
+        assert_eq!(sessions["s"].status, AgentStatus::Running, "{provider}");
         emit(provider, &mut sessions, "Stop");
         emit(provider, &mut sessions, "PostToolUse");
         emit(provider, &mut sessions, "PreToolUse");
         emit(provider, &mut sessions, "Stop");
         assert_eq!(sessions["s"].status, AgentStatus::Done, "{provider}");
         emit(provider, &mut sessions, "UserPromptSubmit");
-        assert_eq!(sessions["s"].status, AgentStatus::Working, "{provider}");
+        assert_eq!(sessions["s"].status, AgentStatus::Running, "{provider}");
         emit(provider, &mut sessions, "SessionEnd");
         emit(provider, &mut sessions, "PostToolUse");
         assert!(sessions.is_empty(), "{provider}");
@@ -61,7 +61,7 @@ fn claude_and_codex_track_child_sessions() {
         );
         assert_eq!(
             sessions["parent"].status,
-            AgentStatus::Working,
+            AgentStatus::Running,
             "{provider}"
         );
         assert_eq!(
@@ -95,7 +95,7 @@ fn codex_subagent_stop_without_id_leaves_parent() {
         &mut sessions,
         &serde_json::json!({"session_id":"s","hook_event_name":"SubagentStop"}),
     );
-    assert_eq!(sessions["s"].status, AgentStatus::Working);
+    assert_eq!(sessions["s"].status, AgentStatus::Running);
 }
 
 #[test]
@@ -145,7 +145,7 @@ fn claude_desktop_entrypoint_and_background_stop() {
             "background_tasks":[{"status":"busy"}]
         }),
     );
-    assert_eq!(sessions["s"].status, AgentStatus::Working);
+    assert_eq!(sessions["s"].status, AgentStatus::Running);
 }
 
 #[test]

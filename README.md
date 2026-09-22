@@ -10,7 +10,7 @@ by working directory.
 
 ## Features
 
-- **Live status tracking** — see which sessions are `working`, `waiting`,
+- **Live status tracking** — see which sessions are `running`, `waiting`,
   `idle`, or `done`, across all supported agents.
 - **Session resume** — restart sessions that were interrupted by a reboot or
   server restart, each in its own tmux window via the agent's native resume
@@ -118,7 +118,7 @@ symbol. Clean repositories without an upstream show only the branch name.
 | `st` | Sort by creation time, newest first (default) |
 | `sr` | Sort by activity, most recent first |
 | `sa` | Sort by agent provider alphabetically |
-| `ss` | Sort by status alphabetically |
+| `ss` | Sort by status: waiting, running, done, idle |
 | `sd` | Sort by working directory alphabetically, missing directories last |
 | `w` | Toggle group headers for the current sort (hidden by default) |
 | `I` | In the resumable list, toggle idle sessions; asks for the idle window (default `20m`, prefilled) |
@@ -137,7 +137,7 @@ with `/` separators, such as `codebase/agent-berth`; missing directories show
 
 ### Resume behavior
 
-`resume` selects sessions that are still busy (`working`/`waiting`) with no
+`resume` selects sessions that are still busy (`running`/`waiting`) with no
 live agent process, plus sessions that went idle without a graceful exit
 within the idle window (default `20m`, override with `--idle`). Selected
 sessions are grouped by working directory; each directory gets a tmux session

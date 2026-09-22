@@ -53,9 +53,9 @@ fn hook_clients_report_lifecycle_over_ipc() {
         sandbox.hook(provider, &sid, "SessionStart", Some(std::process::id()));
         assert!(sandbox.sessions(false).is_empty());
         for (event, status) in [
-            ("UserPromptSubmit", "working"),
+            ("UserPromptSubmit", "running"),
             ("PermissionRequest", "waiting"),
-            ("PostToolUse", "working"),
+            ("PostToolUse", "running"),
             ("Stop", "done"),
         ] {
             sandbox.hook(provider, &sid, event, Some(std::process::id()));
@@ -174,7 +174,7 @@ fn plugin_clients_report_snapshots_and_blocking_over_ipc() {
         );
         let sessions = sandbox.sessions(false);
         assert_eq!(sessions.len(), 1);
-        assert_eq!(sessions[0]["status"], "working");
+        assert_eq!(sessions[0]["status"], "running");
         sandbox.notify(provider, json!({"id": "fixture", "status": {}}));
         assert!(sandbox.sessions(false).is_empty());
     }
@@ -421,7 +421,7 @@ fn codex_hook_without_pid_detects_agent_and_tmux_pane() {
         );
         let output = success(sandbox.berth().args(["attach", "--dry-run"]));
         let text = String::from_utf8_lossy(&output.stdout);
-        assert!(text.starts_with("%7\tcodex\tworking\t"), "{text}");
+        assert!(text.starts_with("%7\tcodex\trunning\t"), "{text}");
         assert!(text.contains("codex-no-pid"), "{text}");
     }));
     let _ = agent.kill();

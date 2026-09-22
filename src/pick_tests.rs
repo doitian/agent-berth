@@ -6,7 +6,7 @@ fn session(provider: &str, title: &str, cwd: &str) -> ListedSession {
     ListedSession {
         provider: provider.into(),
         session_id: "session-1".into(),
-        status: AgentStatus::Working,
+        status: AgentStatus::Running,
         source: Source::Cli,
         cwd: Some(cwd.into()),
         cmdline: Vec::new(),

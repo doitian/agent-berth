@@ -98,7 +98,7 @@ fn background_running(event: &Value) -> bool {
         .is_some_and(|tasks| {
             tasks.iter().any(|task| {
                 task.as_object()
-                    .is_some_and(|_| agent_kind(task) == AgentStatus::Working)
+                    .is_some_and(|_| agent_kind(task) == AgentStatus::Running)
             })
         })
 }
@@ -359,7 +359,7 @@ fn agent_kind(row: &Value) -> AgentStatus {
     if matches!(state, "working" | "running" | "busy")
         || matches!(status, "busy" | "running" | "working")
     {
-        return AgentStatus::Working;
+        return AgentStatus::Running;
     }
     AgentStatus::Idle
 }

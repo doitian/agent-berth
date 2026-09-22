@@ -20,7 +20,8 @@ pub enum AgentEventKind {
 pub enum AgentStatus {
     #[default]
     Idle,
-    Working,
+    #[serde(alias = "working")]
+    Running,
     Waiting,
     Done,
 }
@@ -29,14 +30,23 @@ impl AgentStatus {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Idle => "idle",
-            Self::Working => "working",
+            Self::Running => "running",
             Self::Waiting => "waiting",
             Self::Done => "done",
         }
     }
 
     pub fn is_busy(self) -> bool {
-        matches!(self, Self::Working | Self::Waiting)
+        matches!(self, Self::Running | Self::Waiting)
+    }
+
+    pub fn rank(self) -> u8 {
+        match self {
+            Self::Waiting => 0,
+            Self::Running => 1,
+            Self::Done => 2,
+            Self::Idle => 3,
+        }
     }
 }
 
@@ -149,22 +159,22 @@ impl AgentSession {
         }
         match event.kind {
             AgentEventKind::PromptSubmit | AgentEventKind::PermissionReview => {
-                self.status = AgentStatus::Working;
+                self.status = AgentStatus::Running;
                 self.background_only = false;
             }
             AgentEventKind::ToolStart => {
                 if self.status == AgentStatus::Idle {
-                    self.status = AgentStatus::Working;
+                    self.status = AgentStatus::Running;
                 }
-                if self.status == AgentStatus::Working {
+                if self.status == AgentStatus::Running {
                     self.background_only = false;
                 }
             }
             AgentEventKind::ToolComplete => {
                 if self.status == AgentStatus::Waiting {
-                    self.status = AgentStatus::Working;
+                    self.status = AgentStatus::Running;
                 }
-                if self.status == AgentStatus::Working {
+                if self.status == AgentStatus::Running {
                     self.background_only = false;
                 }
             }
@@ -172,13 +182,13 @@ impl AgentSession {
                 self.status = AgentStatus::Waiting;
             }
             AgentEventKind::Notification => {
-                if self.status == AgentStatus::Working {
+                if self.status == AgentStatus::Running {
                     self.status = AgentStatus::Waiting;
                 }
             }
             AgentEventKind::Stop => {
                 self.status = if event.background_running {
-                    AgentStatus::Working
+                    AgentStatus::Running
                 } else {
                     AgentStatus::Done
                 };

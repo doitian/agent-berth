@@ -162,7 +162,7 @@ fn plugin_and_hook_identities_do_not_collide() {
     assert!(
         listed
             .iter()
-            .any(|s| s.kind == SessionKind::Plugin && s.status == AgentStatus::Working)
+            .any(|s| s.kind == SessionKind::Plugin && s.status == AgentStatus::Running)
     );
 }
 
@@ -238,7 +238,7 @@ fn apply_event_roundtrip_through_store() {
         &mut sessions,
         AgentEvent::new("s", AgentEventKind::PromptSubmit),
     );
-    assert_eq!(sessions["s"].status, AgentStatus::Working);
+    assert_eq!(sessions["s"].status, AgentStatus::Running);
 }
 
 #[test]
@@ -451,7 +451,7 @@ fn plugin_blocking_is_waiting_and_stale_is_inactive() {
     assert!(
         listed
             .iter()
-            .any(|s| s.session_id == "c" && s.status == AgentStatus::Working)
+            .any(|s| s.session_id == "c" && s.status == AgentStatus::Running)
     );
     assert!(
         listed

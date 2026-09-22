@@ -6,7 +6,7 @@ fn listed(provider: &str, session_id: &str, title: Option<&str>) -> ListedSessio
     ListedSession {
         provider: provider.into(),
         session_id: session_id.into(),
-        status: AgentStatus::Working,
+        status: AgentStatus::Running,
         source: Source::Cli,
         cwd: Some("/tmp/project".into()),
         cmdline: Vec::new(),
@@ -46,7 +46,7 @@ fn app_with_sessions() -> App {
 #[test]
 fn details_color_status_and_branch() {
     for status in [
-        AgentStatus::Working,
+        AgentStatus::Running,
         AgentStatus::Waiting,
         AgentStatus::Idle,
         AgentStatus::Done,
@@ -625,7 +625,7 @@ fn list_groups_follow_sort_and_filter_without_selecting_headers() {
         (Sort::Created, vec!["1h", "1d", "7d"]),
         (Sort::Activity, vec!["1d", "7d", ">7d"]),
         (Sort::Provider, vec!["claude", "codex", "pi"]),
-        (Sort::Status, vec!["done", "waiting", "working"]),
+        (Sort::Status, vec!["waiting", "running", "done"]),
         (Sort::Directory, vec!["tmp/project"]),
     ] {
         app.set_sort(sort);
@@ -685,14 +685,14 @@ fn sort_keys_reorder_sessions_and_preserve_selection() {
         ('t', Sort::Created, ["b", "d", "c", "a"]),
         ('r', Sort::Activity, ["c", "b", "d", "a"]),
         ('a', Sort::Provider, ["d", "a", "b", "c"]),
-        ('s', Sort::Status, ["b", "d", "a", "c"]),
+        ('s', Sort::Status, ["a", "c", "b", "d"]),
         ('d', Sort::Directory, ["d", "c", "a", "b"]),
     ] {
         let mut app = App::new();
         for (provider, id, created, activity, status, cwd) in [
             ("claude", "a", 100, 100, AgentStatus::Waiting, Some("/z")),
             ("codex", "b", 300, 200, AgentStatus::Done, None),
-            ("pi", "c", 200, 300, AgentStatus::Working, Some("/a")),
+            ("pi", "c", 200, 300, AgentStatus::Running, Some("/a")),
             ("claude", "d", 200, 100, AgentStatus::Idle, Some("/a")),
         ] {
             let mut session = listed(provider, id, None);
