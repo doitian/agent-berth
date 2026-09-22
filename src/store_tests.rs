@@ -558,3 +558,15 @@ fn rejects_invalid_notify_payloads() {
             .is_err()
     );
 }
+
+#[test]
+fn hook_reports_mark_the_session_as_hook_tracked() {
+    let mut store = Store::default();
+    store
+        .update(
+            "claude",
+            serde_json::json!({"session_id":"abc","hook_event_name":"UserPromptSubmit"}),
+        )
+        .unwrap();
+    assert!(store.hooks["claude"]["abc"].hooked);
+}

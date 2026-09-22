@@ -228,3 +228,139 @@ fn discovery_keeps_sessions_without_a_matching_readable_registration() {
     apply_agents(&ctx, &mut sessions, &rows, &HashSet::new());
     assert_eq!(sessions.len(), 4);
 }
+
+#[test]
+fn discovery_does_not_revive_a_finished_hook_session() {
+    let root = tempfile::tempdir().unwrap();
+    let ctx = Context::for_test(root.path(), &root.path().join("agent-berth"));
+    let mut sessions = BTreeMap::from([
+        (
+            "stopped".into(),
+            AgentSession {
+                status: AgentStatus::Done,
+                hooked: true,
+                pid: Some(1),
+                ..AgentSession::default()
+            },
+        ),
+        (
+            "waiting".into(),
+            AgentSession {
+                status: AgentStatus::Waiting,
+                hooked: true,
+                pid: Some(2),
+                ..AgentSession::default()
+            },
+        ),
+    ]);
+    // `claude agents --json` still reports the session as busy while the Stop
+    // hook runs, and reports idle once the turn is over.
+    let busy = vec![
+        json!({"pid": 1, "sessionId": "stopped", "status": "busy"}),
+        json!({"pid": 2, "sessionId": "waiting", "status": "busy"}),
+    ];
+    apply_agents(&ctx, &mut sessions, &busy, &HashSet::new());
+    assert_eq!(sessions["stopped"].status, AgentStatus::Done);
+    assert_eq!(sessions["waiting"].status, AgentStatus::Waiting);
+
+    let idle = busy
+        .iter()
+        .map(|row| {
+            let mut row = row.clone();
+            row["status"] = json!("idle");
+            row
+        })
+        .collect::<Vec<_>>();
+    apply_agents(&ctx, &mut sessions, &idle, &HashSet::new());
+    assert_eq!(sessions["stopped"].status, AgentStatus::Done);
+    assert_eq!(sessions["waiting"].status, AgentStatus::Waiting);
+}
+
+#[test]
+fn idle_agents_row_ends_a_run_whose_stop_hook_never_arrived() {
+    let root = tempfile::tempdir().unwrap();
+    let ctx = Context::for_test(root.path(), &root.path().join("agent-berth"));
+    let mut sessions = BTreeMap::from([
+        (
+            "interrupted".into(),
+            AgentSession {
+                status: AgentStatus::Running,
+                hooked: true,
+                pid: Some(1),
+                ..AgentSession::default()
+            },
+        ),
+        (
+            "background".into(),
+            AgentSession {
+                status: AgentStatus::Running,
+                background_only: true,
+                hooked: true,
+                pid: Some(2),
+                ..AgentSession::default()
+            },
+        ),
+        (
+            "discovered".into(),
+            AgentSession {
+                status: AgentStatus::Running,
+                discovered: true,
+                pid: Some(3),
+                ..AgentSession::default()
+            },
+        ),
+    ]);
+    let rows = [
+        json!({"pid": 1, "sessionId": "interrupted", "status": "idle"}),
+        json!({"pid": 2, "sessionId": "background", "status": "idle"}),
+        json!({"pid": 3, "sessionId": "discovered", "status": "idle"}),
+    ];
+    apply_agents(&ctx, &mut sessions, &rows, &HashSet::new());
+    for sid in ["interrupted", "background", "discovered"] {
+        assert_eq!(sessions[sid].status, AgentStatus::Done, "{sid}");
+    }
+    assert!(!sessions["background"].background_only);
+}
+
+#[test]
+fn discovery_still_drives_sessions_that_never_reported_a_hook() {
+    let root = tempfile::tempdir().unwrap();
+    let ctx = Context::for_test(root.path(), &root.path().join("agent-berth"));
+    let mut sessions = BTreeMap::from([(
+        "discovered".into(),
+        AgentSession {
+            status: AgentStatus::Done,
+            discovered: true,
+            pid: Some(1),
+            ..AgentSession::default()
+        },
+    )]);
+    apply_agents(
+        &ctx,
+        &mut sessions,
+        &[json!({"pid": 1, "sessionId": "discovered", "status": "busy"})],
+        &HashSet::new(),
+    );
+    assert_eq!(sessions["discovered"].status, AgentStatus::Running);
+}
+
+#[test]
+fn discovery_fills_in_a_status_hooks_never_reported() {
+    let root = tempfile::tempdir().unwrap();
+    let ctx = Context::for_test(root.path(), &root.path().join("agent-berth"));
+    let mut sessions = BTreeMap::from([(
+        "idle".into(),
+        AgentSession {
+            hooked: true,
+            pid: Some(1),
+            ..AgentSession::default()
+        },
+    )]);
+    apply_agents(
+        &ctx,
+        &mut sessions,
+        &[json!({"pid": 1, "sessionId": "idle", "status": "busy"})],
+        &HashSet::new(),
+    );
+    assert_eq!(sessions["idle"].status, AgentStatus::Running);
+}

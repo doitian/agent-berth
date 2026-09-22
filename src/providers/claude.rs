@@ -416,29 +416,33 @@ pub fn apply_agents(
         let pid = u32_field(row, &["pid"]);
         let cwd = string_field(row, &["cwd"]).map(str::to_string);
         let desktop = desktop_ids.contains(&sid);
-        if let Some(existing) = sessions.get_mut(&sid)
-            && status == AgentStatus::Idle
-        {
-            if pid.is_some() {
-                existing.pid = pid;
+        let idle_row = matches!(string_field(row, &["status", "state"]), Some("idle"));
+        if let Some(existing) = sessions.get_mut(&sid) {
+            // `claude agents --json` still reports a session as busy while its
+            // Stop hook runs, so discovery must not raise a hook-tracked session
+            // back to running; it only fills in a status hooks never reported. An
+            // idle row still ends a run, covering a Stop hook that never arrived.
+            if status == AgentStatus::Idle || existing.hooked {
+                if pid.is_some() {
+                    existing.pid = pid;
+                }
+                if idle_row && existing.status == AgentStatus::Running {
+                    existing.status = AgentStatus::Done;
+                    existing.background_only = false;
+                } else if status != AgentStatus::Idle && existing.status == AgentStatus::Idle {
+                    existing.status = status;
+                }
+                if desktop {
+                    existing.source = Source::Desktop;
+                }
+                if let Some(cwd) = cwd {
+                    existing.cwd = Some(cwd);
+                }
+                if let Some(title) = string_field(row, &["name", "title"]).map(str::to_string) {
+                    existing.title = Some(title);
+                }
+                continue;
             }
-            if existing.background_only
-                && existing.status != AgentStatus::Waiting
-                && matches!(string_field(row, &["status", "state"]), Some("idle"))
-            {
-                existing.status = AgentStatus::Done;
-                existing.background_only = false;
-            }
-            if desktop {
-                existing.source = Source::Desktop;
-            }
-            if let Some(cwd) = cwd {
-                existing.cwd = Some(cwd);
-            }
-            if let Some(title) = string_field(row, &["name", "title"]).map(str::to_string) {
-                existing.title = Some(title);
-            }
-            continue;
         }
         let item = sessions.entry(sid.clone()).or_insert_with(|| AgentSession {
             discovered: true,

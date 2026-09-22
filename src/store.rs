@@ -499,6 +499,7 @@ fn touch_session(session: &mut AgentSession, payload: &Value, provider: &str) {
     {
         session.transcript_path = Some(path.to_string());
     }
+    session.hooked = true;
     session.last_report_ms = now_ms();
     if let Some(cwd) = cwd_field(payload) {
         session.cwd = Some(cwd);
