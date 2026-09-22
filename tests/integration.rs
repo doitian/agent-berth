@@ -588,6 +588,89 @@ fn attach_session_scopes_panes_to_current_session() {
     let _ = agent.wait();
 }
 
+fn extend_path(sandbox: &mut Sandbox) {
+    let mut paths = vec![sandbox.root.path().join("bin")];
+    paths.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
+    sandbox
+        .env
+        .insert("PATH".into(), std::env::join_paths(paths).unwrap());
+}
+
+#[test]
+fn tui_tmux_creates_window_when_no_pane_runs_the_tui() {
+    let mut sandbox = Sandbox::new();
+    extend_path(&mut sandbox);
+    sandbox.start();
+    let mut agent = sandbox.command(sandbox.fixture_agent()).spawn().unwrap();
+    let pid = agent.id();
+    sandbox.env.insert(
+        "FIXTURE_TMUX_PANES".into(),
+        format!(
+            "%1\t{pid}\tagents\t0\tshell\t{}",
+            sandbox.project().display()
+        )
+        .into(),
+    );
+    success(sandbox.berth().args(["tui", "--tmux"]));
+    let logs: Vec<String> = fs::read_dir(sandbox.root.path().join("tmux-log"))
+        .unwrap()
+        .map(|entry| fs::read_to_string(entry.unwrap().path()).unwrap())
+        .collect();
+    let joined = logs.join("\n---\n");
+    assert!(joined.contains("list-panes\n-a"), "{joined}");
+    let new_window = format!(
+        "new-window\n-P\n-F\n#{{pane_id}}\n-e\nAGENT_BERTH_SOCK={}\n-e\nAGENT_BERTH_TMUX_CONFIG={}\n-e\nAGENT_BERTH_TMUX_SOCKET={}\n-n\nberth\n-c\n{}\n--\n{}\ntui",
+        sandbox.endpoint,
+        sandbox.root.path().join("tmux.conf").display(),
+        sandbox.namespace,
+        sandbox.project().display(),
+        fs::canonicalize(support::BERTH).unwrap().display(),
+    );
+    assert!(joined.contains(&new_window), "{joined}");
+    assert!(joined.contains("attach\n-t\n=agents"), "{joined}");
+    let _ = agent.kill();
+    let _ = agent.wait();
+}
+
+#[test]
+fn tui_tmux_attaches_to_pane_already_running_the_tui() {
+    let mut sandbox = Sandbox::new();
+    extend_path(&mut sandbox);
+    sandbox.start();
+    // A live process named agent-berth: notify blocks reading its stdin until
+    // the pipe closes, so holding the write end keeps it alive.
+    let mut tui = sandbox
+        .berth()
+        .args(["notify", "--provider", "pi"])
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let pid = tui.id();
+    sandbox.env.insert(
+        "FIXTURE_TMUX_PANES".into(),
+        format!(
+            "%9\t{pid}\tagents\t1\tberth\t{}",
+            sandbox.project().display()
+        )
+        .into(),
+    );
+    sandbox
+        .env
+        .insert("TMUX".into(), "/tmp/tmux/default,1,0".into());
+    success(sandbox.berth().args(["tui", "--tmux"]));
+    let logs: Vec<String> = fs::read_dir(sandbox.root.path().join("tmux-log"))
+        .unwrap()
+        .map(|entry| fs::read_to_string(entry.unwrap().path()).unwrap())
+        .collect();
+    let joined = logs.join("\n---\n");
+    assert!(!joined.contains("new-window"), "{joined}");
+    assert!(joined.contains("switch-client\n-t\n=agents"), "{joined}");
+    assert!(joined.contains("select-window\n-t\n=agents:1"), "{joined}");
+    assert!(joined.contains("select-pane\n-t\n%9"), "{joined}");
+    let _ = tui.kill();
+    let _ = tui.wait();
+}
+
 struct RealTmux<'a> {
     sandbox: &'a Sandbox,
     executable: PathBuf,

@@ -59,6 +59,43 @@ pub fn spawn_window(session: &str, name: &str, cwd: &Path, cmd: &[String]) -> Re
         "#{pane_id}".into(),
         "-t".into(),
         target,
+    ];
+    args.extend(window_command(name, cwd, cmd));
+    let pane_id = spawn(&args)?.context("tmux new-window failed for {name}")?;
+    Ok(pane_id)
+}
+
+/// Create a window running `cmd` in the default session — the current one
+/// inside tmux, the most recently used otherwise — creating a session when
+/// none exists, and return the new pane id.
+pub fn spawn_window_default(name: &str, cwd: &Path, cmd: &[String]) -> Result<String> {
+    let tail = window_command(name, cwd, cmd);
+    let mut args = vec![
+        "new-window".into(),
+        "-P".into(),
+        "-F".into(),
+        "#{pane_id}".into(),
+    ];
+    args.extend(passthrough_env());
+    args.extend(tail.iter().cloned());
+    if let Some(pane_id) = spawn(&args)? {
+        return Ok(pane_id);
+    }
+    // No session exists yet; create one whose first window runs the command.
+    let mut args = vec![
+        "new-session".into(),
+        "-d".into(),
+        "-P".into(),
+        "-F".into(),
+        "#{pane_id}".into(),
+    ];
+    args.extend(passthrough_env());
+    args.extend(tail);
+    spawn(&args)?.context("tmux could not create a window")
+}
+
+fn window_command(name: &str, cwd: &Path, cmd: &[String]) -> Vec<String> {
+    let mut args = vec![
         "-n".into(),
         name.into(),
         "-c".into(),
@@ -66,18 +103,36 @@ pub fn spawn_window(session: &str, name: &str, cwd: &Path, cmd: &[String]) -> Re
         "--".into(),
     ];
     args.extend(cmd.iter().cloned());
+    args
+}
+
+/// `-e` flags forwarding AGENT_BERTH_* overrides to the new window: the tmux
+/// server passes its own (startup-time) environment to the processes it
+/// spawns, not the caller's.
+fn passthrough_env() -> Vec<String> {
+    let mut vars: Vec<String> = std::env::vars()
+        .filter(|(key, _)| key.starts_with("AGENT_BERTH_"))
+        .map(|(key, value)| format!("{key}={value}"))
+        .collect();
+    vars.sort();
+    vars.into_iter()
+        .flat_map(|var| ["-e".into(), var])
+        .collect()
+}
+
+fn spawn(args: &[String]) -> Result<Option<String>> {
     let output = command()
-        .args(&args)
+        .args(args)
         .output()
         .context("tmux is not available")?;
     if !output.status.success() {
-        bail!("tmux new-window failed for {name}");
+        return Ok(None);
     }
     let pane_id = String::from_utf8_lossy(&output.stdout).trim().to_string();
     if pane_id.is_empty() {
-        bail!("tmux new-window did not report a pane id");
+        bail!("tmux did not report a pane id");
     }
-    Ok(pane_id)
+    Ok(Some(pane_id))
 }
 
 pub fn attach_or_switch(session: &str) -> Result<()> {

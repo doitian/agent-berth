@@ -16,7 +16,12 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Command {
     /// Launch the interactive TUI (default when no subcommand is given)
-    Tui,
+    Tui {
+        /// Attach to a tmux pane already running the TUI, creating a new
+        /// window in the default session when none exists
+        #[arg(long)]
+        tmux: bool,
+    },
     /// Start the server
     Server,
     /// Install the user service and agent hooks
@@ -121,7 +126,10 @@ pub fn run() -> Result<()> {
         return tui::run(&ctx);
     };
     match command {
-        Command::Tui => {
+        Command::Tui { tmux } => {
+            if tmux {
+                return tui::run_tmux(&ctx);
+            }
             if !std::io::IsTerminal::is_terminal(&std::io::stdout()) {
                 anyhow::bail!("tui requires a terminal");
             }

@@ -66,7 +66,7 @@ uses [fzf](https://github.com/junegunn/fzf).
 
 | Command | Description |
 | --- | --- |
-| `agent-berth tui` | Interactive TUI (also the default with no subcommand) |
+| `agent-berth tui [--tmux]` | Interactive TUI (also the default with no subcommand); `--tmux` attaches to a pane already running the TUI, or opens one in a new window |
 | `agent-berth setup [--no-service]` | Install the user service and agent hooks |
 | `agent-berth teardown` | Stop the service and remove all agent hooks |
 | `agent-berth service start\|stop\|restart` | Manage the background server |
@@ -81,7 +81,10 @@ uses [fzf](https://github.com/junegunn/fzf).
 ### TUI
 
 `agent-berth tui` (or bare `agent-berth`) opens an interactive dashboard.
-The left column lists sessions with the agent logo, status, and title; the
+With `--tmux` it instead attaches to a tmux pane already running the TUI
+(switching clients inside tmux, attaching from outside); when no pane runs
+it, a new window is created in the current session — or the most recently
+used one outside tmux — and attached. The left column lists sessions with the agent logo, status, and title; the
 right column shows session details, plus a live tmux pane preview when the
 selected session runs in tmux. Local Claude Code sessions in Claude Desktop
 and Codex desktop sessions show a live conversation preview instead, with

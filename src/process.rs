@@ -25,6 +25,48 @@ struct Process {
     name: String,
 }
 
+/// Whether the tree rooted at `pid` — including `pid` itself — contains a
+/// live process named `name`, skipping `exclude` (the caller's own pid, which
+/// would otherwise match its own pane).
+pub fn tree_contains_named(pid: u32, name: &str, exclude: u32) -> bool {
+    if pid == 0 {
+        return false;
+    }
+    let processes = processes();
+    let mut children: std::collections::HashMap<u32, Vec<u32>> = std::collections::HashMap::new();
+    for (child, process) in &processes {
+        children.entry(process.parent).or_default().push(*child);
+    }
+    tree_contains(pid, name, exclude, &processes, &children)
+}
+
+fn tree_contains(
+    pid: u32,
+    name: &str,
+    exclude: u32,
+    processes: &std::collections::HashMap<u32, Process>,
+    children: &std::collections::HashMap<u32, Vec<u32>>,
+) -> bool {
+    let mut stack = vec![pid];
+    let mut visited = std::collections::HashSet::new();
+    while let Some(pid) = stack.pop() {
+        if !visited.insert(pid) {
+            continue;
+        }
+        if pid != exclude
+            && processes
+                .get(&pid)
+                .is_some_and(|process| process_named(&process.name, name))
+        {
+            return true;
+        }
+        if let Some(kids) = children.get(&pid) {
+            stack.extend(kids);
+        }
+    }
+    false
+}
+
 pub fn ancestor_named(name: &str) -> Option<u32> {
     let processes = processes();
     find_ancestor(std::process::id(), name, &processes)
@@ -39,14 +81,18 @@ fn find_ancestor(
         .into_iter()
         .skip(1)
         .find(|pid| {
-            processes.get(pid).is_some_and(|process| {
-                std::path::Path::new(&process.name)
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .is_some_and(|filename| {
-                        filename == name || filename.eq_ignore_ascii_case(&format!("{name}.exe"))
-                    })
-            })
+            processes
+                .get(pid)
+                .is_some_and(|process| process_named(&process.name, name))
+        })
+}
+
+fn process_named(process: &str, name: &str) -> bool {
+    std::path::Path::new(process)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|filename| {
+            filename == name || filename.eq_ignore_ascii_case(&format!("{name}.exe"))
         })
 }
 

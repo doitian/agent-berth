@@ -24,7 +24,7 @@ use crate::paths::Context;
 use crate::status::{AgentStatus, Source};
 use crate::store::ListedSession;
 use crate::tmux::{self, Pane};
-use crate::{attach, db, git, list, pick, resume, transcript};
+use crate::{attach, db, git, list, pick, process, resume, transcript};
 
 const TICK: Duration = Duration::from_millis(200);
 const REFRESH: Duration = Duration::from_secs(1);
@@ -956,6 +956,32 @@ impl Drop for TerminalGuard {
         let _ = disable_raw_mode();
         let _ = execute!(self.terminal.backend_mut(), LeaveAlternateScreen);
     }
+}
+
+pub fn run_tmux(ctx: &Context) -> Result<()> {
+    if !tmux::available() {
+        bail!("tmux is required for --tmux");
+    }
+    let name = ctx
+        .berth_bin
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .context("invalid agent-berth binary path")?;
+    let me = std::process::id();
+    // Without a running tmux server there are no panes; the spawn below
+    // creates the session.
+    let panes = tmux::list_panes(true).unwrap_or_default();
+    if let Some(pane) = panes
+        .iter()
+        .find(|pane| process::tree_contains_named(pane.pid, name, me))
+    {
+        return tmux::attach_pane(pane);
+    }
+    let cwd = std::env::current_dir().context("current directory")?;
+    let cmd = vec![ctx.berth_bin.display().to_string(), "tui".into()];
+    let pane_id = tmux::spawn_window_default("berth", &cwd, &cmd)?;
+    let pane = tmux::find_pane(&pane_id)?.context("new TUI window not found")?;
+    tmux::attach_pane(&pane)
 }
 
 pub fn run(ctx: &Context) -> Result<()> {
