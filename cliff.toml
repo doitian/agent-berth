@@ -16,7 +16,13 @@ body = """
 {% for group, commits in commits | group_by(attribute="group") %}
     ### {{ group | striptags | trim }}
     {% for commit in commits %}\
-        - {{ commit.message | split(pat="\n") | first | trim | upper_first }} ([{{ commit.id | truncate(length=7, end="") }}](https://github.com/doitian/agent-berth/commit/{{ commit.id }}))
+        {% set title = commit.message | split(pat="\n") | first | trim | upper_first %}\
+        {% if group | striptags | trim == "⚠️ Breaking Changes" %}\
+        {% set parts = title | split(pat="!") %}\
+        - {{ parts | first }}{{ parts | slice(start=1) | join(sep="!") }} ([{{ commit.id | truncate(length=7, end="") }}](https://github.com/doitian/agent-berth/commit/{{ commit.id }}))
+        {% else %}\
+        - {{ title }} ([{{ commit.id | truncate(length=7, end="") }}](https://github.com/doitian/agent-berth/commit/{{ commit.id }}))
+        {% endif %}\
     {% endfor %}\
 {% endfor %}
 
@@ -29,6 +35,7 @@ conventional_commits = false
 filter_unconventional = false
 commit_parsers = [
     { message = "(?i)^release v|^initialize ", skip = true },
+    { message = "(?i)^[a-z]+!", group = "⚠️ Breaking Changes" },
     { message = "(?i)^fix|^bugfix|^hotfix", group = "Fixed" },
     { message = "(?i)^(add|implement|support|introduce|check)", group = "Added" },
     { message = "(?i)^(rework|refactor|rename|remove|drop|make|scope|always|run|report)", group = "Changed" },
