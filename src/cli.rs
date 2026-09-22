@@ -3,7 +3,7 @@ use clap::{Parser, Subcommand};
 
 use crate::duration::parse_idle;
 use crate::paths::Context;
-use crate::{attach, doctor, list, notify, resume, rm, server, service, setup, tui};
+use crate::{attach, doctor, list, notify, resume, rm, server, service, setup, stats, tui};
 
 /// Monitor coding agents and resume their sessions.
 #[derive(Debug, Parser)]
@@ -57,6 +57,12 @@ enum Command {
         /// Restrict to sessions in the current directory
         #[arg(long, requires = "resumable")]
         here: bool,
+    },
+    /// Aggregate active session counts by status and provider
+    Stats {
+        /// Print JSON
+        #[arg(long)]
+        json: bool,
     },
     /// Report agent status to the server (used by hooks)
     Notify {
@@ -156,6 +162,7 @@ pub fn run() -> Result<()> {
             };
             list::run(&ctx, json, resumable, idle, here)
         }
+        Command::Stats { json } => stats::run(&ctx, json),
         Command::Notify { provider } => notify::run(&ctx, provider),
         Command::Attach {
             query,

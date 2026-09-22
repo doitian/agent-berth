@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::store::ListedSession;
+use crate::store::{ListedSession, ProviderStats};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
@@ -17,6 +17,7 @@ pub enum Request {
         idle_ms: Option<u64>,
     },
     ListAll,
+    Stats,
     Remove {
         provider: String,
         session_id: String,
@@ -31,6 +32,8 @@ pub enum Response {
         message: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         sessions: Option<Vec<ListedSession>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        stats: Option<Vec<ProviderStats>>,
     },
     Error {
         message: String,
@@ -42,6 +45,7 @@ impl Response {
         Self::Ok {
             message: None,
             sessions: None,
+            stats: None,
         }
     }
 
@@ -49,6 +53,15 @@ impl Response {
         Self::Ok {
             message: None,
             sessions: Some(sessions),
+            stats: None,
+        }
+    }
+
+    pub fn stats(stats: Vec<ProviderStats>) -> Self {
+        Self::Ok {
+            message: None,
+            sessions: None,
+            stats: Some(stats),
         }
     }
 

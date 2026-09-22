@@ -72,6 +72,7 @@ uses [fzf](https://github.com/junegunn/fzf).
 | `agent-berth service start\|stop\|restart` | Manage the background server |
 | `agent-berth server` | Run the server in the foreground |
 | `agent-berth list [--json] [--resumable [--idle 20m] [--here]]` | List sessions |
+| `agent-berth stats [--json]` | Aggregate active session counts by status and provider |
 | `agent-berth resume [pattern] [--idle 20m] [--here] [--dry-run]` | Resume sessions in tmux |
 | `agent-berth attach [query] [--preview] [--session] [--dry-run]` | Attach to a running agent pane with fzf |
 | `agent-berth rm [patterns...]` | Hide sessions so they are never resumed |

@@ -32,6 +32,31 @@ fn request_response_roundtrip() {
         Request::ListAll
     ));
 
+    let stats = serde_json::to_string(&Request::Stats).unwrap();
+    assert!(stats.contains("stats"));
+    assert!(matches!(
+        serde_json::from_str(&stats).unwrap(),
+        Request::Stats
+    ));
+
+    let response = serde_json::to_string(&Response::stats(vec![ProviderStats {
+        provider: "claude".into(),
+        running: 1,
+        waiting: 0,
+        idle: 2,
+        done: 0,
+        total: 3,
+    }]))
+    .unwrap();
+    let parsed: Response = serde_json::from_str(&response).unwrap();
+    assert!(matches!(
+        parsed,
+        Response::Ok {
+            stats: Some(stats),
+            ..
+        } if stats[0].provider == "claude" && stats[0].running == 1 && stats[0].total == 3
+    ));
+
     let remove = Request::Remove {
         provider: "claude".into(),
         session_id: "s".into(),

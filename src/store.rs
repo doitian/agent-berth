@@ -73,6 +73,28 @@ impl Default for Store {
     }
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProviderStats {
+    pub provider: String,
+    pub running: u64,
+    pub waiting: u64,
+    pub idle: u64,
+    pub done: u64,
+    pub total: u64,
+}
+
+impl ProviderStats {
+    fn add(&mut self, status: AgentStatus) {
+        match status {
+            AgentStatus::Running => self.running += 1,
+            AgentStatus::Waiting => self.waiting += 1,
+            AgentStatus::Idle => self.idle += 1,
+            AgentStatus::Done => self.done += 1,
+        }
+        self.total += 1;
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ListedSession {
     pub provider: String,
@@ -334,6 +356,20 @@ impl Store {
             .into_iter()
             .filter(|session| session.is_active(now))
             .collect()
+    }
+
+    pub fn stats(&self) -> Vec<ProviderStats> {
+        let mut by_provider: BTreeMap<String, ProviderStats> = BTreeMap::new();
+        for session in self.active() {
+            by_provider
+                .entry(session.provider.clone())
+                .or_insert_with(|| ProviderStats {
+                    provider: session.provider.clone(),
+                    ..ProviderStats::default()
+                })
+                .add(session.status);
+        }
+        by_provider.into_values().collect()
     }
 
     pub fn resumable(&self, idle: Option<Duration>) -> Vec<ListedSession> {
