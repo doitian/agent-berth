@@ -4,7 +4,7 @@ use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
-use std::sync::{Arc, Mutex, Weak, mpsc};
+use std::sync::{Arc, Mutex, OnceLock, Weak, mpsc};
 use std::time::{Duration, Instant};
 
 use interprocess::local_socket::Stream;
@@ -15,6 +15,22 @@ use tempfile::TempDir;
 pub mod mock_llm;
 
 pub const BERTH: &str = env!("CARGO_BIN_EXE_agent-berth");
+
+/// Canonicalized path to the binary under test. On unix the running binary
+/// resolves its own path through /proc/self/exe, which disagrees with
+/// CARGO_BIN_EXE when the target dir is a symlink (e.g. an mbx-managed
+/// target); canonicalize so tests can compare against installed hook configs.
+pub fn berth_bin() -> &'static Path {
+    static BIN: OnceLock<PathBuf> = OnceLock::new();
+    BIN.get_or_init(|| {
+        let path = PathBuf::from(BERTH);
+        if cfg!(unix) {
+            fs::canonicalize(&path).unwrap_or(path)
+        } else {
+            path
+        }
+    })
+}
 const TIMEOUT: Duration = Duration::from_secs(20);
 
 fn executable(name: &str) -> String {
@@ -152,7 +168,7 @@ impl Sandbox {
     }
 
     pub fn berth(&self) -> Command {
-        self.command(BERTH)
+        self.command(berth_bin())
     }
 
     pub fn project(&self) -> PathBuf {

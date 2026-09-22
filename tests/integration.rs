@@ -320,14 +320,14 @@ fn setup_installs_all_hooks_in_disposable_client_homes() {
                 .strip_suffix(&format!(" notify --provider {provider}"))
                 .unwrap()
                 .trim_matches('"');
-            assert_eq!(PathBuf::from(binary), PathBuf::from(support::BERTH));
+            assert_eq!(Path::new(binary), support::berth_bin());
         } else {
             let binary = contents
                 .lines()
                 .find_map(|line| line.strip_prefix("const BERTH_BIN = "))
                 .unwrap();
             let binary: String = serde_json::from_str(binary).unwrap();
-            assert_eq!(PathBuf::from(binary), PathBuf::from(support::BERTH));
+            assert_eq!(Path::new(&binary), support::berth_bin());
             assert!(contents.contains(&format!("\"{provider}\"")));
         }
     }
@@ -444,7 +444,7 @@ fn codex_hook_without_pid_detects_agent_and_tmux_pane() {
         .insert("PATH".into(), std::env::join_paths(paths).unwrap());
     sandbox
         .env
-        .insert("FIXTURE_BERTH_BIN".into(), support::BERTH.into());
+        .insert("FIXTURE_BERTH_BIN".into(), support::berth_bin().into());
     sandbox.start();
 
     let mut agent = sandbox
@@ -624,7 +624,7 @@ fn tui_tmux_creates_window_when_no_pane_runs_the_tui() {
         sandbox.root.path().join("tmux.conf").display(),
         sandbox.namespace,
         sandbox.project().display(),
-        fs::canonicalize(support::BERTH).unwrap().display(),
+        support::berth_bin().display(),
     );
     assert!(joined.contains(&new_window), "{joined}");
     assert!(joined.contains("attach\n-t\n=agents"), "{joined}");
@@ -958,11 +958,11 @@ fn install_recorder(sandbox: &mut Sandbox, provider: &str) -> PathBuf {
         .join(format!("hook-recorder{}", std::env::consts::EXE_SUFFIX));
     let hook_path = sandbox.root.path().join(hook_path);
     let contents = fs::read_to_string(&hook_path).unwrap();
-    let binary = support::BERTH;
+    let binary = support::berth_bin().display().to_string();
     let recorder_str = recorder.display().to_string();
     let mut replaced = None;
     for (from, to) in [
-        (binary.to_string(), recorder_str.clone()),
+        (binary.clone(), recorder_str.clone()),
         (
             binary.replace('\\', "\\\\"),
             recorder_str.replace('\\', "\\\\"),
@@ -980,7 +980,7 @@ fn install_recorder(sandbox: &mut Sandbox, provider: &str) -> PathBuf {
     fs::write(hook_path, contents).unwrap();
     sandbox
         .env
-        .insert("FIXTURE_BERTH_BIN".into(), support::BERTH.into());
+        .insert("FIXTURE_BERTH_BIN".into(), support::berth_bin().into());
     recorder
 }
 
