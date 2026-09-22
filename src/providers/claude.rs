@@ -5,7 +5,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use serde_json::{Value, json};
 
 use super::{command_handler, group_is_ours, load_object, save_object};
@@ -159,12 +159,14 @@ fn claude_agents_output() -> std::io::Result<std::process::Output> {
 struct DesktopIndex {
     live: HashSet<String>,
     archived: HashSet<String>,
+    local_ids: BTreeMap<String, String>,
 }
 
 fn desktop_index(ctx: &Context) -> DesktopIndex {
     let mut index = DesktopIndex {
         live: HashSet::new(),
         archived: HashSet::new(),
+        local_ids: BTreeMap::new(),
     };
     for root in desktop_session_dirs(ctx) {
         collect_desktop_ids(&root, &mut index);
@@ -219,6 +221,7 @@ fn collect_desktop_ids(root: &Path, index: &mut DesktopIndex) {
             .get("isArchived")
             .and_then(Value::as_bool)
             .unwrap_or(false);
+        let local_id = string_field(&data, &["sessionId"]).filter(|id| valid_desktop_id(id));
         for key in ["cliSessionId", "sessionId"] {
             let Some(id) = data
                 .get(key)
@@ -231,9 +234,109 @@ fn collect_desktop_ids(root: &Path, index: &mut DesktopIndex) {
                 index.archived.insert(id.to_string());
             } else {
                 index.live.insert(id.to_string());
+                if let Some(local_id) = local_id {
+                    index.local_ids.insert(id.to_string(), local_id.to_string());
+                }
             }
         }
     }
+}
+
+fn valid_desktop_id(id: &str) -> bool {
+    id.strip_prefix("local_").is_some_and(|suffix| {
+        (1..=64).contains(&suffix.len())
+            && suffix
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || c == b'-')
+    })
+}
+
+fn desktop_url(ctx: &Context, session_id: &str) -> Result<String> {
+    let index = desktop_index(ctx);
+    let local_id = index
+        .local_ids
+        .get(session_id)
+        .filter(|_| !index.archived.contains(session_id))
+        .context("no matching active Claude Desktop session found")?;
+    Ok(format!("claude://code/continue?session={local_id}"))
+}
+
+pub fn focus_desktop(ctx: &Context, session_id: &str) -> Result<()> {
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("NIRI_SOCKET").is_some() {
+        let _ = raise_niri_window();
+    }
+    let url = desktop_url(ctx, session_id)?;
+    #[cfg(target_os = "macos")]
+    let mut command = Command::new("open");
+    #[cfg(windows)]
+    let mut command = {
+        let mut command = Command::new("cmd");
+        command.args(["/C", "start", ""]);
+        command
+    };
+    #[cfg(not(any(target_os = "macos", windows)))]
+    let mut command = Command::new("xdg-open");
+    let mut child = command
+        .arg(url)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .context("open Claude Desktop session")?;
+    // Reap the launcher without waiting for the app to handle the deep link.
+    thread::spawn(move || {
+        let _ = child.wait();
+    });
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn raise_niri_window() -> Result<()> {
+    let output = Command::new("niri")
+        .args(["msg", "--json", "windows"])
+        .stdin(Stdio::null())
+        .output()
+        .context("list niri windows")?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "list niri windows: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    let windows: Vec<Value> =
+        serde_json::from_slice(&output.stdout).context("parse niri windows")?;
+    let id = niri_claude_window(&windows).context("no Claude Desktop window found")?;
+    let output = Command::new("niri")
+        .args(["msg", "action", "focus-window", "--id", &id.to_string()])
+        .stdin(Stdio::null())
+        .output()
+        .context("focus niri window")?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "focus niri window: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn niri_claude_window(windows: &[Value]) -> Option<u64> {
+    windows
+        .iter()
+        .filter(|window| {
+            window["app_id"] == "com.anthropic.Claude" && window["id"].as_u64().is_some()
+        })
+        // Prefer the most recently used Claude window when more than one is open.
+        .max_by_key(|window| {
+            (
+                window["is_focused"].as_bool().unwrap_or(false),
+                window["focus_timestamp"]["secs"].as_u64().unwrap_or(0),
+                window["focus_timestamp"]["nanos"].as_u64().unwrap_or(0),
+            )
+        })
+        .and_then(|window| window["id"].as_u64())
 }
 
 pub fn apply_agents(

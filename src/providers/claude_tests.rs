@@ -1,5 +1,62 @@
 use super::*;
 
+#[cfg(target_os = "linux")]
+#[test]
+fn niri_focus_matches_app_id_and_prefers_recent_claude_window() {
+    let mut windows = vec![
+        json!({"id": 1, "app_id": "kitty", "title": "Claude", "is_focused": true}),
+        json!({"id": 2, "app_id": "com.anthropic.Claude", "focus_timestamp": {"secs": 10, "nanos": 1}}),
+        json!({"id": 3, "app_id": "com.anthropic.Claude", "focus_timestamp": {"secs": 10, "nanos": 2}}),
+        json!({"app_id": "com.anthropic.Claude", "is_focused": true}),
+    ];
+    assert_eq!(niri_claude_window(&windows), Some(3));
+    windows[1]["is_focused"] = json!(true);
+    assert_eq!(niri_claude_window(&windows), Some(2));
+    assert_eq!(niri_claude_window(&windows[..1]), None);
+    assert_eq!(niri_claude_window(&[]), None);
+}
+
+#[test]
+fn desktop_focus_resolves_cli_and_local_ids_from_nested_records() {
+    let root = tempfile::tempdir().unwrap();
+    let ctx = Context::for_test(root.path(), &root.path().join("agent-berth"));
+    let dir = ctx
+        .xdg_config_home
+        .join("Claude/claude-code-sessions/account/org");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("broken.json"), "{").unwrap();
+    std::fs::write(
+        dir.join("session.json"),
+        json!({"cliSessionId": "cli-uuid", "sessionId": "local_desktop-uuid"}).to_string(),
+    )
+    .unwrap();
+    for id in ["cli-uuid", "local_desktop-uuid"] {
+        assert_eq!(
+            desktop_url(&ctx, id).unwrap(),
+            "claude://code/continue?session=local_desktop-uuid"
+        );
+    }
+    assert!(desktop_url(&ctx, "unknown").is_err());
+}
+
+#[test]
+fn desktop_focus_rejects_archived_missing_and_invalid_local_ids() {
+    let root = tempfile::tempdir().unwrap();
+    let ctx = Context::for_test(root.path(), &root.path().join("agent-berth"));
+    let dir = ctx.xdg_config_home.join("Claude/claude-code-sessions");
+    std::fs::create_dir_all(&dir).unwrap();
+    for record in [
+        json!({"cliSessionId": "cli-uuid", "sessionId": "local_archived", "isArchived": true}),
+        json!({"cliSessionId": "cli-uuid"}),
+        json!({"cliSessionId": "cli-uuid", "sessionId": "local_"}),
+        json!({"cliSessionId": "cli-uuid", "sessionId": "local_a&session=last"}),
+        json!({"cliSessionId": "cli-uuid", "sessionId": "last"}),
+    ] {
+        std::fs::write(dir.join("session.json"), record.to_string()).unwrap();
+        assert!(desktop_url(&ctx, "cli-uuid").is_err(), "{record}");
+    }
+}
+
 #[test]
 fn drop_archived_removes_matching_ids() {
     let mut sessions = BTreeMap::new();

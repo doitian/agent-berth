@@ -454,6 +454,41 @@ fn attach_without_pane_shows_message() {
 }
 
 #[test]
+fn attach_focuses_selected_claude_desktop_session() {
+    let mut app = desktop_app();
+    app.selected_pane = Some(preview_pane("%1"));
+    assert!(matches!(
+        app.handle_key(char_key('a')),
+        Effect::FocusClaudeDesktop(id) if id == "one"
+    ));
+    // Other desktop providers keep their existing behavior.
+    app.selected = 1;
+    app.update_selection();
+    assert!(matches!(app.handle_key(char_key('a')), Effect::None));
+}
+
+#[test]
+fn attach_keeps_tmux_for_claude_cli() {
+    let mut app = app_with_sessions();
+    app.selected_pane = Some(preview_pane("%1"));
+    assert!(matches!(app.handle_key(char_key('a')), Effect::Attach(_)));
+}
+
+#[test]
+fn desktop_focus_error_is_displayed() {
+    let mut app = desktop_app();
+    app.needs_redraw = false;
+    app.handle_fetched(Fetched::FocusClaudeDesktop(Err(anyhow::anyhow!(
+        "no matching active Claude Desktop session found"
+    ))));
+    assert_eq!(
+        app.message.as_deref(),
+        Some("focus: no matching active Claude Desktop session found")
+    );
+    assert!(app.needs_redraw);
+}
+
+#[test]
 fn resume_requires_resumable_view() {
     let mut app = app_with_sessions();
     assert!(matches!(app.handle_key(char_key('r')), Effect::None));
@@ -1107,14 +1142,17 @@ fn desktop_navigation_rejects_old_results_even_after_reselection() {
 }
 
 #[test]
-fn desktop_preview_refreshes_and_supports_zoom_without_attach() {
+fn desktop_preview_refreshes_and_supports_zoom_and_focus() {
     let mut app = desktop_app();
     let result = transcript_completion(&mut app, "Assistant: ready");
     app.handle_fetched(result);
     assert!(app.has_preview());
     app.toggle_maximized();
     assert!(app.preview_maximized);
-    assert!(matches!(app.attach_selected(), Effect::None));
+    assert!(matches!(
+        app.attach_selected(),
+        Effect::FocusClaudeDesktop(_)
+    ));
     app.apply_refresh(app.sessions.clone(), Vec::new());
     let result = transcript_completion(&mut app, "Assistant: updated");
     app.handle_fetched(result);

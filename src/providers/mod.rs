@@ -13,6 +13,8 @@ mod grok;
 mod opencode;
 mod pi;
 
+pub(crate) use claude::focus_desktop as focus_claude_desktop;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProviderKind {
     Claude,
