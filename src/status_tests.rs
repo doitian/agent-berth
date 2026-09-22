@@ -186,3 +186,19 @@ fn child_done_is_removed() {
     );
     assert!(sessions.is_empty());
 }
+
+#[test]
+fn tool_start_resumes_a_session_marked_done() {
+    let mut sessions = std::collections::BTreeMap::from([(
+        "s".to_string(),
+        AgentSession {
+            status: AgentStatus::Done,
+            ..AgentSession::default()
+        },
+    )]);
+    apply_event(
+        &mut sessions,
+        AgentEvent::new("s", AgentEventKind::ToolStart),
+    );
+    assert_eq!(sessions["s"].status, AgentStatus::Running);
+}

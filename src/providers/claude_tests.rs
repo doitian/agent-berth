@@ -90,7 +90,7 @@ fn agents_list_drops_desktop_sessions_that_are_gone() {
             ..AgentSession::default()
         },
     );
-    apply_agents(&ctx, &mut sessions, &[], &HashSet::new());
+    apply_agents(&ctx, &mut sessions, &[], &HashSet::new(), now_ms());
     assert!(sessions.contains_key("cli-keep"));
     assert!(!sessions.contains_key("probe-manual-001"));
 }
@@ -133,7 +133,7 @@ fn opening_desktop_session_does_not_list_temporary_query() {
     }
     let mut sessions = BTreeMap::new();
     let desktop_ids = HashSet::from(["conversation".to_string()]);
-    apply_agents(&ctx, &mut sessions, &rows, &desktop_ids);
+    apply_agents(&ctx, &mut sessions, &rows, &desktop_ids, now_ms());
     assert_eq!(
         sessions.keys().map(String::as_str).collect::<Vec<_>>(),
         ["conversation", "sdk", "terminal"]
@@ -142,7 +142,7 @@ fn opening_desktop_session_does_not_list_temporary_query() {
 
     // The next refresh, after the helper exits, must keep the same rows.
     rows.retain(|row| row["sessionId"] != "temporary-query");
-    apply_agents(&ctx, &mut sessions, &rows, &desktop_ids);
+    apply_agents(&ctx, &mut sessions, &rows, &desktop_ids, now_ms());
     assert_eq!(sessions.len(), 3);
 }
 
@@ -167,6 +167,7 @@ fn agents_list_removes_previously_discovered_desktop_helper() {
         &mut sessions,
         &[json!({"pid": 2, "sessionId": "helper", "status": "idle"})],
         &HashSet::new(),
+        now_ms(),
     );
     assert!(sessions.is_empty());
 }
@@ -202,6 +203,7 @@ fn desktop_discovery_keeps_conversations_and_background_agents() {
         &mut sessions,
         &rows,
         &HashSet::from(["legacy-conversation".into()]),
+        now_ms(),
     );
     assert_eq!(sessions.len(), 3);
 }
@@ -225,7 +227,7 @@ fn discovery_keeps_sessions_without_a_matching_readable_registration() {
         .map(|pid| json!({"pid": pid, "sessionId": format!("s{pid}"), "status": "idle"}))
         .collect::<Vec<_>>();
     let mut sessions = BTreeMap::new();
-    apply_agents(&ctx, &mut sessions, &rows, &HashSet::new());
+    apply_agents(&ctx, &mut sessions, &rows, &HashSet::new(), now_ms());
     assert_eq!(sessions.len(), 4);
 }
 
@@ -259,7 +261,7 @@ fn discovery_does_not_revive_a_finished_hook_session() {
         json!({"pid": 1, "sessionId": "stopped", "status": "busy"}),
         json!({"pid": 2, "sessionId": "waiting", "status": "busy"}),
     ];
-    apply_agents(&ctx, &mut sessions, &busy, &HashSet::new());
+    apply_agents(&ctx, &mut sessions, &busy, &HashSet::new(), now_ms());
     assert_eq!(sessions["stopped"].status, AgentStatus::Done);
     assert_eq!(sessions["waiting"].status, AgentStatus::Waiting);
 
@@ -271,7 +273,7 @@ fn discovery_does_not_revive_a_finished_hook_session() {
             row
         })
         .collect::<Vec<_>>();
-    apply_agents(&ctx, &mut sessions, &idle, &HashSet::new());
+    apply_agents(&ctx, &mut sessions, &idle, &HashSet::new(), now_ms());
     assert_eq!(sessions["stopped"].status, AgentStatus::Done);
     assert_eq!(sessions["waiting"].status, AgentStatus::Waiting);
 }
@@ -315,7 +317,7 @@ fn idle_agents_row_ends_a_run_whose_stop_hook_never_arrived() {
         json!({"pid": 2, "sessionId": "background", "status": "idle"}),
         json!({"pid": 3, "sessionId": "discovered", "status": "idle"}),
     ];
-    apply_agents(&ctx, &mut sessions, &rows, &HashSet::new());
+    apply_agents(&ctx, &mut sessions, &rows, &HashSet::new(), now_ms());
     for sid in ["interrupted", "background", "discovered"] {
         assert_eq!(sessions[sid].status, AgentStatus::Done, "{sid}");
     }
@@ -340,6 +342,7 @@ fn discovery_still_drives_sessions_that_never_reported_a_hook() {
         &mut sessions,
         &[json!({"pid": 1, "sessionId": "discovered", "status": "busy"})],
         &HashSet::new(),
+        now_ms(),
     );
     assert_eq!(sessions["discovered"].status, AgentStatus::Running);
 }
@@ -361,6 +364,29 @@ fn discovery_fills_in_a_status_hooks_never_reported() {
         &mut sessions,
         &[json!({"pid": 1, "sessionId": "idle", "status": "busy"})],
         &HashSet::new(),
+        now_ms(),
     );
     assert_eq!(sessions["idle"].status, AgentStatus::Running);
+}
+
+#[test]
+fn stale_agents_row_does_not_end_a_run_it_predates() {
+    let root = tempfile::tempdir().unwrap();
+    let ctx = Context::for_test(root.path(), &root.path().join("agent-berth"));
+    let mut sessions = BTreeMap::from([(
+        "running".into(),
+        AgentSession {
+            status: AgentStatus::Running,
+            hooked: true,
+            pid: Some(1),
+            last_report_ms: 2_000,
+            ..AgentSession::default()
+        },
+    )]);
+    let rows = [json!({"pid": 1, "sessionId": "running", "status": "idle"})];
+    // The cached snapshot predates the prompt hook that started this run.
+    apply_agents(&ctx, &mut sessions, &rows, &HashSet::new(), 1_000);
+    assert_eq!(sessions["running"].status, AgentStatus::Running);
+    apply_agents(&ctx, &mut sessions, &rows, &HashSet::new(), 3_000);
+    assert_eq!(sessions["running"].status, AgentStatus::Done);
 }

@@ -114,8 +114,8 @@ fn is_present(value: &Value) -> bool {
 
 pub fn discover(ctx: &Context, sessions: &mut BTreeMap<String, AgentSession>) -> bool {
     let index = desktop_index(ctx);
-    if let Some(rows) = list_agents() {
-        apply_agents(ctx, sessions, &rows, &index.live);
+    if let Some((rows, observed_ms)) = list_agents() {
+        apply_agents(ctx, sessions, &rows, &index.live, observed_ms);
     }
     drop_archived(sessions, &index.archived)
 }
@@ -132,43 +132,59 @@ pub fn drop_archived(
 #[derive(Default)]
 struct AgentsCache {
     rows: Option<Vec<Value>>,
+    fetched_ms: u64,
     refreshing: bool,
+}
+
+impl AgentsCache {
+    fn snapshot(&self) -> Option<(Vec<Value>, u64)> {
+        self.rows.clone().map(|rows| (rows, self.fetched_ms))
+    }
+
+    fn store(&mut self, fetched: Option<(Vec<Value>, u64)>) {
+        if let Some((rows, fetched_ms)) = fetched {
+            self.rows = Some(rows);
+            self.fetched_ms = fetched_ms;
+        }
+    }
 }
 
 static AGENTS_CACHE: OnceLock<Mutex<AgentsCache>> = OnceLock::new();
 
 // Stale-while-revalidate: serve the last `claude agents --json` result and
 // refresh it in a background thread, so callers never pay the subprocess
-// startup cost. The first call fetches synchronously.
-pub fn list_agents() -> Option<Vec<Value>> {
+// startup cost. The first call fetches synchronously. Rows come with the time
+// they were observed, since a cached row describes a session as it was.
+pub fn list_agents() -> Option<(Vec<Value>, u64)> {
     let cache = AGENTS_CACHE.get_or_init(|| Mutex::new(AgentsCache::default()));
     let Ok(mut guard) = cache.lock() else {
         return fetch_agents();
     };
     if guard.refreshing {
-        return guard.rows.clone();
+        return guard.snapshot();
     }
     if guard.rows.is_none() {
-        let rows = fetch_agents();
-        guard.rows = rows.clone();
-        return rows;
+        let fetched = fetch_agents();
+        guard.store(fetched.clone());
+        return fetched;
     }
     guard.refreshing = true;
     thread::spawn(|| {
-        let rows = fetch_agents();
+        let fetched = fetch_agents();
         if let Some(cache) = AGENTS_CACHE.get()
             && let Ok(mut guard) = cache.lock()
         {
-            if rows.is_some() {
-                guard.rows = rows;
-            }
+            guard.store(fetched);
             guard.refreshing = false;
         }
     });
-    guard.rows.clone()
+    guard.snapshot()
 }
 
-fn fetch_agents() -> Option<Vec<Value>> {
+fn fetch_agents() -> Option<(Vec<Value>, u64)> {
+    // Stamp the fetch before it starts: anything the server learns while the
+    // subprocess runs is newer than the snapshot it returns.
+    let observed_ms = now_ms();
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
         let _ = tx.send(claude_agents_output());
@@ -178,7 +194,7 @@ fn fetch_agents() -> Option<Vec<Value>> {
         return None;
     }
     let data: Value = serde_json::from_slice(&output.stdout).ok()?;
-    data.as_array().cloned()
+    Some((data.as_array().cloned()?, observed_ms))
 }
 
 fn claude_agents_output() -> std::io::Result<std::process::Output> {
@@ -396,6 +412,7 @@ pub fn apply_agents(
     sessions: &mut BTreeMap<String, AgentSession>,
     rows: &[Value],
     desktop_ids: &HashSet<String>,
+    observed_ms: u64,
 ) {
     let now = now_ms();
     let mut live = HashSet::new();
@@ -426,7 +443,12 @@ pub fn apply_agents(
                 if pid.is_some() {
                     existing.pid = pid;
                 }
-                if idle_row && existing.status == AgentStatus::Running {
+                // A cached row can predate the hook that started this run, so
+                // only one observed since the last report can end it.
+                if idle_row
+                    && existing.status == AgentStatus::Running
+                    && observed_ms > existing.last_report_ms
+                {
                     existing.status = AgentStatus::Done;
                     existing.background_only = false;
                 } else if status != AgentStatus::Idle && existing.status == AgentStatus::Idle {

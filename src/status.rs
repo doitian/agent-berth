@@ -166,7 +166,9 @@ impl AgentSession {
                 self.background_only = false;
             }
             AgentEventKind::ToolStart => {
-                if self.status == AgentStatus::Idle {
+                // A tool starting means the turn is live, even if the prompt that
+                // began it never reached us.
+                if matches!(self.status, AgentStatus::Idle | AgentStatus::Done) {
                     self.status = AgentStatus::Running;
                 }
                 if self.status == AgentStatus::Running {
