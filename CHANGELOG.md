@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.0.0](https://github.com/doitian/agent-berth/releases/tag/v2.0.0) - 2026-09-22
+
+### Added
+
+- Add desktop conversation previews for Claude and Codex (#8) ([7cc1aa7](https://github.com/doitian/agent-berth/commit/7cc1aa7247f57a4cc8ba67ae887bc1e185a0d60b))
+
+### Fixed
+
+- Fix duplicate Claude desktop sessions during discovery (#7) ([9c001db](https://github.com/doitian/agent-berth/commit/9c001db98d78fb3547cea26a89026c1c35caeb6b))
+
+### ⚠️ Breaking Changes
+
+- Add running status and ordered status sort (#9) ([4e87daf](https://github.com/doitian/agent-berth/commit/4e87dafed19d543d61c6968754346c8f18bddeb4))
+
 ## [1.2.1](https://github.com/doitian/agent-berth/releases/tag/v1.2.1) - 2026-09-21
 
 ### Fixed
