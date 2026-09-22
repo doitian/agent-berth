@@ -2,6 +2,22 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.2.0](https://github.com/doitian/agent-berth/releases/tag/v2.2.0) - 2026-09-22
+
+### Added
+
+- Add worktree-aware labels to directory sort ([f615ccc](https://github.com/doitian/agent-berth/commit/f615ccc0a7d226d203678fd6653a49bffd15fe03))
+- Add tui --tmux to attach or spawn the TUI in a tmux window ([6c6dc3e](https://github.com/doitian/agent-berth/commit/6c6dc3e804ed592dfe1794fab61a88905ad8b76c))
+- Add stats subcommand aggregating active sessions by status and provider (#10) ([a171d08](https://github.com/doitian/agent-berth/commit/a171d08f3e877becd8e16b108940687e8cfc6f36))
+
+### Changed
+
+- Rework: serve list from heartbeat-maintained store ([1b04454](https://github.com/doitian/agent-berth/commit/1b0445403a927c858e477322edcb0d45ca6ad69f))
+
+### Fixed
+
+- Fix integration test binary path with symlinked target dir ([70a32e2](https://github.com/doitian/agent-berth/commit/70a32e2e959f8d3026af9719d811df589f62e0b1))
+
 ## [2.1.0](https://github.com/doitian/agent-berth/releases/tag/v2.1.0) - 2026-09-22
 
 ### Added
