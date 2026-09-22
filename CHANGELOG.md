@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.2.1](https://github.com/doitian/agent-berth/releases/tag/v2.2.1) - 2026-09-22
+
+### Changed
+
+- Rework: use brand-aligned TUI logos for grok and opencode ([17f2d83](https://github.com/doitian/agent-berth/commit/17f2d83cad3ff7a2279348fb58282fe511a6b2a3))
+
 ## [2.2.0](https://github.com/doitian/agent-berth/releases/tag/v2.2.0) - 2026-09-22
 
 ### Added
