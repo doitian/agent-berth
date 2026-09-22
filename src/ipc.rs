@@ -74,6 +74,13 @@ pub fn list_all(ctx: &AppContext) -> Result<Vec<crate::store::ListedSession>> {
     }
 }
 
+pub fn stats(ctx: &AppContext) -> Result<Vec<crate::store::ProviderStats>> {
+    match send(ctx, &Request::Stats)? {
+        Response::Ok { stats, .. } => Ok(stats.unwrap_or_default()),
+        Response::Error { message } => bail!("{message}"),
+    }
+}
+
 pub fn remove(ctx: &AppContext, provider: &str, session_id: &str) -> Result<()> {
     let request = Request::Remove {
         provider: provider.to_string(),

@@ -155,6 +155,10 @@ fn handle(stream: Stream, state: &Mutex<Store>, db: &Database) -> Result<()> {
             Ok(store) => Response::sessions(store.listed()),
             Err(_) => Response::error("store lock poisoned"),
         },
+        Request::Stats => match state.lock() {
+            Ok(store) => Response::stats(store.stats()),
+            Err(_) => Response::error("store lock poisoned"),
+        },
         Request::Remove {
             provider,
             session_id,

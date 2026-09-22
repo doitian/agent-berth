@@ -7,7 +7,7 @@ use redb::{Database, ReadableDatabase, ReadableTable, TableDefinition};
 use crate::ipc;
 use crate::paths::Context as AppContext;
 use crate::status::AgentSession;
-use crate::store::{Change, ListedSession, PluginSnapshot, Store};
+use crate::store::{Change, ListedSession, PluginSnapshot, ProviderStats, Store};
 
 const META: TableDefinition<&str, u64> = TableDefinition::new("meta");
 const HOOKS: TableDefinition<&str, &[u8]> = TableDefinition::new("hooks");
@@ -119,6 +119,15 @@ pub fn query_all(ctx: &AppContext) -> Result<Vec<ListedSession>> {
     let mut store = load_from_path(ctx)?;
     store.discover(ctx);
     Ok(store.listed())
+}
+
+pub fn query_stats(ctx: &AppContext) -> Result<Vec<ProviderStats>> {
+    if let Ok(stats) = ipc::stats(ctx) {
+        return Ok(stats);
+    }
+    let mut store = load_from_path(ctx)?;
+    store.discover(ctx);
+    Ok(store.stats())
 }
 
 pub fn mark_removed(ctx: &AppContext, provider: &str, session_id: &str) -> Result<()> {

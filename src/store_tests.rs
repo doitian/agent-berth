@@ -2,6 +2,63 @@ use super::*;
 use crate::status::{AgentEvent, AgentEventKind, apply_event};
 
 #[test]
+fn stats_aggregate_active_sessions_by_provider_and_status() {
+    let mut store = Store::default();
+    let put = |store: &mut Store, provider: &str, sid: &str, status: AgentStatus| {
+        store.hooks.entry(provider.to_string()).or_default().insert(
+            sid.to_string(),
+            AgentSession {
+                status,
+                last_report_ms: now_ms(),
+                ..AgentSession::default()
+            },
+        );
+    };
+    put(&mut store, "claude", "a", AgentStatus::Running);
+    put(&mut store, "claude", "b", AgentStatus::Running);
+    put(&mut store, "claude", "c", AgentStatus::Waiting);
+    put(&mut store, "pi", "d", AgentStatus::Running);
+    put(&mut store, "pi", "e", AgentStatus::Idle);
+    // Inactive sessions are excluded: exited and idle hook sessions without a pid.
+    put(&mut store, "pi", "f", AgentStatus::Idle);
+    store.hooks.get_mut("pi").unwrap().get_mut("e").unwrap().pid = Some(std::process::id());
+    store
+        .hooks
+        .get_mut("claude")
+        .unwrap()
+        .get_mut("a")
+        .unwrap()
+        .exited = true;
+
+    let stats = store.stats();
+    assert_eq!(stats.len(), 2);
+    assert_eq!(stats[0].provider, "claude");
+    assert_eq!(
+        (
+            stats[0].running,
+            stats[0].waiting,
+            stats[0].idle,
+            stats[0].done,
+            stats[0].total
+        ),
+        (1, 1, 0, 0, 2)
+    );
+    assert_eq!(stats[1].provider, "pi");
+    assert_eq!(
+        (
+            stats[1].running,
+            stats[1].waiting,
+            stats[1].idle,
+            stats[1].done,
+            stats[1].total
+        ),
+        (1, 0, 1, 0, 2)
+    );
+
+    assert!(Store::default().stats().is_empty());
+}
+
+#[test]
 fn transcript_paths_survive_persistence_and_listing_without_parent_leaks() {
     for provider in ["claude", "codex"] {
         let mut store = Store::default();
