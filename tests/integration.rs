@@ -671,6 +671,79 @@ fn tui_tmux_attaches_to_pane_already_running_the_tui() {
     let _ = tui.wait();
 }
 
+#[test]
+fn tui_tmux_switches_when_only_tmux_pane_is_set() {
+    let mut sandbox = Sandbox::new();
+    extend_path(&mut sandbox);
+    sandbox.start();
+    let mut tui = sandbox
+        .berth()
+        .args(["notify", "--provider", "pi"])
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let pid = tui.id();
+    sandbox.env.insert(
+        "FIXTURE_TMUX_PANES".into(),
+        format!(
+            "%9\t{pid}\tagents\t1\tberth\t{}",
+            sandbox.project().display()
+        )
+        .into(),
+    );
+    // psmux exports TMUX_PANE but not TMUX to the children of run-shell.
+    sandbox.env.insert("TMUX_PANE".into(), "%4".into());
+    success(sandbox.berth().args(["tui", "--tmux"]));
+    let logs: Vec<String> = fs::read_dir(sandbox.root.path().join("tmux-log"))
+        .unwrap()
+        .map(|entry| fs::read_to_string(entry.unwrap().path()).unwrap())
+        .collect();
+    let joined = logs.join("\n---\n");
+    assert!(joined.contains("switch-client\n-t\n=agents"), "{joined}");
+    assert!(!joined.contains("attach\n-t"), "{joined}");
+    let _ = tui.kill();
+    let _ = tui.wait();
+}
+
+#[test]
+fn tui_tmux_switches_when_a_client_is_attached_without_tmux_env() {
+    let mut sandbox = Sandbox::new();
+    extend_path(&mut sandbox);
+    sandbox.start();
+    let mut tui = sandbox
+        .berth()
+        .args(["notify", "--provider", "pi"])
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let pid = tui.id();
+    sandbox.env.insert(
+        "FIXTURE_TMUX_PANES".into(),
+        format!(
+            "%9\t{pid}\tagents\t1\tberth\t{}",
+            sandbox.project().display()
+        )
+        .into(),
+    );
+    // psmux runs the children of run-shell with neither TMUX nor TMUX_PANE
+    // set, so the attached client is what marks a key binding as coming from
+    // tmux.
+    sandbox.env.insert(
+        "FIXTURE_TMUX_CLIENTS".into(),
+        "/dev/pts/1: agents: berth [120x29] (utf8)\n".into(),
+    );
+    success(sandbox.berth().args(["tui", "--tmux"]));
+    let logs: Vec<String> = fs::read_dir(sandbox.root.path().join("tmux-log"))
+        .unwrap()
+        .map(|entry| fs::read_to_string(entry.unwrap().path()).unwrap())
+        .collect();
+    let joined = logs.join("\n---\n");
+    assert!(joined.contains("switch-client\n-t\n=agents"), "{joined}");
+    assert!(!joined.contains("attach\n-t"), "{joined}");
+    let _ = tui.kill();
+    let _ = tui.wait();
+}
+
 struct RealTmux<'a> {
     sandbox: &'a Sandbox,
     executable: PathBuf,

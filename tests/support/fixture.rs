@@ -74,6 +74,11 @@ fn main() {
                 print!("{panes}");
             }
         }
+        if args.iter().any(|arg| arg == "list-clients") {
+            if let Ok(clients) = env::var("FIXTURE_TMUX_CLIENTS") {
+                print!("{clients}");
+            }
+        }
         if args.iter().any(|arg| arg == "new-window") && args.iter().any(|arg| arg == "-P") {
             println!("%1");
         }

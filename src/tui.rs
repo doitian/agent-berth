@@ -1045,7 +1045,7 @@ pub fn run(ctx: &Context) -> Result<()> {
 }
 
 fn attach_effect(guard: &mut TerminalGuard, app: &mut App, pane: &Pane) {
-    let result = if std::env::var_os("TMUX").is_some() {
+    let result = if tmux::should_switch() {
         tmux::attach_pane(pane)
     } else {
         let _ = guard.suspend();

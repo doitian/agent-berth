@@ -1,4 +1,4 @@
-use std::io::Write;
+use std::io::{IsTerminal, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
 
@@ -137,7 +137,7 @@ fn spawn(args: &[String]) -> Result<Option<String>> {
 
 pub fn attach_or_switch(session: &str) -> Result<()> {
     let target = format!("={session}");
-    if std::env::var_os("TMUX").is_some() {
+    if should_switch() {
         let status = tmux(["switch-client", "-t", &target])?;
         if !status.success() {
             bail!("tmux switch-client failed");
@@ -156,6 +156,30 @@ pub fn attach_or_switch(session: &str) -> Result<()> {
 
 pub fn available() -> bool {
     crate::paths::on_path("tmux")
+}
+
+/// Whether to reach a pane by switching the attached client instead of
+/// attaching this process.
+///
+/// `TMUX`/`TMUX_PANE` mark a process running in a pane, but psmux sets
+/// neither for the children of `run-shell`, so a key binding that starts the
+/// TUI takes the attach path. Such a child has no terminal to attach with
+/// either, and the attempt prints the psmux banner, which `run-shell` then
+/// shows in a popup; switching reaches the client that ran the binding.
+pub fn should_switch() -> bool {
+    if ["TMUX", "TMUX_PANE"]
+        .iter()
+        .any(|key| std::env::var_os(key).is_some_and(|value| !value.is_empty()))
+    {
+        return true;
+    }
+    !std::io::stdout().is_terminal() && client_attached()
+}
+
+fn client_attached() -> bool {
+    command().arg("list-clients").output().is_ok_and(|output| {
+        output.status.success() && !String::from_utf8_lossy(&output.stdout).trim().is_empty()
+    })
 }
 
 const PANE_FORMAT: &str = "#{pane_id}\t#{pane_pid}\t#{session_name}\t#{window_index}\t#{window_name}\t#{pane_current_path}";
@@ -225,7 +249,7 @@ pub fn capture_pane(id: &str) -> Result<String> {
 pub fn attach_pane(pane: &Pane) -> Result<()> {
     let session = format!("={}", pane.session);
     let window = format!("{session}:{}", pane.window);
-    if std::env::var_os("TMUX").is_some() {
+    if should_switch() {
         run(["switch-client", "-t", &session])?;
         run(["select-window", "-t", &window])?;
         run(["select-pane", "-t", &pane.id])?;
