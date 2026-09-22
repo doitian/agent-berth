@@ -1,7 +1,7 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::mpsc;
+use std::sync::{Mutex, OnceLock, mpsc};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -129,7 +129,46 @@ pub fn drop_archived(
     sessions.len() != before
 }
 
+#[derive(Default)]
+struct AgentsCache {
+    rows: Option<Vec<Value>>,
+    refreshing: bool,
+}
+
+static AGENTS_CACHE: OnceLock<Mutex<AgentsCache>> = OnceLock::new();
+
+// Stale-while-revalidate: serve the last `claude agents --json` result and
+// refresh it in a background thread, so callers never pay the subprocess
+// startup cost. The first call fetches synchronously.
 pub fn list_agents() -> Option<Vec<Value>> {
+    let cache = AGENTS_CACHE.get_or_init(|| Mutex::new(AgentsCache::default()));
+    let Ok(mut guard) = cache.lock() else {
+        return fetch_agents();
+    };
+    if guard.refreshing {
+        return guard.rows.clone();
+    }
+    if guard.rows.is_none() {
+        let rows = fetch_agents();
+        guard.rows = rows.clone();
+        return rows;
+    }
+    guard.refreshing = true;
+    thread::spawn(|| {
+        let rows = fetch_agents();
+        if let Some(cache) = AGENTS_CACHE.get()
+            && let Ok(mut guard) = cache.lock()
+        {
+            if rows.is_some() {
+                guard.rows = rows;
+            }
+            guard.refreshing = false;
+        }
+    });
+    guard.rows.clone()
+}
+
+fn fetch_agents() -> Option<Vec<Value>> {
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
         let _ = tx.send(claude_agents_output());
@@ -198,6 +237,18 @@ fn desktop_session_dirs(ctx: &Context) -> Vec<PathBuf> {
     dirs
 }
 
+#[derive(Clone)]
+struct DesktopEntry {
+    ids: Vec<(String, bool)>,
+    local_id: Option<String>,
+}
+
+// Session records only change when Claude Desktop rewrites them, so key the
+// parse results by (mtime, len) and skip re-reading unchanged files.
+type DesktopCache = HashMap<PathBuf, (SystemTime, u64, DesktopEntry)>;
+
+static DESKTOP_CACHE: OnceLock<Mutex<DesktopCache>> = OnceLock::new();
+
 fn collect_desktop_ids(root: &Path, index: &mut DesktopIndex) {
     let Ok(entries) = std::fs::read_dir(root) else {
         return;
@@ -211,35 +262,57 @@ fn collect_desktop_ids(root: &Path, index: &mut DesktopIndex) {
         if path.extension().is_none_or(|ext| ext != "json") {
             continue;
         }
-        let Ok(text) = std::fs::read_to_string(&path) else {
+        let Some(parsed) = parse_desktop_file(&path) else {
             continue;
         };
-        let Ok(data) = serde_json::from_str::<Value>(&text) else {
-            continue;
-        };
-        let archived = data
-            .get("isArchived")
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
-        let local_id = string_field(&data, &["sessionId"]).filter(|id| valid_desktop_id(id));
-        for key in ["cliSessionId", "sessionId"] {
-            let Some(id) = data
-                .get(key)
-                .and_then(Value::as_str)
-                .filter(|s| !s.is_empty())
-            else {
-                continue;
-            };
-            if archived {
-                index.archived.insert(id.to_string());
+        for (id, archived) in &parsed.ids {
+            if *archived {
+                index.archived.insert(id.clone());
             } else {
-                index.live.insert(id.to_string());
-                if let Some(local_id) = local_id {
-                    index.local_ids.insert(id.to_string(), local_id.to_string());
+                index.live.insert(id.clone());
+                if let Some(local_id) = &parsed.local_id {
+                    index.local_ids.insert(id.clone(), local_id.clone());
                 }
             }
         }
     }
+}
+
+fn parse_desktop_file(path: &Path) -> Option<DesktopEntry> {
+    let meta = std::fs::metadata(path).ok()?;
+    let mtime = meta.modified().ok()?;
+    let cache = DESKTOP_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Ok(guard) = cache.lock()
+        && let Some((cached_mtime, cached_len, entry)) = guard.get(path)
+        && *cached_mtime == mtime
+        && *cached_len == meta.len()
+    {
+        return Some(entry.clone());
+    }
+    let text = std::fs::read_to_string(path).ok()?;
+    let data = serde_json::from_str::<Value>(&text).ok()?;
+    let archived = data
+        .get("isArchived")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let local_id = string_field(&data, &["sessionId"])
+        .filter(|id| valid_desktop_id(id))
+        .map(str::to_string);
+    let mut ids = Vec::new();
+    for key in ["cliSessionId", "sessionId"] {
+        if let Some(id) = data
+            .get(key)
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+        {
+            ids.push((id.to_string(), archived));
+        }
+    }
+    let entry = DesktopEntry { ids, local_id };
+    if let Ok(mut guard) = cache.lock() {
+        guard.insert(path.to_path_buf(), (mtime, meta.len(), entry.clone()));
+    }
+    Some(entry)
 }
 
 fn valid_desktop_id(id: &str) -> bool {

@@ -190,7 +190,20 @@ fn codex_titles_refresh_from_index_without_hook_events() {
             json!({"id": "s", "thread_name": title, "updated_at": "2026-09-22T00:00:00Z"})
         )
         .unwrap();
-        assert_eq!(sandbox.sessions(false)[0]["title"], title);
+        // Index titles reach the store through the server's heartbeat
+        // discovery (every 5s), not synchronously on list.
+        let deadline = Instant::now() + Duration::from_secs(15);
+        loop {
+            let sessions = sandbox.sessions(false);
+            if sessions[0]["title"] == title {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "title did not refresh from session index: {sessions:?}"
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
     }
 
     sandbox.stop();

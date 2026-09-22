@@ -104,9 +104,8 @@ fn serve(ctx: &AppContext) -> Result<()> {
             Ok(stream) => {
                 let state = state.clone();
                 let db = db.clone();
-                let ctx = ctx.clone();
                 thread::spawn(move || {
-                    if let Err(err) = handle(stream, &state, &db, &ctx) {
+                    if let Err(err) = handle(stream, &state, &db) {
                         log(format_args!("connection: {err:#}"));
                     }
                 });
@@ -118,7 +117,7 @@ fn serve(ctx: &AppContext) -> Result<()> {
     Ok(())
 }
 
-fn handle(stream: Stream, state: &Mutex<Store>, db: &Database, ctx: &AppContext) -> Result<()> {
+fn handle(stream: Stream, state: &Mutex<Store>, db: &Database) -> Result<()> {
     let mut reader = BufReader::new(stream);
     let mut line = String::new();
     reader.read_line(&mut line)?;
@@ -142,8 +141,7 @@ fn handle(stream: Stream, state: &Mutex<Store>, db: &Database, ctx: &AppContext)
             Err(_) => Response::error("store lock poisoned"),
         },
         Request::List { resumable, idle_ms } => match state.lock() {
-            Ok(mut store) => {
-                persist_discover(db, &mut store, ctx);
+            Ok(store) => {
                 let sessions = if resumable {
                     store.resumable(idle_ms.map(Duration::from_millis))
                 } else {
@@ -154,10 +152,7 @@ fn handle(stream: Stream, state: &Mutex<Store>, db: &Database, ctx: &AppContext)
             Err(_) => Response::error("store lock poisoned"),
         },
         Request::ListAll => match state.lock() {
-            Ok(mut store) => {
-                persist_discover(db, &mut store, ctx);
-                Response::sessions(store.listed())
-            }
+            Ok(store) => Response::sessions(store.listed()),
             Err(_) => Response::error("store lock poisoned"),
         },
         Request::Remove {

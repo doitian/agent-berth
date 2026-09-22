@@ -205,9 +205,12 @@ fn collect_session_ids(root: &Path, ids: &mut HashSet<String>) {
 }
 
 fn session_id_from_rollout(path: &Path) -> Option<String> {
-    if let Ok(text) = std::fs::read_to_string(path)
-        && let Some(line) = text.lines().next()
-        && let Ok(data) = serde_json::from_str::<Value>(line)
+    let line = std::fs::File::open(path)
+        .ok()
+        .and_then(|file| BufReader::new(file).lines().next())
+        .and_then(Result::ok);
+    if let Some(line) = line
+        && let Ok(data) = serde_json::from_str::<Value>(&line)
     {
         let payload = if data.get("type").and_then(Value::as_str) == Some("session_meta") {
             data.get("payload").cloned().unwrap_or(data)
