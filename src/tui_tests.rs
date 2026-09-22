@@ -15,6 +15,7 @@ fn listed(provider: &str, session_id: &str, title: Option<&str>) -> ListedSessio
         last_report_ms: 0,
         kind: SessionKind::Hook,
         parent_id: None,
+        transcript_path: None,
         exited: false,
         title: title.map(str::to_string),
     }
@@ -990,6 +991,192 @@ fn deselecting_preview_clears_pending_work_and_ignores_completion() {
     assert!(app.preview_in_flight.is_none());
     assert!(!app.needs_redraw);
     assert!(app.next_preview_fetch(Instant::now() + REFRESH).is_none());
+}
+
+fn desktop_app() -> App {
+    let mut app = App::new();
+    app.sessions = vec![listed("claude", "one", None), listed("codex", "two", None)];
+    for session in &mut app.sessions {
+        session.source = Source::Desktop;
+        session.transcript_path = Some(format!("/logs/{}.jsonl", session.session_id));
+    }
+    app.update_selection();
+    app
+}
+
+fn transcript_completion(app: &mut App, content: &str) -> Fetched {
+    let now = app.preview_pending_since.unwrap() + PREVIEW_DEBOUNCE;
+    let Some(Fetch::Transcript {
+        source,
+        reader,
+        generation,
+    }) = app.next_preview_fetch(now)
+    else {
+        panic!("expected transcript fetch");
+    };
+    Fetched::Transcript {
+        source,
+        reader,
+        generation,
+        content: content.into(),
+    }
+}
+
+#[test]
+fn desktop_reselection_shows_cached_preview_while_refreshing() {
+    let mut app = desktop_app();
+    let first = transcript_completion(&mut app, "first session");
+    app.handle_fetched(first);
+    app.selected = 1;
+    app.update_selection();
+    assert!(app.preview.is_none());
+    let second = transcript_completion(&mut app, "second session");
+    app.handle_fetched(second);
+
+    app.selected = 0;
+    app.update_selection();
+    assert_eq!(app.preview.as_deref(), Some("first session"));
+    let refresh = transcript_completion(&mut app, "updated first session");
+    assert_eq!(app.preview.as_deref(), Some("first session"));
+    app.handle_fetched(refresh);
+    assert_eq!(app.preview.as_deref(), Some("updated first session"));
+
+    // Reusing a session ID with a different transcript must not reuse its text.
+    app.sessions[0].transcript_path = Some("/logs/replacement.jsonl".into());
+    app.update_selection();
+    assert!(app.preview.is_none());
+}
+
+#[test]
+fn background_transcript_results_warm_cache_without_overwriting_newer_results() {
+    let mut app = desktop_app();
+    let first = transcript_completion(&mut app, "first session");
+    let Fetched::Transcript {
+        source, generation, ..
+    } = &first
+    else {
+        unreachable!()
+    };
+    let outdated = Fetched::Transcript {
+        source: source.clone(),
+        reader: Box::default(),
+        content: "outdated first session".into(),
+        generation: *generation,
+    };
+    app.selected = 1;
+    app.update_selection();
+    let second = transcript_completion(&mut app, "second session");
+    let in_flight = app.preview_in_flight;
+    app.handle_fetched(first);
+    assert!(app.preview.is_none());
+    assert_eq!(app.preview_in_flight, in_flight);
+    app.handle_fetched(second);
+
+    app.selected = 0;
+    app.update_selection();
+    assert_eq!(app.preview.as_deref(), Some("first session"));
+    let refresh = transcript_completion(&mut app, "new first session");
+    app.handle_fetched(refresh);
+    app.handle_fetched(outdated);
+    app.selected = 1;
+    app.update_selection();
+    assert_eq!(app.preview.as_deref(), Some("second session"));
+    app.selected = 0;
+    app.update_selection();
+    assert_eq!(app.preview.as_deref(), Some("new first session"));
+}
+
+#[test]
+fn desktop_navigation_rejects_old_results_even_after_reselection() {
+    let mut app = desktop_app();
+    let first = transcript_completion(&mut app, "old first session");
+    app.selected = 1;
+    app.update_selection();
+    let second = transcript_completion(&mut app, "second session");
+    app.selected = 0;
+    app.update_selection();
+    let newest = transcript_completion(&mut app, "new first session");
+    let in_flight = app.preview_in_flight;
+    app.handle_fetched(first);
+    app.handle_fetched(second);
+    assert!(app.preview.is_none());
+    assert_eq!(app.preview_in_flight, in_flight);
+    app.handle_fetched(newest);
+    assert_eq!(app.preview.as_deref(), Some("new first session"));
+    assert!(app.preview_in_flight.is_none());
+}
+
+#[test]
+fn desktop_preview_refreshes_and_supports_zoom_without_attach() {
+    let mut app = desktop_app();
+    let result = transcript_completion(&mut app, "Assistant: ready");
+    app.handle_fetched(result);
+    assert!(app.has_preview());
+    app.toggle_maximized();
+    assert!(app.preview_maximized);
+    assert!(matches!(app.attach_selected(), Effect::None));
+    app.apply_refresh(app.sessions.clone(), Vec::new());
+    let result = transcript_completion(&mut app, "Assistant: updated");
+    app.handle_fetched(result);
+    assert_eq!(app.preview.as_deref(), Some("Assistant: updated"));
+    app.sessions[0].transcript_path = Some("/logs/replaced.jsonl".into());
+    app.update_selection();
+    assert!(app.preview.is_none());
+    assert!(app.preview_pending_since.is_some());
+    app.sessions.clear();
+    app.update_selection();
+    assert!(!app.has_preview());
+    assert!(app.preview.is_none());
+}
+
+#[test]
+fn desktop_preview_wraps_and_follows_the_last_visible_line() {
+    let mut app = desktop_app();
+    let result = transcript_completion(
+        &mut app,
+        "Assistant: this long response wraps across several lines\nLAST",
+    );
+    app.handle_fetched(result);
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(20, 5)).unwrap();
+    terminal
+        .draw(|frame| render_preview(frame, &app, frame.area()))
+        .unwrap();
+    let buffer = terminal.backend().buffer();
+    assert_eq!(buffer[(1, 3)].symbol(), "L");
+    assert_eq!(buffer[(4, 3)].symbol(), "T");
+}
+
+#[test]
+fn desktop_without_path_shows_unavailable_state_and_accepts_later_hook() {
+    let mut app = desktop_app();
+    app.sessions[0].transcript_path = None;
+    app.update_selection();
+    let now = app.preview_pending_since.unwrap() + PREVIEW_DEBOUNCE;
+    let Some(Fetch::Transcript {
+        source,
+        mut reader,
+        generation,
+    }) = app.next_preview_fetch(now)
+    else {
+        panic!("expected transcript fetch");
+    };
+    let content = reader.preview(&source);
+    app.handle_fetched(Fetched::Transcript {
+        source,
+        reader,
+        generation,
+        content,
+    });
+    assert!(
+        app.preview
+            .as_deref()
+            .unwrap()
+            .contains("Transcript unavailable")
+    );
+    app.sessions[0].transcript_path = Some("/logs/arrived.jsonl".into());
+    app.update_selection();
+    assert!(app.preview.is_none());
+    assert!(app.preview_pending_since.is_some());
 }
 
 #[test]

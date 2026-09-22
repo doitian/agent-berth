@@ -2,6 +2,74 @@ use super::*;
 use crate::status::{AgentEvent, AgentEventKind, apply_event};
 
 #[test]
+fn transcript_paths_survive_persistence_and_listing_without_parent_leaks() {
+    for provider in ["claude", "codex"] {
+        let mut store = Store::default();
+        store.update(provider, serde_json::json!({
+            "session_id":"s", "hook_event_name":"UserPromptSubmit", "transcript_path":"/logs/s.jsonl"
+        })).unwrap();
+        store
+            .update(
+                provider,
+                serde_json::json!({
+                    "session_id":"s", "hook_event_name":"PostToolUse"
+                }),
+            )
+            .unwrap();
+        store.update(provider, serde_json::json!({
+            "session_id":"s", "agent_id":"child", "hook_event_name":"UserPromptSubmit", "transcript_path":"/logs/s.jsonl"
+        })).unwrap();
+        let saved = serde_json::to_vec(&store).unwrap();
+        let mut restored: Store = serde_json::from_slice(&saved).unwrap();
+        let listed = restored.listed();
+        assert_eq!(
+            listed
+                .iter()
+                .find(|s| s.session_id == "s")
+                .unwrap()
+                .transcript_path
+                .as_deref(),
+            Some("/logs/s.jsonl")
+        );
+        assert!(
+            listed
+                .iter()
+                .find(|s| s.session_id == "s:child")
+                .unwrap()
+                .transcript_path
+                .is_none()
+        );
+        restored.update(provider, serde_json::json!({
+            "session_id":"s", "agent_id":"child", "hook_event_name":"PostToolUse", "agent_transcript_path":"/logs/child.jsonl"
+        })).unwrap();
+        assert_eq!(
+            restored
+                .listed()
+                .iter()
+                .find(|s| s.session_id == "s:child")
+                .unwrap()
+                .transcript_path
+                .as_deref(),
+            Some("/logs/child.jsonl")
+        );
+        let mut legacy = serde_json::to_value(&listed[0]).unwrap();
+        legacy.as_object_mut().unwrap().remove("transcript_path");
+        assert!(
+            serde_json::from_value::<ListedSession>(legacy)
+                .unwrap()
+                .transcript_path
+                .is_none()
+        );
+        assert!(
+            serde_json::from_value::<AgentSession>(serde_json::json!({}))
+                .unwrap()
+                .transcript_path
+                .is_none()
+        );
+    }
+}
+
+#[test]
 fn hook_payload_title_is_listed() {
     let mut store = Store::default();
     store

@@ -15,6 +15,7 @@ fn session(provider: &str, title: &str, cwd: &str) -> ListedSession {
         last_report_ms: 0,
         kind: SessionKind::Hook,
         parent_id: None,
+        transcript_path: None,
         exited: false,
         title: Some(title.into()),
     }

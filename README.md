@@ -83,7 +83,24 @@ uses [fzf](https://github.com/junegunn/fzf).
 `agent-berth tui` (or bare `agent-berth`) opens an interactive dashboard.
 The left column lists sessions with the agent logo, status, and title; the
 right column shows session details, plus a live tmux pane preview when the
-selected session runs in tmux.
+selected session runs in tmux. Local Claude Code sessions in Claude Desktop
+and Codex desktop sessions show a live conversation preview instead, with
+user messages, assistant responses, and concise tool activity.
+
+Desktop previews follow the transcript path reported by agent hooks. For
+already-running sessions, agent-berth also looks for a matching session file
+under `CLAUDE_CONFIG_DIR/projects` or `CODEX_HOME/sessions` (using the default
+provider directories when these variables are unset). If no transcript can
+be located, the preview waits for a hook to provide its path. Run `setup` to
+install hooks, then send a prompt in the desktop session.
+
+Previews refresh about once a second as transcript records reach disk;
+they do not stream individual tokens. Switching back to a session shows its
+cached preview immediately while fresh content loads. Recent history and long
+messages/tool results are bounded to keep the TUI responsive. Missing or unreadable files
+are retried automatically. These previews cover local Code sessions, not
+ordinary Claude chats or remote/cloud sessions. Claude's optional
+`MessageDisplay` hook is not required or installed.
 
 The details pane combines the Git branch and status in one row, for example
 `main [!+↕]`. It uses Starship-style symbols: red `!` for conflicts, `$` for
@@ -105,7 +122,7 @@ symbol. Clean repositories without an upstream show only the branch name.
 | `sd` | Sort by working directory alphabetically, missing directories last |
 | `w` | Toggle group headers for the current sort (hidden by default) |
 | `I` | In the resumable list, toggle idle sessions; asks for the idle window (default `20m`, prefilled) |
-| `=` | Toggle maximization of the tmux preview |
+| `=` | Toggle maximization of the tmux or conversation preview |
 | `a` | Attach to the session's tmux pane: switch-client inside tmux, attach outside; detaching returns to the TUI |
 | `r` | Resume the selected resumable session in tmux and attach to it |
 | `d` | Delete the selected session after confirming with `y` |

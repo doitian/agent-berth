@@ -74,6 +74,49 @@ fn hook_clients_report_lifecycle_over_ipc() {
 }
 
 #[test]
+fn transcript_paths_roundtrip_through_notify_ipc_and_database() {
+    let mut sandbox = Sandbox::new();
+    sandbox.start();
+    for provider in ["claude", "codex"] {
+        let path = sandbox
+            .root
+            .path()
+            .join(format!("{provider}-transcript.jsonl"));
+        fs::write(&path, "").unwrap();
+        sandbox.notify(
+            provider,
+            json!({
+                "session_id":provider, "hook_event_name":"UserPromptSubmit",
+                "pid": std::process::id(), "cwd":sandbox.project(), "transcript_path":path,
+            }),
+        );
+        let listed = sandbox.sessions(false);
+        let session = listed
+            .iter()
+            .find(|session| session["provider"] == provider)
+            .unwrap();
+        assert_eq!(session["transcript_path"], path.to_str().unwrap());
+    }
+    sandbox.stop();
+    let output = success(sandbox.berth().args(["list", "--json"]));
+    let offline: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(offline.len(), 2);
+    assert!(
+        offline
+            .iter()
+            .all(|session| session["transcript_path"].is_string())
+    );
+    sandbox.start();
+    assert_eq!(sandbox.sessions(false).len(), 2);
+    assert!(
+        sandbox
+            .sessions(false)
+            .iter()
+            .all(|session| session["transcript_path"].is_string())
+    );
+}
+
+#[test]
 fn codex_titles_refresh_from_index_without_hook_events() {
     use std::io::Write;
 

@@ -29,7 +29,7 @@ clap = { version = "4", features = ["derive"] }
 ctrlc = { version = "3", features = ["termination"] }
 crossterm = "0.29"
 interprocess = "2"
-ratatui = { version = "0.30", default-features = false, features = ["crossterm"] }
+ratatui = { version = "0.30", default-features = false, features = ["crossterm", "unstable-rendered-line-info"] }
 redb = "4.3.0"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

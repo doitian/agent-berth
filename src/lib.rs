@@ -20,6 +20,7 @@ mod setup;
 mod status;
 mod store;
 mod tmux;
+mod transcript;
 mod tui;
 
 pub use cli::run;
