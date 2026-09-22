@@ -59,12 +59,16 @@ pub fn apply_hook(sessions: &mut BTreeMap<String, AgentSession>, event: &Value) 
             .unwrap_or("")
             .to_string()
     });
+    let existing = sessions
+        .get(&sid)
+        .or_else(|| parent_id.as_ref().and_then(|id| sessions.get(id)));
+    let source = source_for(event, existing);
     apply_event(
         sessions,
         AgentEvent {
             session_id: sid,
             kind,
-            source: source_for(event),
+            source,
             pid: u32_field(event, &["pid"]),
             parent_id,
             background_running: false,
@@ -105,11 +109,11 @@ fn uses_auto_review(event: &Value) -> bool {
     auto_review
 }
 
-fn source_for(event: &Value) -> Source {
+fn source_for(event: &Value, existing: Option<&AgentSession>) -> Source {
     if let Some(origin) = string_field(event, &["originator"]) {
         return Source::from_label(origin);
     }
-    Source::Cli
+    existing.map(|session| session.source).unwrap_or_default()
 }
 
 pub fn discover(ctx: &Context, sessions: &mut BTreeMap<String, AgentSession>) -> bool {

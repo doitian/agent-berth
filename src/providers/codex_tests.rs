@@ -4,6 +4,40 @@ use crate::status::AgentStatus;
 use tempfile::tempdir;
 
 #[test]
+fn hooks_preserve_known_source_and_children_inherit_the_parent_source() {
+    let mut sessions = BTreeMap::new();
+    for (originator, expected) in [
+        ("Codex Desktop", Source::Desktop),
+        ("codex_work_desktop", Source::Desktop),
+        ("codex-tui", Source::Cli),
+        ("codex_exec", Source::Cli),
+    ] {
+        apply_hook(
+            &mut sessions,
+            &json!({
+                "session_id":"s", "hook_event_name":"UserPromptSubmit",
+                "originator":originator
+            }),
+        );
+        assert_eq!(sessions["s"].source, expected);
+        apply_hook(
+            &mut sessions,
+            &json!({"session_id":"s", "hook_event_name":"PreToolUse"}),
+        );
+        assert_eq!(sessions["s"].source, expected);
+        apply_hook(
+            &mut sessions,
+            &json!({"session_id":"s", "agent_id":"child", "hook_event_name":"PreToolUse"}),
+        );
+        assert_eq!(sessions["s:child"].source, expected);
+        apply_hook(
+            &mut sessions,
+            &json!({"session_id":"s", "agent_id":"child", "hook_event_name":"SubagentStop"}),
+        );
+    }
+}
+
+#[test]
 fn automatic_approval_review_does_not_wait_for_user_input() {
     let root = tempdir().unwrap();
     let transcript = root.path().join("rollout.jsonl");

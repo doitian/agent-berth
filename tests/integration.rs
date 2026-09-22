@@ -117,6 +117,59 @@ fn transcript_paths_roundtrip_through_notify_ipc_and_database() {
 }
 
 #[test]
+fn codex_source_tracks_current_client_when_resuming_across_cli_and_desktop() {
+    let mut sandbox = Sandbox::new();
+    sandbox.start();
+    let sessions_dir = sandbox.root.path().join("codex/sessions");
+    fs::create_dir_all(&sessions_dir).unwrap();
+    let transcript = sessions_dir.join("rollout-s.jsonl");
+    for (originator, original_client, expected) in [
+        (Some("Codex Desktop"), "codex-tui", "desktop"),
+        (None, "Codex Desktop", "cli"),
+        (Some("codex_work_desktop"), "codex-tui", "desktop"),
+    ] {
+        fs::write(
+            &transcript,
+            format!(
+                "{}\n",
+                json!({"type":"session_meta","payload":{
+                    "id":"s", "originator":original_client
+                }})
+            ),
+        )
+        .unwrap();
+        // Only the notify process receives the client's environment; the
+        // already-running server must use the forwarded identity.
+        if let Some(originator) = originator {
+            sandbox.env.insert(
+                "CODEX_INTERNAL_ORIGINATOR_OVERRIDE".into(),
+                originator.into(),
+            );
+        } else {
+            sandbox
+                .env
+                .remove(OsStr::new("CODEX_INTERNAL_ORIGINATOR_OVERRIDE"));
+        }
+        for event in ["UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop"] {
+            sandbox.notify(
+                "codex",
+                json!({
+                    "session_id":"s", "hook_event_name":event,
+                    "pid":std::process::id(), "transcript_path":transcript
+                }),
+            );
+            let sessions = sandbox.sessions(false);
+            assert_eq!(sessions.len(), 1, "{sessions:?}");
+            assert_eq!(sessions[0]["source"], expected, "{event}");
+        }
+    }
+    sandbox.stop();
+    let output = success(sandbox.berth().args(["list", "--json"]));
+    let offline: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(offline[0]["source"], "desktop");
+}
+
+#[test]
 fn codex_titles_refresh_from_index_without_hook_events() {
     use std::io::Write;
 
