@@ -28,6 +28,11 @@ const HOOK_EVENTS: &[&str] = &[
     "SessionEnd",
 ];
 
+// Claude can exit as soon as a turn-terminal hook fires: `claude -p` shuts down
+// within milliseconds of Stop, and a backgrounded hook process dies with it.
+// Run these synchronously so the report lands before the client goes away.
+const SYNC_HOOK_EVENTS: &[&str] = &["Stop", "StopFailure", "SessionEnd"];
+
 const ASK_NOTIFICATIONS: &[&str] = &[
     "permission_prompt",
     "agent_needs_input",
@@ -580,7 +585,7 @@ pub fn install(ctx: &Context) -> Result<PathBuf> {
         if *event == "Notification" {
             group["matcher"] = Value::String(matcher.clone());
         }
-        if *event == "SessionEnd" {
+        if SYNC_HOOK_EVENTS.contains(event) {
             group["hooks"][0]["async"] = Value::Bool(false);
         }
         kept.push(group);

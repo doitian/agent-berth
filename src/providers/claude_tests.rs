@@ -390,3 +390,22 @@ fn stale_agents_row_does_not_end_a_run_it_predates() {
     apply_agents(&ctx, &mut sessions, &rows, &HashSet::new(), 3_000);
     assert_eq!(sessions["running"].status, AgentStatus::Done);
 }
+
+#[test]
+fn turn_terminal_hooks_are_installed_synchronously() {
+    let root = tempfile::tempdir().unwrap();
+    let ctx = Context::for_test(root.path(), &root.path().join("agent-berth"));
+    let dest = install(&ctx).unwrap();
+    let data: Value = serde_json::from_slice(&std::fs::read(&dest).unwrap()).unwrap();
+    for event in HOOK_EVENTS {
+        let handler = data["hooks"][event]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|group| group_is_ours(group, "claude"))
+            .map(|group| group["hooks"][0].clone())
+            .unwrap_or_else(|| panic!("{event} handler missing"));
+        let expected = !SYNC_HOOK_EVENTS.contains(event);
+        assert_eq!(handler["async"], Value::Bool(expected), "{event}");
+    }
+}
