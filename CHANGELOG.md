@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.1.0](https://github.com/doitian/agent-berth/releases/tag/v2.1.0) - 2026-09-22
+
+### Added
+
+- Add Claude desktop session focus from the TUI ([56a75bb](https://github.com/doitian/agent-berth/commit/56a75bb10a498e5b3040977f3c653912d375adb1))
+- Add codex desktop session focus from the tui ([ac3f209](https://github.com/doitian/agent-berth/commit/ac3f20987e752a135734c0cc04e910912b45c727))
+
+### Fixed
+
+- Fix codex cli and desktop source detection ([2400888](https://github.com/doitian/agent-berth/commit/24008884f1ddd6cb15a30e1736074caf13895739))
+
 ## [2.0.0](https://github.com/doitian/agent-berth/releases/tag/v2.0.0) - 2026-09-22
 
 ### Added
