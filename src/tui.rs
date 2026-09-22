@@ -1150,7 +1150,7 @@ fn render_list(frame: &mut Frame, app: &App, area: Rect) {
             let group = session_group(session, app.sort, now);
             if previous_group.as_ref() != Some(&group) {
                 let label = if app.sort == Sort::Directory {
-                    directory_group_label(&group)
+                    crate::paths::worktree_label(&group)
                 } else {
                     group.clone()
                 };
@@ -1233,23 +1233,6 @@ fn session_group(session: &ListedSession, sort: Sort, now: u64) -> String {
         Sort::Provider => session.provider.clone(),
         Sort::Status => session.status.as_str().into(),
         Sort::Directory => session.cwd.clone().unwrap_or_else(|| "-".into()),
-    }
-}
-
-fn directory_group_label(path: &str) -> String {
-    let normalized = path.replace('\\', "/");
-    let mut components: Vec<&str> = normalized
-        .rsplit('/')
-        .filter(|component| !component.is_empty())
-        .take(2)
-        .collect();
-    components.reverse();
-    if components.is_empty() {
-        if normalized.contains('/') { "/" } else { "-" }.into()
-    } else if components.len() == 1 && components[0].ends_with(':') {
-        format!("{}/", components[0])
-    } else {
-        components.join("/")
     }
 }
 
@@ -1465,13 +1448,29 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn sort_sessions(sessions: &mut [ListedSession], sort: Sort) {
+    let home = (sort == Sort::Directory)
+        .then(|| crate::paths::home_dir().ok())
+        .flatten();
     sessions.sort_by(|a, b| {
         let order = match sort {
             Sort::Created => b.created_ms.cmp(&a.created_ms),
             Sort::Activity => b.last_report_ms.cmp(&a.last_report_ms),
             Sort::Provider => a.provider.cmp(&b.provider),
             Sort::Status => a.status.rank().cmp(&b.status.rank()),
-            Sort::Directory => (a.cwd.is_none(), &a.cwd).cmp(&(b.cwd.is_none(), &b.cwd)),
+            Sort::Directory => (
+                a.cwd.is_none(),
+                a.cwd
+                    .as_deref()
+                    .map(|dir| crate::paths::worktree_label_with_home(dir, home.as_deref())),
+                &a.cwd,
+            )
+                .cmp(&(
+                    b.cwd.is_none(),
+                    b.cwd
+                        .as_deref()
+                        .map(|dir| crate::paths::worktree_label_with_home(dir, home.as_deref())),
+                    &b.cwd,
+                )),
         };
         order
             .then_with(|| b.created_ms.cmp(&a.created_ms))

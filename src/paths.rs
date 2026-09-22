@@ -118,6 +118,58 @@ pub fn home_dir() -> Result<PathBuf> {
         .context("HOME or USERPROFILE is not set")
 }
 
+/// Short label for a working directory, normalizing git worktree layouts to
+/// `name` or `name (worktree)` so a repo and its worktrees sort together.
+pub fn worktree_label(path: &str) -> String {
+    worktree_label_with_home(path, home_dir().ok().as_deref())
+}
+
+pub(crate) fn worktree_label_with_home(path: &str, home: Option<&Path>) -> String {
+    let normalized = path.replace('\\', "/");
+    let components: Vec<&str> = normalized.split('/').filter(|c| !c.is_empty()).collect();
+    let Some(&dir) = components.last() else {
+        return if normalized.contains('/') { "/" } else { "-" }.into();
+    };
+    let Some(wt) = components[..components.len() - 1]
+        .iter()
+        .rposition(|c| is_worktrees_dir(c))
+    else {
+        return dir.into();
+    };
+    let name = components[wt];
+    if name.len() > ".worktrees".len() && name.ends_with(".worktrees") {
+        let base = &name[..name.len() - ".worktrees".len()];
+        return format!("{base} ({dir})");
+    }
+    if is_central_worktrees(&components, wt, home) {
+        // $HOME/.something/worktrees/<group>/<dir>
+        return if components.len() - 2 > wt {
+            format!("{dir} ({})", components[components.len() - 2])
+        } else {
+            dir.into()
+        };
+    }
+    // Worktree folder nested inside the main checkout, e.g. .claude/worktrees.
+    match components[..wt].iter().rev().find(|c| !c.starts_with('.')) {
+        Some(main) => format!("{main} ({dir})"),
+        None => dir.into(),
+    }
+}
+
+fn is_worktrees_dir(component: &str) -> bool {
+    component == "worktrees" || component.ends_with(".worktrees")
+}
+
+fn is_central_worktrees(components: &[&str], wt: usize, home: Option<&Path>) -> bool {
+    let Some(home) = home else { return false };
+    let home = home.display().to_string().replace('\\', "/");
+    let home_components: Vec<&str> = home.split('/').filter(|c| !c.is_empty()).collect();
+    wt > home_components.len()
+        && components.len() > home_components.len()
+        && components[..home_components.len()] == home_components[..]
+        && components[home_components.len()].starts_with('.')
+}
+
 pub fn env_path(key: &str) -> Option<PathBuf> {
     env::var_os(key)
         .filter(|v| !v.is_empty())

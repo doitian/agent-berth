@@ -613,20 +613,25 @@ fn time_groups_use_sort_timestamp_and_exact_bucket_boundaries() {
 }
 
 #[test]
-fn directory_headers_use_two_components_and_forward_slashes() {
-    for (path, expected) in [
-        (r"C:\Users\me\codebase\agent-berth", "codebase/agent-berth"),
-        ("/home/me/codebase/agent-berth/", "codebase/agent-berth"),
-        (r"C:\Users/me\codebase/agent-berth\", "codebase/agent-berth"),
-        (r"\\server\share\project", "share/project"),
-        ("project", "project"),
-        ("/project", "project"),
-        ("/", "/"),
-        (r"C:\", "C:/"),
-        ("", "-"),
-    ] {
-        assert_eq!(directory_group_label(path), expected, "{path}");
+fn directory_headers_normalize_git_worktrees() {
+    let mut app = app_with_sessions();
+    app.group_headers = true;
+    for (session, cwd) in app.sessions.iter_mut().zip([
+        Some("/home/me/codebase/acme-platform"),
+        Some("/home/me/codebase/acme-platform.worktrees/feature-x"),
+        Some("/home/me/codebase/acme-platform/.claude/worktrees/fix-crash"),
+    ]) {
+        session.cwd = cwd.map(str::to_string);
     }
+    app.set_sort(Sort::Directory);
+    assert_eq!(
+        group_headers(&list_buffer(&app, 12)),
+        [
+            "acme-platform",
+            "acme-platform (feature-x)",
+            "acme-platform (fix-crash)",
+        ]
+    );
 }
 
 fn list_buffer(app: &App, height: u16) -> ratatui::buffer::Buffer {
@@ -667,7 +672,7 @@ fn list_groups_follow_sort_and_filter_without_selecting_headers() {
         (Sort::Activity, vec!["1d", "7d", ">7d"]),
         (Sort::Provider, vec!["claude", "codex", "pi"]),
         (Sort::Status, vec!["waiting", "running", "done"]),
-        (Sort::Directory, vec!["tmp/project"]),
+        (Sort::Directory, vec!["project"]),
     ] {
         app.set_sort(sort);
         assert_eq!(group_headers(&list_buffer(&app, 12)), expected);
@@ -698,7 +703,7 @@ fn directory_groups_do_not_merge_paths_with_identical_short_labels() {
     app.set_sort(Sort::Directory);
     assert_eq!(
         group_headers(&list_buffer(&app, 12)),
-        ["codebase/project", "codebase/project", "-"]
+        ["project", "project", "-"]
     );
     app.handle_key(char_key('w'));
     assert!(group_headers(&list_buffer(&app, 12)).is_empty());
