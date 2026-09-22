@@ -1508,8 +1508,8 @@ fn logo(provider: &str) -> &'static str {
     match provider {
         "claude" => "✻",
         "codex" => "⌘",
-        "grok" => "▲",
-        "opencode" => "◆",
+        "grok" => "𝕏",
+        "opencode" => "⧈",
         "pi" => "π",
         _ => "●",
     }
