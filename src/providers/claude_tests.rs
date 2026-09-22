@@ -19,7 +19,7 @@ fn agents_list_drops_desktop_sessions_that_are_gone() {
     sessions.insert(
         "probe-manual-001".into(),
         AgentSession {
-            status: AgentStatus::Working,
+            status: AgentStatus::Running,
             source: Source::Desktop,
             cwd: Some("/work".into()),
             ..AgentSession::default()
@@ -28,7 +28,7 @@ fn agents_list_drops_desktop_sessions_that_are_gone() {
     sessions.insert(
         "cli-keep".into(),
         AgentSession {
-            status: AgentStatus::Working,
+            status: AgentStatus::Running,
             source: Source::Cli,
             ..AgentSession::default()
         },

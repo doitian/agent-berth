@@ -1424,7 +1424,7 @@ fn sort_sessions(sessions: &mut [ListedSession], sort: Sort) {
             Sort::Created => b.created_ms.cmp(&a.created_ms),
             Sort::Activity => b.last_report_ms.cmp(&a.last_report_ms),
             Sort::Provider => a.provider.cmp(&b.provider),
-            Sort::Status => a.status.as_str().cmp(b.status.as_str()),
+            Sort::Status => a.status.rank().cmp(&b.status.rank()),
             Sort::Directory => (a.cwd.is_none(), &a.cwd).cmp(&(b.cwd.is_none(), &b.cwd)),
         };
         order
@@ -1446,7 +1446,7 @@ fn logo(provider: &str) -> &'static str {
 
 fn status_style(status: AgentStatus) -> Style {
     let color = match status {
-        AgentStatus::Working => latte::GREEN,
+        AgentStatus::Running => latte::GREEN,
         AgentStatus::Waiting => latte::YELLOW,
         AgentStatus::Idle => latte::TEAL,
         AgentStatus::Done => latte::SUBTEXT1,

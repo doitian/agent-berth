@@ -10,6 +10,9 @@ the first line of each commit. Start it with a prefix:
 - `rework`, `refactor`, `rename`, `remove`, `drop`, `make`, `scope`, `always`, `run`, `report` → Changed
 - `docs`, `chore`, `ci`, `build`, `test`, `bump` → omitted
 
+Append `!` to any prefix (e.g. `add!`) to mark a breaking change; the commit
+moves to ⚠️ Breaking Changes and the `!` is stripped from the rendered entry.
+
 Use imperative mood, lowercase verb, no trailing period; details go in the
 body. Regenerate with `mise run changelog` before tagging a release.
 

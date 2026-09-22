@@ -6,7 +6,7 @@ fn listed(cwd: Option<&str>, title: Option<&str>) -> ListedSession {
     ListedSession {
         provider: "claude".into(),
         session_id: "abc".into(),
-        status: AgentStatus::Working,
+        status: AgentStatus::Running,
         source: Source::Cli,
         cwd: cwd.map(str::to_string),
         cmdline: Vec::new(),
@@ -52,7 +52,7 @@ fn line_exposes_title_folder_and_branch() {
     let candidate = Candidate::new(pane("%1", 1, &cwd), listed(Some(&cwd), Some("Fix attach")));
     assert_eq!(
         candidate.line(),
-        "%1\tclaude\tworking\tFix attach\tproject\tmain\tabc"
+        "%1\tclaude\trunning\tFix attach\tproject\tmain\tabc"
     );
 }
 
@@ -64,7 +64,7 @@ fn line_falls_back_to_pane_path_and_dashes() {
     let candidate = Candidate::new(pane("%2", 1, &cwd), listed(None, None));
     assert_eq!(
         candidate.line(),
-        "%2\tclaude\tworking\t-\tproject\ttopic\tabc"
+        "%2\tclaude\trunning\t-\tproject\ttopic\tabc"
     );
 }
 
