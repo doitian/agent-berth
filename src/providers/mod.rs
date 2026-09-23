@@ -122,6 +122,21 @@ impl ProviderKind {
         compact.contains(&format!("notifyprovider{}", self.name()))
     }
 
+    /// True when re-running `install` would rewrite the config, so the on-disk
+    /// integration predates the one this build ships.
+    pub fn hooks_outdated(self, ctx: &AppContext) -> bool {
+        if !self.hooks_installed(ctx) {
+            return false;
+        }
+        match self {
+            Self::Claude => claude::outdated(ctx),
+            Self::Codex => codex::outdated(ctx),
+            Self::Grok => grok::outdated(ctx),
+            Self::Opencode => opencode::outdated(ctx),
+            Self::Pi => pi::outdated(ctx),
+        }
+    }
+
     pub fn hooks_stale(self, ctx: &AppContext) -> bool {
         if !self.hooks_installed(ctx) {
             return false;

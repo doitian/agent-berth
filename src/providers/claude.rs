@@ -553,8 +553,23 @@ fn agent_kind(row: &Value) -> AgentStatus {
 pub fn install(ctx: &Context) -> Result<PathBuf> {
     let dest = ctx.claude_config_dir.join("settings.json");
     let mut data = load_object(&dest)?;
+    plan(ctx, &mut data);
+    save_object(&dest, &data)?;
+    Ok(dest)
+}
+
+pub fn outdated(ctx: &Context) -> bool {
+    let Ok(current) = load_object(&ctx.claude_config_dir.join("settings.json")) else {
+        return false;
+    };
+    let mut planned = current.clone();
+    plan(ctx, &mut planned);
+    planned != current
+}
+
+fn plan(ctx: &Context, data: &mut Value) {
     if !data.is_object() {
-        data = json!({});
+        *data = json!({});
     }
     let hooks = data
         .as_object_mut()
@@ -591,8 +606,6 @@ pub fn install(ctx: &Context) -> Result<PathBuf> {
         kept.push(group);
         *groups = Value::Array(kept);
     }
-    save_object(&dest, &data)?;
-    Ok(dest)
 }
 
 pub fn uninstall(ctx: &Context) -> Result<()> {

@@ -99,13 +99,22 @@ fn pascal(name: &str) -> String {
 
 pub fn install(ctx: &Context) -> Result<PathBuf> {
     let dest = ctx.grok_home.join("hooks").join("agent-berth.json");
+    save_object(&dest, &plan(ctx))?;
+    Ok(dest)
+}
+
+pub fn outdated(ctx: &Context) -> bool {
+    let dest = ctx.grok_home.join("hooks").join("agent-berth.json");
+    load_object(&dest).is_ok_and(|current| current != plan(ctx))
+}
+
+fn plan(ctx: &Context) -> Value {
     let handler = command_handler(ctx, "grok", 5, true);
     let mut hooks = serde_json::Map::new();
     for event in HOOK_EVENTS {
         hooks.insert((*event).into(), json!([{"hooks": [handler.clone()]}]));
     }
-    save_object(&dest, &json!({"hooks": hooks}))?;
-    Ok(dest)
+    json!({"hooks": hooks})
 }
 
 pub fn uninstall(ctx: &Context) -> Result<()> {

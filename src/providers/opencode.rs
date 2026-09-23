@@ -11,6 +11,11 @@ pub fn install(ctx: &Context) -> Result<PathBuf> {
     Ok(dest)
 }
 
+pub fn outdated(ctx: &Context) -> bool {
+    let dest = ctx.opencode_plugin_dir().join("agent-berth.js");
+    std::fs::read_to_string(&dest).is_ok_and(|text| text != plugin_source(ctx))
+}
+
 pub fn uninstall(ctx: &Context) -> Result<()> {
     let dest = ctx.opencode_plugin_dir().join("agent-berth.js");
     if dest.exists() {

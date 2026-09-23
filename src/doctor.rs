@@ -216,6 +216,16 @@ fn provider_check(ctx: &Context, provider: ProviderKind) -> Check {
             ),
         };
     }
+    if provider.hooks_outdated(ctx) {
+        return Check {
+            level: Level::Warn,
+            name,
+            detail: format!(
+                "hooks out of date ({}) (run: agent-berth setup --no-service)",
+                provider.hook_path(ctx).display()
+            ),
+        };
+    }
     Check {
         level: Level::Ok,
         name,

@@ -11,6 +11,11 @@ pub fn install(ctx: &Context) -> Result<PathBuf> {
     Ok(dest)
 }
 
+pub fn outdated(ctx: &Context) -> bool {
+    let dest = ctx.pi_dir.join("extensions").join("agent-berth.ts");
+    std::fs::read_to_string(&dest).is_ok_and(|text| text != extension_source(ctx))
+}
+
 pub fn uninstall(ctx: &Context) -> Result<()> {
     let dest = ctx.pi_dir.join("extensions").join("agent-berth.ts");
     if dest.exists() {

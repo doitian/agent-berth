@@ -194,3 +194,19 @@ fn resume_commands_match_providers() {
     );
     assert_eq!(resume_cmd("pi", "abc"), ["pi", "--session", "abc"]);
 }
+
+#[test]
+fn freshly_installed_hooks_are_never_outdated() {
+    let root = tempdir().unwrap();
+    let bin = root.path().join("agent-berth");
+    fs::write(&bin, []).unwrap();
+    let ctx = Context::for_test(root.path(), &bin);
+    for provider in ProviderKind::ALL {
+        provider.install(&ctx).unwrap();
+        assert!(
+            !provider.hooks_outdated(&ctx),
+            "{} reported outdated right after install",
+            provider.name()
+        );
+    }
+}
