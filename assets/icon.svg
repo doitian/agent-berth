@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <title>agent-berth</title>
+  <rect width="256" height="256" rx="56" fill="#15304f"/>
+  <rect x="96" y="80" width="64" height="64" rx="12" fill="#ffffff"/>
+  <circle cx="128" cy="108" r="14" fill="#3ddc84"/>
+  <path d="M40 136 h176 l-24 48 h-128 z" fill="#ffffff" stroke="#ffffff" stroke-width="8" stroke-linejoin="round"/>
+  <path d="M36 206 q23 -14 46 0 t46 0 t46 0 t46 0" fill="none" stroke="#4f8ac4" stroke-width="10" stroke-linecap="round"/>
+</svg>
