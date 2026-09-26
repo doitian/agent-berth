@@ -2,6 +2,28 @@
 
 All notable changes to this project are documented in this file.
 
+## [3.0.0](https://github.com/doitian/agent-berth/releases/tag/v3.0.0) - 2026-09-26
+
+### Added
+
+- Check: report outdated agent integration config in doctor ([c3aa54d](https://github.com/doitian/agent-berth/commit/c3aa54d01d2ccefa9d3251bebdcb0a3e14dd551c))
+- Add project icon for agent-berth ([2146164](https://github.com/doitian/agent-berth/commit/2146164ffcee5b5a3623601ee2061f3fbbcda3d3))
+- Add opencode 2 plugin package with version-aware install ([b9c6543](https://github.com/doitian/agent-berth/commit/b9c6543f5325d4c87dac42b5e810bdf7a8c49e7b))
+- Support opencode 2 session tabs in pane resolution and preview ([bd4e7b9](https://github.com/doitian/agent-berth/commit/bd4e7b981893d63e0b2fb3544c682e5449829c8d))
+- Support conversation preview for cli sessions without a front pane ([a621613](https://github.com/doitian/agent-berth/commit/a621613ff7d8fc3e6ae45db15f988bc51ab011f5))
+- Support pi transcripts in conversation previews ([f41c007](https://github.com/doitian/agent-berth/commit/f41c0074ff4352731a2e009796b25a1482a24137))
+
+### Fixed
+
+- Fix: keep finished claude sessions from showing as running ([136f4c1](https://github.com/doitian/agent-berth/commit/136f4c195b2128e25f7c8f1f0738ac46fd9b3c9d))
+- Fix: ignore stale agent rows when ending a claude run ([92b5d1f](https://github.com/doitian/agent-berth/commit/92b5d1f303d9ed5dbde687e96d32252cd1b31ee0))
+- Fix: switch clients when a tmux binding starts the TUI ([c8457ad](https://github.com/doitian/agent-berth/commit/c8457add225078637cc79caa6b80337de4bf34a3))
+- Fix: resolve windows shims when detecting the opencode version ([29cc33d](https://github.com/doitian/agent-berth/commit/29cc33d9cc7bb61922cdbc901e0b5c0e23f220e5))
+
+### ⚠️ Breaking Changes
+
+- Fix: run claude turn-terminal hooks synchronously ([44d8cc2](https://github.com/doitian/agent-berth/commit/44d8cc2aa291364a9f11d83f2bebc702eb0b725e))
+
 ## [2.2.1](https://github.com/doitian/agent-berth/releases/tag/v2.2.1) - 2026-09-22
 
 ### Changed
