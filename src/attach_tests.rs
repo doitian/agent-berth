@@ -106,6 +106,14 @@ fn client_binary_uses_the_cmdline_executable_name() {
     assert_eq!(client_binary(&session), None);
     session.cmdline = vec!["opencode".into(), "--session".into(), "x".into()];
     assert_eq!(client_binary(&session).as_deref(), Some("opencode"));
+    session.cmdline = vec!["/usr/local/bin/opencode".into()];
+    assert_eq!(client_binary(&session).as_deref(), Some("opencode"));
+}
+
+#[cfg(windows)]
+#[test]
+fn client_binary_strips_windows_directories() {
+    let mut session = listed(None, None);
     session.cmdline = vec!["C:\\tools\\opencode.exe".into()];
     assert_eq!(client_binary(&session).as_deref(), Some("opencode.exe"));
 }
