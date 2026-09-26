@@ -30,7 +30,7 @@ jobs:
       - name: Configure test temporary directory
         run: |
           [IO.File]::AppendAllText($env:GITHUB_ENV, "TMPDIR=$env:RUNNER_TEMP`nTMP=$env:RUNNER_TEMP`nTEMP=$env:RUNNER_TEMP`n")
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
@@ -75,7 +75,7 @@ jobs:
         run: mbx test --locked --test integration real_tmux -- --ignored
       - name: Upload failure diagnostics
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: test-diagnostics-${{ matrix.os }}
           path: ${{ runner.temp }}/ab-it-*/**
@@ -99,7 +99,7 @@ jobs:
       - name: Configure test temporary directory
         run: |
           [IO.File]::AppendAllText($env:GITHUB_ENV, "TMPDIR=$env:RUNNER_TEMP`nTMP=$env:RUNNER_TEMP`nTEMP=$env:RUNNER_TEMP`n")
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
@@ -139,7 +139,7 @@ jobs:
         run: mbx test --locked --test integration mock_llm -- --ignored
       - name: Upload failure diagnostics
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: mock-diagnostics-${{ matrix.os }}-${{ matrix.client }}
           path: ${{ runner.temp }}/ab-it-*/**
