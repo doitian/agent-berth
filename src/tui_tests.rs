@@ -1320,6 +1320,21 @@ fn background_tab_cli_session_previews_conversation_over_pane_screen() {
 }
 
 #[test]
+fn refresh_keeps_live_transcript_preview_while_next_fetch_is_pending() {
+    let mut app = cli_app("pi");
+    let result = transcript_completion(&mut app, "Assistant: ready");
+    app.handle_fetched(result);
+    assert_eq!(app.preview.as_deref(), Some("Assistant: ready"));
+    // A periodic refresh re-resolves the selection; the conversation must not
+    // fall back to the loading state before the next fetch returns.
+    app.apply_refresh(app.sessions.clone(), Vec::new());
+    assert_eq!(app.preview.as_deref(), Some("Assistant: ready"));
+    let result = transcript_completion(&mut app, "Assistant: updated");
+    app.handle_fetched(result);
+    assert_eq!(app.preview.as_deref(), Some("Assistant: updated"));
+}
+
+#[test]
 fn cli_front_pane_keeps_pane_preview_over_conversation() {
     let mut app = cli_app("claude");
     // The session's own process runs in the pane: live pane output wins and

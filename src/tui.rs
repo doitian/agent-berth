@@ -602,13 +602,18 @@ impl App {
         if pane != self.selected_pane {
             self.needs_redraw = true;
         }
-        let new_preview = pane
-            .as_ref()
-            .filter(|_| self.pane_shows_session)
-            .and_then(|pane| self.previews.get(&pane.id).cloned());
-        if new_preview != self.preview {
-            self.preview = new_preview;
-            self.needs_redraw = true;
+        // A selected transcript owns the preview content; overwriting it with
+        // the (irrelevant) pane cache would flash "Loading" on every refresh
+        // until the next transcript fetch returns.
+        if self.selected_transcript.is_none() {
+            let new_preview = pane
+                .as_ref()
+                .filter(|_| self.pane_shows_session)
+                .and_then(|pane| self.previews.get(&pane.id).cloned());
+            if new_preview != self.preview {
+                self.preview = new_preview;
+                self.needs_redraw = true;
+            }
         }
         if pane.as_ref().map(|pane| &pane.id) != self.selected_pane.as_ref().map(|pane| &pane.id) {
             self.preview_pending_since = pane.as_ref().map(|_| Instant::now());
