@@ -1298,7 +1298,7 @@ fn render_details(frame: &mut Frame, app: &App, area: Rect) {
         .map(|info| info.branch.clone())
         .or_else(|| app.branch.clone())
         .unwrap_or_else(|| "-".into());
-    let age = list::age_label(session.last_report_ms);
+    let ago = list::ago_label(session.last_report_ms);
     let command = if session.cmdline.is_empty() {
         "-".into()
     } else {
@@ -1324,7 +1324,7 @@ fn render_details(frame: &mut Frame, app: &App, area: Rect) {
     }
     rows.extend([
         ("title", session.title.clone().unwrap_or_else(|| "-".into())),
-        ("age", age),
+        ("ago", ago),
         ("command", command),
     ]);
     if let Some(pane) = &app.selected_pane {

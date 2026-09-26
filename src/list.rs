@@ -35,7 +35,7 @@ pub fn run(
 
 fn print_table(sessions: &[ListedSession]) -> Result<()> {
     let headers = [
-        "PROVIDER", "STATUS", "SOURCE", "SESSION", "TITLE", "CWD", "PID", "AGE",
+        "PROVIDER", "STATUS", "SOURCE", "SESSION", "TITLE", "CWD", "PID", "AGO",
     ];
     let rows: Vec<[String; 8]> = sessions
         .iter()
@@ -51,7 +51,7 @@ fn print_table(sessions: &[ListedSession]) -> Result<()> {
                     .pid
                     .map(|pid| pid.to_string())
                     .unwrap_or_else(|| "-".into()),
-                age_label(session.last_report_ms),
+                ago_label(session.last_report_ms),
             ]
         })
         .collect();
@@ -91,7 +91,7 @@ pub(crate) fn truncate(text: &str, max: usize) -> String {
     out
 }
 
-pub(crate) fn age_label(last_report_ms: u64) -> String {
+pub(crate) fn ago_label(last_report_ms: u64) -> String {
     let now = crate::store::now_ms();
     let secs = now.saturating_sub(last_report_ms) / 1000;
     if secs < 60 {
