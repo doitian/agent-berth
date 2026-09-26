@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -13,6 +13,7 @@ const META: TableDefinition<&str, u64> = TableDefinition::new("meta");
 const HOOKS: TableDefinition<&str, &[u8]> = TableDefinition::new("hooks");
 const SNAPSHOTS: TableDefinition<&str, &[u8]> = TableDefinition::new("snapshots");
 const REMOVED: TableDefinition<&str, u64> = TableDefinition::new("removed");
+const HOSTED: TableDefinition<&str, &[u8]> = TableDefinition::new("hosted");
 
 const LAST_HEARTBEAT: &str = "last_heartbeat_ms";
 const PREV_HEARTBEAT: &str = "previous_heartbeat_ms";
@@ -80,6 +81,13 @@ pub fn load(db: &Database) -> Result<Store> {
                 .entry(provider.to_string())
                 .or_default()
                 .insert(session_id.to_string(), value.value());
+        }
+    }
+    if let Ok(table) = txn.open_table(HOSTED) {
+        for entry in table.iter()? {
+            let (key, value) = entry?;
+            let set: BTreeSet<String> = serde_json::from_slice(value.value())?;
+            store.hosted.insert(key.value().to_string(), set);
         }
     }
     Ok(store)
@@ -164,7 +172,11 @@ pub fn persist_change(db: &Database, store: &Store, change: &Change) -> Result<(
             else {
                 return Ok(());
             };
-            persist_snapshot(db, provider, instance, snapshot)
+            persist_snapshot(db, provider, instance, snapshot)?;
+            if let Some(set) = store.hosted.get(provider) {
+                persist_hosted(db, provider, set)?;
+            }
+            Ok(())
         }
     }
 }
@@ -232,11 +244,46 @@ fn persist_snapshot(
     Ok(())
 }
 
+fn persist_hosted(db: &Database, provider: &str, set: &BTreeSet<String>) -> Result<()> {
+    let txn = db.begin_write().context("write redb")?;
+    {
+        let mut table = txn.open_table(HOSTED)?;
+        let bytes = serde_json::to_vec(set)?;
+        table.insert(provider, bytes.as_slice())?;
+    }
+    txn.commit()?;
+    Ok(())
+}
+
+fn sync_hosted(db: &Database, all: &BTreeMap<String, BTreeSet<String>>) -> Result<()> {
+    let txn = db.begin_write().context("write redb")?;
+    {
+        let mut table = txn.open_table(HOSTED)?;
+        let mut stale = Vec::new();
+        for entry in table.iter()? {
+            let (key, _) = entry?;
+            if !all.contains_key(key.value()) {
+                stale.push(key.value().to_string());
+            }
+        }
+        for key in stale {
+            table.remove(key.as_str())?;
+        }
+        for (provider, set) in all {
+            let bytes = serde_json::to_vec(set)?;
+            table.insert(provider.as_str(), bytes.as_slice())?;
+        }
+    }
+    txn.commit()?;
+    Ok(())
+}
+
 pub fn persist_all(db: &Database, store: &Store) -> Result<()> {
     persist_heartbeats(db, store)?;
     sync_hooks(db, &store.hooks)?;
     sync_snapshots(db, &store.snapshots)?;
     sync_removed(db, &store.removed)?;
+    sync_hosted(db, &store.hosted)?;
     Ok(())
 }
 
@@ -345,6 +392,7 @@ fn init_tables(db: &Database) -> Result<()> {
         let _ = txn.open_table(HOOKS)?;
         let _ = txn.open_table(SNAPSHOTS)?;
         let _ = txn.open_table(REMOVED)?;
+        let _ = txn.open_table(HOSTED)?;
     }
     txn.commit()?;
     Ok(())

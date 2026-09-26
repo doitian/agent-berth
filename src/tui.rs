@@ -257,6 +257,9 @@ struct App {
     panes: Vec<Pane>,
     selected: usize,
     selected_pane: Option<Pane>,
+    /// The selected pane shows the selected session's own output. False when
+    /// the pane only hosts the session as a background tab.
+    pane_shows_session: bool,
     selected_transcript: Option<transcript::Source>,
     transcript_reader: Box<transcript::Reader>,
     transcript_roots: HashMap<String, PathBuf>,
@@ -299,6 +302,9 @@ impl App {
             panes: Vec::new(),
             selected: 0,
             selected_pane: None,
+            // update_selection owns this flag; tests that drive select_preview
+            // directly mean the pane to show the selected session.
+            pane_shows_session: true,
             selected_transcript: None,
             transcript_reader: Box::default(),
             transcript_roots: HashMap::new(),
@@ -452,6 +458,7 @@ impl App {
                     .selected_pane
                     .as_ref()
                     .is_some_and(|pane| pane.id == pane_id)
+                    && self.pane_shows_session
                     && self.preview.as_ref() != Some(&content)
                 {
                     self.preview = Some(content);
@@ -525,10 +532,14 @@ impl App {
     }
 
     fn update_selection(&mut self) {
-        let pane = self
+        let resolved = self
             .selected_session()
-            .and_then(|session| attach::pane_for_session(&self.panes, session))
-            .cloned();
+            .and_then(|session| {
+                attach::resolve_session_pane(&self.panes, session, std::process::id())
+            })
+            .map(|resolved| (resolved.pane.clone(), resolved.own_content));
+        let (pane, own_content) = resolved.unzip();
+        self.pane_shows_session = own_content.unwrap_or(false);
         self.select_preview(pane);
         let transcript = self
             .selected_session()
@@ -559,6 +570,7 @@ impl App {
                 .or_else(|| {
                     self.selected_pane
                         .as_ref()
+                        .filter(|_| self.pane_shows_session)
                         .and_then(|pane| self.previews.get(&pane.id).cloned())
                 });
             self.needs_redraw = true;
@@ -577,18 +589,24 @@ impl App {
     }
 
     fn has_preview(&self) -> bool {
-        self.selected_pane.is_some() || self.selected_transcript.is_some()
+        self.pane_shows_session && self.selected_pane.is_some()
+            || self.selected_transcript.is_some()
     }
 
     fn select_preview(&mut self, pane: Option<Pane>) {
         if pane != self.selected_pane {
             self.needs_redraw = true;
         }
+        let new_preview = pane
+            .as_ref()
+            .filter(|_| self.pane_shows_session)
+            .and_then(|pane| self.previews.get(&pane.id).cloned());
+        if new_preview != self.preview {
+            self.preview = new_preview;
+            self.needs_redraw = true;
+        }
         if pane.as_ref().map(|pane| &pane.id) != self.selected_pane.as_ref().map(|pane| &pane.id) {
             self.preview_pending_since = pane.as_ref().map(|_| Instant::now());
-            self.preview = pane
-                .as_ref()
-                .and_then(|pane| self.previews.get(&pane.id).cloned());
         }
         self.selected_pane = pane;
     }

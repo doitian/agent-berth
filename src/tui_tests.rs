@@ -18,6 +18,8 @@ fn listed(provider: &str, session_id: &str, title: Option<&str>) -> ListedSessio
         transcript_path: None,
         exited: false,
         title: title.map(str::to_string),
+        pane_pid: None,
+        front: false,
     }
 }
 
@@ -934,6 +936,47 @@ fn finish_preview(app: &mut App, request: (String, u64), content: Option<&str>) 
         generation: request.1,
         content: content.map(str::to_string),
     });
+}
+
+#[test]
+fn background_tab_shows_no_pane_preview() {
+    let mut app = App::new();
+    app.pane_shows_session = false;
+    let mut front = listed("opencode", "ses_front", Some("Front work"));
+    front.pane_pid = Some(7);
+    front.front = true;
+    let mut background = listed("opencode", "ses_bg", Some("Background work"));
+    background.pane_pid = Some(7);
+    app.sessions = vec![front, background];
+    app.selected = 1;
+
+    // The pane screen belongs to the front tab: no panel, no fetch, no
+    // cached content, and a late completion cannot leak into the preview.
+    app.previews
+        .insert("%1".into(), "front session content".into());
+    app.select_preview(Some(preview_pane("%1")));
+    assert_eq!(
+        app.selected_pane.as_ref().map(|pane| pane.id.as_str()),
+        Some("%1")
+    );
+    assert!(!app.has_preview());
+    assert!(app.preview.is_none());
+    assert!(
+        app.next_preview_fetch(app.preview_pending_since.unwrap() + PREVIEW_DEBOUNCE)
+            .is_none()
+    );
+    app.handle_fetched(Fetched::Preview {
+        generation: app.preview_generation + 1,
+        pane_id: "%1".into(),
+        content: Some("front session content".into()),
+    });
+    assert!(app.preview.is_none());
+
+    // The front session of the same pane previews normally.
+    app.pane_shows_session = true;
+    app.select_preview(Some(preview_pane("%1")));
+    assert!(app.has_preview());
+    assert_eq!(app.preview.as_deref(), Some("front session content"));
 }
 
 #[test]

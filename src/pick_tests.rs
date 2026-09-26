@@ -18,6 +18,8 @@ fn session(provider: &str, title: &str, cwd: &str) -> ListedSession {
         transcript_path: None,
         exited: false,
         title: Some(title.into()),
+        pane_pid: None,
+        front: false,
     }
 }
 

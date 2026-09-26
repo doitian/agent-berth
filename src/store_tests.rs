@@ -483,6 +483,236 @@ fn duplicate_snapshots_deduplicate_by_session() {
 }
 
 #[test]
+fn tui_tab_heartbeat_attributes_pane_pid_and_front_session() {
+    let me = std::process::id();
+    let mut store = Store::default();
+    store
+        .update(
+            "opencode",
+            serde_json::json!({
+                "id":"100:server",
+                "pid":100,
+                "cwd":"/work",
+                "status":{"a":"busy","b":"idle"}
+            }),
+        )
+        .unwrap();
+    store
+        .update(
+            "opencode",
+            serde_json::json!({
+                "id": me.to_string(),
+                "pid": me,
+                "cwd":"/work",
+                "status":{},
+                "front":"a",
+                "tabs":["a","b"]
+            }),
+        )
+        .unwrap();
+    let listed = store.listed();
+    assert_eq!(listed.len(), 2);
+    let a = listed.iter().find(|s| s.session_id == "a").unwrap();
+    assert_eq!(a.pane_pid, Some(me));
+    assert!(a.front);
+    assert_eq!(a.pid, Some(100));
+    let b = listed.iter().find(|s| s.session_id == "b").unwrap();
+    assert_eq!(b.pane_pid, Some(me));
+    assert!(!b.front);
+}
+
+#[test]
+fn closed_tabs_leave_the_list_once_hosts_report() {
+    let me = std::process::id();
+    let mut store = Store::default();
+    store
+        .update(
+            "opencode",
+            serde_json::json!({
+                "id":"100:server",
+                "pid":100,
+                "cwd":"/work",
+                "status":{"a":"busy","b":"idle","c":"idle"}
+            }),
+        )
+        .unwrap();
+    // Without a host reporting tabs (a headless run), every session stays.
+    assert_eq!(store.listed().len(), 3);
+
+    store
+        .update(
+            "opencode",
+            serde_json::json!({
+                "id": me.to_string(),
+                "pid": me,
+                "cwd":"/work",
+                "status":{},
+                "front":"a",
+                "tabs":["a","b"]
+            }),
+        )
+        .unwrap();
+    let listed = store.listed();
+    let ids: Vec<&str> = listed.iter().map(|s| s.session_id.as_str()).collect();
+    assert_eq!(ids, ["a", "b"]);
+    // Busy sessions stay visible even outside every tab.
+    store
+        .update(
+            "opencode",
+            serde_json::json!({
+                "id":"100:server",
+                "pid":100,
+                "cwd":"/work",
+                "status":{"a":"busy","b":"idle","c":"busy"}
+            }),
+        )
+        .unwrap();
+    let listed = store.listed();
+    let ids: Vec<&str> = listed.iter().map(|s| s.session_id.as_str()).collect();
+    assert_eq!(ids, ["a", "b", "c"]);
+}
+
+#[test]
+fn closing_the_last_host_hides_its_sessions_for_good() {
+    let mut store = Store::default();
+    store
+        .update(
+            "opencode",
+            serde_json::json!({
+                "id":"100:server",
+                "pid":100,
+                "cwd":"/work",
+                "status":{"a":"idle","b":"idle"}
+            }),
+        )
+        .unwrap();
+    // The TUI reported its tabs once, then closed; its pid is gone.
+    store
+        .update(
+            "opencode",
+            serde_json::json!({
+                "id":"999999",
+                "pid":999999,
+                "cwd":"/work",
+                "status":{},
+                "front":"a",
+                "tabs":["a","b"]
+            }),
+        )
+        .unwrap();
+    assert!(store.listed().is_empty());
+    // A headless run never hosted as a tab still shows until it goes stale.
+    store
+        .update(
+            "opencode",
+            serde_json::json!({
+                "id":"200:server",
+                "pid":200,
+                "cwd":"/other",
+                "status":{"h":"idle"}
+            }),
+        )
+        .unwrap();
+    let listed = store.listed();
+    let ids: Vec<&str> = listed.iter().map(|s| s.session_id.as_str()).collect();
+    assert_eq!(ids, ["h"]);
+}
+
+#[test]
+fn host_attribution_prefers_the_pane_showing_the_session_in_front() {
+    let session = |sid: &str| {
+        let mut session = plugin_session(sid);
+        attribute_host(
+            &mut session,
+            &[
+                SessionHost {
+                    provider: "opencode".into(),
+                    pid: 10,
+                    front: Some("a".into()),
+                    tabs: ["a".into(), "b".into()].into_iter().collect(),
+                    last_report_ms: 5,
+                },
+                SessionHost {
+                    provider: "opencode".into(),
+                    pid: 20,
+                    front: Some("b".into()),
+                    tabs: ["a".into(), "b".into()].into_iter().collect(),
+                    last_report_ms: 6,
+                },
+            ],
+        );
+        session
+    };
+    let a = session("a");
+    assert_eq!(a.pane_pid, Some(10));
+    assert!(a.front);
+    let b = session("b");
+    assert_eq!(b.pane_pid, Some(20));
+    assert!(b.front);
+
+    // A session background in every host attaches to the most recent one
+    // without claiming its content.
+    let mut c = plugin_session("c");
+    attribute_host(
+        &mut c,
+        &[
+            SessionHost {
+                provider: "opencode".into(),
+                pid: 10,
+                front: Some("a".into()),
+                tabs: ["a".into(), "c".into()].into_iter().collect(),
+                last_report_ms: 5,
+            },
+            SessionHost {
+                provider: "opencode".into(),
+                pid: 20,
+                front: Some("a".into()),
+                tabs: ["a".into(), "c".into()].into_iter().collect(),
+                last_report_ms: 6,
+            },
+        ],
+    );
+    assert_eq!(c.pane_pid, Some(20));
+    assert!(!c.front);
+
+    // Hosts for other providers or unknown sessions do not attribute.
+    let mut d = plugin_session("d");
+    attribute_host(
+        &mut d,
+        &[SessionHost {
+            provider: "pi".into(),
+            pid: 30,
+            front: Some("d".into()),
+            tabs: ["d".into()].into_iter().collect(),
+            last_report_ms: 5,
+        }],
+    );
+    assert_eq!(d.pane_pid, None);
+    assert!(!d.front);
+}
+
+fn plugin_session(sid: &str) -> ListedSession {
+    ListedSession {
+        provider: "opencode".into(),
+        session_id: sid.into(),
+        status: AgentStatus::Idle,
+        source: crate::status::Source::Cli,
+        cwd: Some("/work".into()),
+        cmdline: Vec::new(),
+        pid: Some(100),
+        created_ms: 0,
+        last_report_ms: 0,
+        kind: SessionKind::Plugin,
+        parent_id: None,
+        transcript_path: None,
+        exited: false,
+        title: None,
+        pane_pid: None,
+        front: false,
+    }
+}
+
+#[test]
 fn plugin_blocking_is_waiting_and_stale_is_inactive() {
     let mut store = Store::default();
     store

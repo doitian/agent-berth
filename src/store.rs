@@ -45,6 +45,14 @@ pub struct PluginSnapshot {
     pub created_ms: u64,
     #[serde(default)]
     pub last_report_ms: u64,
+    /// Session shown in front of the reporting process, when the report comes
+    /// from a TUI that hosts sessions as tabs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub front: Option<String>,
+    /// Sessions hosted as tabs by the reporting process. `None` for reporters
+    /// without tabs, such as the OpenCode server plugin.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tabs: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -59,6 +67,11 @@ pub struct Store {
     pub snapshots: BTreeMap<String, BTreeMap<String, PluginSnapshot>>,
     #[serde(default)]
     pub removed: BTreeMap<String, BTreeMap<String, u64>>,
+    /// Sessions that have ever been reported as a hosted tab, per provider.
+    /// Once hosted, a session stays listed only while a live host tabs it or
+    /// it is busy; closing the tab or the host hides it for good.
+    #[serde(default)]
+    pub hosted: BTreeMap<String, BTreeSet<String>>,
 }
 
 impl Default for Store {
@@ -69,6 +82,7 @@ impl Default for Store {
             hooks: BTreeMap::new(),
             snapshots: BTreeMap::new(),
             removed: BTreeMap::new(),
+            hosted: BTreeMap::new(),
         }
     }
 }
@@ -115,6 +129,14 @@ pub struct ListedSession {
     pub title: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transcript_path: Option<String>,
+    /// Process hosting the session's tab, when a plugin reported it. The
+    /// session's own `pid` may be a shared server that never sits in a pane.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pane_pid: Option<u32>,
+    /// The hosting process shows this session in front, so pane content
+    /// previewed for it is the session's own output.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub front: bool,
 }
 
 impl Store {
@@ -213,6 +235,25 @@ impl Store {
             Some(_) => anyhow::bail!("titles must be an object of strings"),
         };
         let pid = u32_field(&payload, &["pid"]).or_else(|| instance.parse().ok());
+        let front = match payload.get("front") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(sid)) => Some(sid.clone()),
+            Some(_) => anyhow::bail!("front must be a string"),
+        };
+        let tabs = match payload.get("tabs") {
+            None | Some(Value::Null) => None,
+            Some(Value::Array(items)) => {
+                let mut out = Vec::new();
+                for item in items {
+                    let sid = item
+                        .as_str()
+                        .ok_or_else(|| anyhow::anyhow!("tabs must be an array of strings"))?;
+                    out.push(sid.to_string());
+                }
+                Some(out)
+            }
+            Some(_) => anyhow::bail!("tabs must be an array of strings"),
+        };
         let created_ms = self
             .snapshots
             .get(provider)
@@ -220,6 +261,7 @@ impl Store {
             .map(|existing| existing.created_ms)
             .filter(|created| *created > 0)
             .unwrap_or_else(now_ms);
+        let hosted_tabs = tabs.clone();
         let snapshot = PluginSnapshot {
             status,
             blocking,
@@ -229,11 +271,17 @@ impl Store {
             pid,
             created_ms,
             last_report_ms: now_ms(),
+            front,
+            tabs,
         };
         self.snapshots
             .entry(provider.to_string())
             .or_default()
             .insert(instance.to_string(), snapshot);
+        if let Some(tabs) = hosted_tabs {
+            let hosted = self.hosted.entry(provider.to_string()).or_default();
+            hosted.extend(tabs);
+        }
         Ok(Change::Snapshot {
             provider: provider.to_string(),
             instance: instance.to_string(),
@@ -271,6 +319,7 @@ impl Store {
 
     pub fn listed(&self) -> Vec<ListedSession> {
         let mut out = Vec::new();
+        let hosts = reporting_hosts(&self.snapshots);
         for (provider, sessions) in &self.hooks {
             for (sid, session) in sessions {
                 let mut cmdline = session.cmdline.clone();
@@ -292,6 +341,8 @@ impl Store {
                     exited: session.exited,
                     title: session.title.clone(),
                     transcript_path: session.transcript_path.clone(),
+                    pane_pid: None,
+                    front: false,
                 });
             }
         }
@@ -326,18 +377,23 @@ impl Store {
                         exited: false,
                         title: snapshot.titles.get(sid).cloned(),
                         transcript_path: None,
+                        pane_pid: None,
+                        front: false,
                     });
                 }
             }
         }
         out.retain(|session| !self.is_removed(&session.provider, &session.session_id));
         let mut best: BTreeMap<(String, String, SessionKind), ListedSession> = BTreeMap::new();
-        for session in out {
+        for mut session in out {
             let key = (
                 session.provider.clone(),
                 session.session_id.clone(),
                 session.kind,
             );
+            if session.kind == SessionKind::Plugin {
+                attribute_host(&mut session, &hosts);
+            }
             match best.get(&key) {
                 Some(existing) if existing.last_report_ms >= session.last_report_ms => {}
                 _ => {
@@ -346,6 +402,26 @@ impl Store {
             }
         }
         let mut out: Vec<ListedSession> = best.into_values().collect();
+        // Closed tabs emit no session events; the hosting TUI's tab list is
+        // the only removal signal. An idle session outside every live host's
+        // tabs is a closed tab (or a finished headless run), so hide it once
+        // hosting has marked it or while any live host reports for the
+        // provider. Busy sessions keep running in the server even after
+        // their tab closes.
+        out.retain(|session| {
+            if session.kind != SessionKind::Plugin
+                || session.status.is_busy()
+                || session.pane_pid.is_some()
+            {
+                return true;
+            }
+            let hosted_ever = self
+                .hosted
+                .get(&session.provider)
+                .is_some_and(|set| set.contains(&session.session_id));
+            let hosts_report = hosts.iter().any(|host| host.provider == session.provider);
+            !(hosted_ever || hosts_report)
+        });
         out.sort_by(|a, b| (&a.provider, &a.session_id).cmp(&(&b.provider, &b.session_id)));
         out
     }
@@ -421,8 +497,69 @@ impl Store {
             changed |= bucket.len() != before;
         }
         self.removed.retain(|_, bucket| !bucket.is_empty());
+
+        for (provider, set) in self.hosted.iter_mut() {
+            let before = set.len();
+            set.retain(|sid| live.contains(&(provider.clone(), sid.clone())));
+            changed |= set.len() != before;
+        }
+        self.hosted.retain(|_, set| !set.is_empty());
         changed
     }
+}
+
+/// A live process that hosts plugin sessions as tabs, such as an OpenCode 2
+/// TUI reporting through its CLI plugin part.
+struct SessionHost {
+    provider: String,
+    pid: u32,
+    front: Option<String>,
+    tabs: BTreeSet<String>,
+    last_report_ms: u64,
+}
+
+fn reporting_hosts(
+    snapshots: &BTreeMap<String, BTreeMap<String, PluginSnapshot>>,
+) -> Vec<SessionHost> {
+    snapshots
+        .iter()
+        .flat_map(|(provider, instances)| {
+            instances.values().map(move |snapshot| (provider, snapshot))
+        })
+        .filter_map(|(provider, snapshot)| {
+            let tabs = snapshot.tabs.as_ref()?;
+            let pid = snapshot.pid?;
+            if !pid_alive(pid) {
+                return None;
+            }
+            Some(SessionHost {
+                provider: provider.clone(),
+                pid,
+                front: snapshot.front.clone(),
+                tabs: tabs.iter().cloned().collect(),
+                last_report_ms: snapshot.last_report_ms,
+            })
+        })
+        .collect()
+}
+
+/// Attach pane attribution from the hosting processes: the session's pane is
+/// the one running a host that tabs it, preferring a host showing it in front.
+fn attribute_host(session: &mut ListedSession, hosts: &[SessionHost]) {
+    let mut candidates: Vec<&SessionHost> = hosts
+        .iter()
+        .filter(|host| host.provider == session.provider && host.tabs.contains(&session.session_id))
+        .collect();
+    candidates.sort_by_key(|host| std::cmp::Reverse(host.last_report_ms));
+    let Some(host) = candidates
+        .iter()
+        .find(|host| host.front.as_deref() == Some(session.session_id.as_str()))
+        .or_else(|| candidates.first())
+    else {
+        return;
+    };
+    session.pane_pid = Some(host.pid);
+    session.front = host.front.as_deref() == Some(session.session_id.as_str());
 }
 
 impl ListedSession {

@@ -18,6 +18,8 @@ fn listed(cwd: Option<&str>, title: Option<&str>) -> ListedSession {
         transcript_path: None,
         exited: false,
         title: title.map(str::to_string),
+        pane_pid: None,
+        front: false,
     }
 }
 
@@ -83,6 +85,29 @@ fn pane_matches_by_pid_in_ancestor_chain() {
     let panes = [pane("%1", 10, "/a"), pane("%2", 20, "/b")];
     assert_eq!(pane_for_pid(&panes, &[99, 20, 5]).unwrap().id, "%2");
     assert!(pane_for_pid(&panes, &[99, 98]).is_none());
+}
+
+#[test]
+fn same_path_folds_separators_and_trailing_slashes() {
+    assert!(same_path("C:\\work\\proj", "C:/work/proj"));
+    assert!(same_path("/work/proj", "/work/proj/"));
+    assert!(!same_path("C:\\work\\proj", "C:\\work\\other"));
+}
+
+#[cfg(windows)]
+#[test]
+fn same_path_folds_case_on_windows() {
+    assert!(same_path("C:\\Work\\Proj", "c:/work/PROJ"));
+}
+
+#[test]
+fn client_binary_uses_the_cmdline_executable_name() {
+    let mut session = listed(None, None);
+    assert_eq!(client_binary(&session), None);
+    session.cmdline = vec!["opencode".into(), "--session".into(), "x".into()];
+    assert_eq!(client_binary(&session).as_deref(), Some("opencode"));
+    session.cmdline = vec!["C:\\tools\\opencode.exe".into()];
+    assert_eq!(client_binary(&session).as_deref(), Some("opencode.exe"));
 }
 
 #[test]
