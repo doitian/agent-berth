@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented in this file.
 
+## [3.0.1](https://github.com/doitian/agent-berth/releases/tag/v3.0.1) - 2026-09-26
+
+### Changed
+
+- Rename list age column to ago ([0df869d](https://github.com/doitian/agent-berth/commit/0df869d6012e66873a22b43c39d39d58a06fed33))
+
+### Fixed
+
+- Fix: stop live transcript preview flashing loading on refresh ([1cc8b0d](https://github.com/doitian/agent-berth/commit/1cc8b0dce8debd72b94abd60533e8b7cd59167ad))
 ## [3.0.0](https://github.com/doitian/agent-berth/releases/tag/v3.0.0) - 2026-09-26
 
 ### Added
