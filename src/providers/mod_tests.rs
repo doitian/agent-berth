@@ -169,6 +169,7 @@ fn install_and_uninstall_are_idempotent() {
         fs::read_to_string(ctx.claude_config_dir.join("settings.json")).unwrap_or_default();
     assert!(!claude.contains("notify --provider claude"));
     assert!(!ctx.opencode_plugin_dir().join("agent-berth.js").exists());
+    assert!(!ctx.opencode_plugin_dir().join("agent-berth-v2.js").exists());
     assert!(
         !ctx.pi_dir
             .join("extensions")

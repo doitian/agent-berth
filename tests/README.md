@@ -105,7 +105,16 @@ hooks and plugin heartbeats flush before the client exits.
 
 opencode downloads the `@ai-sdk/openai-compatible` package into the sandbox's
 fresh cache on every run, so it needs network access and can take over a
-minute; the client deadline is four minutes.
+minute; the client deadline is four minutes. OpenCode 2 runs with
+`--standalone` so its managed background-service port cannot collide with a
+service already running on the machine.
+
+The OpenCode 2 plugin is a package with two entry points: the server-side
+reporter loaded by the opencode server, and a TUI part (`./tui` export)
+loaded by each TUI process. The mock test covers the server reporter, which
+`opencode run` exercises headlessly; the TUI part heartbeats the hosting
+process pid, its open tabs, and the front tab, so agent-berth can resolve
+tmux panes for tabbed sessions and preview only the front tab's content.
 
 Codex ignores `async` hooks in `exec` mode, so agent-berth installs its codex
 hooks synchronously. On Windows, claude runs hooks through bash and codex
@@ -141,9 +150,10 @@ remove inherited `TMUX` state before launching children.
 ## GitHub Actions
 
 `.github/workflows/tests.yml` runs formatting, the default suite, and the real
-tmux test on Windows and Linux for branch pushes and pull requests. It is also
-callable from the publishing workflow. A second job runs the mock LLM client
-test in a matrix over all five clients on Windows and Linux, installing the
-clients with npm (grok from `x.ai/cli`) and never touching a paid API. Failed
-runs upload their retained temporary directories as artifacts. Live client/model
-tests are never selected in CI.
+tmux test on Linux, macOS, and Windows for branch pushes and pull requests. It
+is also callable from the publishing workflow. A second job runs the mock LLM
+client test in a matrix over all five clients — opencode with both the v1
+(`opencode-ai`) and v2 (`@opencode/cli`) packages — installing the clients with
+npm (grok from `x.ai/cli`) and never touching a paid API. Failed runs upload
+their retained temporary directories as artifacts. Live client/model tests are
+never selected in CI.

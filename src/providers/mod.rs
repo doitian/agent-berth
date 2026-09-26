@@ -11,7 +11,7 @@ use crate::status::AgentSession;
 mod claude;
 mod codex;
 mod grok;
-mod opencode;
+pub(crate) mod opencode;
 mod pi;
 
 pub(crate) fn focus_desktop(ctx: &AppContext, provider: &str, session_id: &str) -> Result<()> {
@@ -104,7 +104,7 @@ impl ProviderKind {
             Self::Claude => ctx.claude_config_dir.join("settings.json"),
             Self::Codex => ctx.codex_home.join("hooks.json"),
             Self::Grok => ctx.grok_home.join("hooks").join("agent-berth.json"),
-            Self::Opencode => ctx.opencode_plugin_dir().join("agent-berth.js"),
+            Self::Opencode => opencode::hook_path(ctx),
             Self::Pi => ctx.pi_dir.join("extensions").join("agent-berth.ts"),
         }
     }

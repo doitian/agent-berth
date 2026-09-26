@@ -90,11 +90,11 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-24.04, macos-15, windows-2025]
-        client: [claude, codex, grok, opencode, pi]
+        client: [claude, codex, grok, opencode, opencode2, pi]
     env:
       CARGO_TERM_COLOR: always
       RUST_BACKTRACE: '1'
-      AGENT_BERTH_TEST_CLIENT: ${{ matrix.client }}
+      AGENT_BERTH_TEST_CLIENT: ${{ matrix.client == 'opencode2' && 'opencode' || matrix.client }}
     steps:
       - name: Configure test temporary directory
         run: |
@@ -105,8 +105,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: jdx/mr-boxington-action@v1
       - name: Install client
+        env:
+          MATRIX_CLIENT: ${{ matrix.client }}
         run: |
-          switch ($env:AGENT_BERTH_TEST_CLIENT) {
+          switch ($env:MATRIX_CLIENT) {
             'grok' {
               $version = (Invoke-RestMethod https://x.ai/cli/stable).Trim()
               $arch = $env:RUNNER_ARCH -eq 'ARM64' ? 'aarch64' : 'x86_64'
@@ -123,8 +125,9 @@ jobs:
                 claude = '@anthropic-ai/claude-code'
                 codex = '@openai/codex'
                 opencode = 'opencode-ai'
+                opencode2 = '@opencode/cli'
                 pi = '@earendil-works/pi-coding-agent'
-              }[$env:AGENT_BERTH_TEST_CLIENT]
+              }[$env:MATRIX_CLIENT]
               npm install -g $package
               if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
               $prefix = npm prefix -g

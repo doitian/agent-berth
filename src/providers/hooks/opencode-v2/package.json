@@ -1,0 +1,8 @@
+{
+  "name": "agent-berth-v2",
+  "type": "module",
+  "exports": {
+    ".": "./index.js",
+    "./tui": "./tui.js"
+  }
+}

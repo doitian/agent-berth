@@ -30,6 +30,22 @@ fn client_executable(name: &str, path: &OsStr) -> Option<PathBuf> {
     })
 }
 
+/// Drop the sandbox's fake client binary and search the real PATH after it,
+/// so setup can read `opencode --version` from the installed client.
+fn reveal_real_client(sandbox: &mut Sandbox, provider: &str, original_path: &OsStr) {
+    let fixture = sandbox
+        .root
+        .path()
+        .join("bin")
+        .join(format!("{provider}{}", std::env::consts::EXE_SUFFIX));
+    let _ = fs::remove_file(fixture);
+    let mut paths = vec![sandbox.root.path().join("bin")];
+    paths.extend(std::env::split_paths(original_path));
+    sandbox
+        .env
+        .insert("PATH".into(), std::env::join_paths(paths).unwrap());
+}
+
 fn client_command(sandbox: &Sandbox, executable: &Path) -> std::process::Command {
     #[cfg(windows)]
     if executable
@@ -1016,41 +1032,59 @@ fn real_tmux_attach_resolves_agent_pane() {
 }
 
 fn install_recorder(sandbox: &mut Sandbox, provider: &str) -> PathBuf {
-    let hook_path = match provider {
-        "claude" => "claude/settings.json",
-        "codex" => "codex/hooks.json",
-        "grok" => "grok/hooks/agent-berth.json",
-        "opencode" => "config/opencode/plugins/agent-berth.js",
-        "pi" => "pi/extensions/agent-berth.ts",
+    let hook_paths = match provider {
+        "claude" => vec!["claude/settings.json".to_string()],
+        "codex" => vec!["codex/hooks.json".to_string()],
+        "grok" => vec!["grok/hooks/agent-berth.json".to_string()],
+        "opencode" => {
+            let v2 = "config/opencode/plugins/agent-berth-v2/index.js";
+            if sandbox.root.path().join(v2).is_file() {
+                vec![
+                    v2.to_string(),
+                    "config/opencode/plugins/agent-berth-v2/tui.js".to_string(),
+                ]
+            } else {
+                vec!["config/opencode/plugins/agent-berth.js".to_string()]
+            }
+        }
+        "pi" => vec!["pi/extensions/agent-berth.ts".to_string()],
         _ => unreachable!(),
     };
+
     let recorder = sandbox
         .root
         .path()
         .join("bin")
         .join(format!("hook-recorder{}", std::env::consts::EXE_SUFFIX));
-    let hook_path = sandbox.root.path().join(hook_path);
-    let contents = fs::read_to_string(&hook_path).unwrap();
     let binary = support::berth_bin().display().to_string();
     let recorder_str = recorder.display().to_string();
-    let mut replaced = None;
-    for (from, to) in [
-        (binary.clone(), recorder_str.clone()),
-        (
-            binary.replace('\\', "\\\\"),
-            recorder_str.replace('\\', "\\\\"),
-        ),
-        (binary.replace('\\', "/"), recorder_str.replace('\\', "/")),
-    ] {
-        if contents.contains(&from) {
-            replaced = Some(contents.replace(&from, &to));
-            break;
+    let mut replaced_any = false;
+    for relative in hook_paths {
+        let hook_path = sandbox.root.path().join(relative);
+        let Ok(contents) = fs::read_to_string(&hook_path) else {
+            continue;
+        };
+        let mut replaced = None;
+        for (from, to) in [
+            (binary.clone(), recorder_str.clone()),
+            (
+                binary.replace('\\', "\\\\"),
+                recorder_str.replace('\\', "\\\\"),
+            ),
+            (binary.replace('\\', "/"), recorder_str.replace('\\', "/")),
+        ] {
+            if contents.contains(&from) {
+                replaced = Some(contents.replace(&from, &to));
+                break;
+            }
         }
+        let Some(contents) = replaced else {
+            continue;
+        };
+        fs::write(hook_path, contents).unwrap();
+        replaced_any = true;
     }
-    let Some(contents) = replaced else {
-        panic!("recorder was not installed")
-    };
-    fs::write(hook_path, contents).unwrap();
+    assert!(replaced_any, "recorder was not installed");
     sandbox
         .env
         .insert("FIXTURE_BERTH_BIN".into(), support::berth_bin().into());
@@ -1099,6 +1133,18 @@ fn recording_hook_forwards_payload_and_observes_session() {
 
 const TEST_PROMPT: &str = "Reply with exactly OK. Do not use tools.";
 
+/// OpenCode 2 talks to a managed background service on a fixed port, which
+/// collides with any other opencode 2 service on the machine. --standalone
+/// gives the sandboxed run a private server instead.
+fn opencode_standalone(sandbox: &Sandbox, provider: &str) -> bool {
+    provider == "opencode"
+        && sandbox
+            .root
+            .path()
+            .join("config/opencode/plugins/agent-berth-v2/index.js")
+            .is_file()
+}
+
 fn headless_args(provider: &str, prompt: &str) -> Vec<String> {
     match provider {
         "claude" => vec![
@@ -1146,21 +1192,11 @@ fn live_client_emits_hooks_and_reaches_berth() {
     let executable =
         client_executable(&provider, &original_path).expect("selected client must be installed");
     let mut sandbox = Sandbox::new();
+    // Version detection has to see the real client. The sandbox fixture
+    // shadows `opencode` and does not print a version.
+    reveal_real_client(&mut sandbox, &provider, &original_path);
     success(sandbox.berth().args(["setup", "--no-service"]));
     install_recorder(&mut sandbox, &provider);
-    fs::remove_file(
-        sandbox
-            .root
-            .path()
-            .join("bin")
-            .join(format!("{provider}{}", std::env::consts::EXE_SUFFIX)),
-    )
-    .unwrap();
-    let mut paths = vec![sandbox.root.path().join("bin")];
-    paths.extend(std::env::split_paths(&original_path));
-    sandbox
-        .env
-        .insert("PATH".into(), std::env::join_paths(paths).unwrap());
     sandbox.start();
 
     let mut command = client_command(&sandbox, &executable);
@@ -1178,6 +1214,9 @@ fn live_client_emits_hooks_and_reaches_berth() {
     command.args(headless_args(&provider, TEST_PROMPT));
     if let Ok(model) = std::env::var("AGENT_BERTH_TEST_MODEL") {
         command.args(["--model", &model]);
+    }
+    if opencode_standalone(&sandbox, &provider) {
+        command.arg("--standalone");
     }
     let stdout = fs::File::create(sandbox.root.path().join("client.stdout")).unwrap();
     let stderr = fs::File::create(sandbox.root.path().join("client.stderr")).unwrap();
@@ -1329,21 +1368,9 @@ fn mock_llm_client_completes_and_reports_terminal_state() {
     let executable =
         client_executable(&provider, &original_path).expect("selected client must be installed");
     let mut sandbox = Sandbox::new();
+    reveal_real_client(&mut sandbox, &provider, &original_path);
     success(sandbox.berth().args(["setup", "--no-service"]));
     install_recorder(&mut sandbox, &provider);
-    fs::remove_file(
-        sandbox
-            .root
-            .path()
-            .join("bin")
-            .join(format!("{provider}{}", std::env::consts::EXE_SUFFIX)),
-    )
-    .unwrap();
-    let mut paths = vec![sandbox.root.path().join("bin")];
-    paths.extend(std::env::split_paths(&original_path));
-    sandbox
-        .env
-        .insert("PATH".into(), std::env::join_paths(paths).unwrap());
     let plugin = matches!(provider.as_str(), "opencode" | "pi");
     // Keep the conversation open briefly so async hooks and plugin heartbeats
     // flush before the client exits.
@@ -1357,6 +1384,9 @@ fn mock_llm_client_completes_and_reports_terminal_state() {
 
     let mut command = client_command(&sandbox, &executable);
     command.args(headless_args(&provider, TEST_PROMPT));
+    if opencode_standalone(&sandbox, &provider) {
+        command.arg("--standalone");
+    }
     match provider.as_str() {
         "claude" => {
             // --debug keeps hook execution logs in the retained artifacts.

@@ -5,6 +5,7 @@ use anyhow::Result;
 use crate::db;
 use crate::paths::Context;
 use crate::providers::ProviderKind;
+use crate::providers::opencode;
 use crate::service;
 use crate::tmux;
 
@@ -197,6 +198,18 @@ fn provider_check(ctx: &Context, provider: ProviderKind) -> Check {
         };
     }
     if !provider.hooks_installed(ctx) {
+        let mismatch = if matches!(provider, ProviderKind::Opencode) {
+            opencode::version_mismatch(ctx)
+        } else {
+            None
+        };
+        if let Some(detail) = mismatch {
+            return Check {
+                level: Level::Error,
+                name,
+                detail: format!("{detail} (run: agent-berth setup --no-service)"),
+            };
+        }
         return Check {
             level: Level::Error,
             name,
