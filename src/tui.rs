@@ -544,8 +544,11 @@ impl App {
         let transcript = self
             .selected_session()
             .filter(|session| {
-                session.source == Source::Desktop
-                    && matches!(session.provider.as_str(), "claude" | "codex")
+                transcript::supports(&session.provider)
+                    // Desktop sessions never show pane output; CLI sessions
+                    // fall back to the transcript when no pane displays their
+                    // own output (no pane, or only a background tab).
+                    && (session.source == Source::Desktop || !self.pane_shows_session)
             })
             .map(|session| transcript::Source {
                 provider: session.provider.clone(),
@@ -1414,10 +1417,15 @@ fn branch_spans(branch: &str, status: Option<&git::RepoStatus>) -> Vec<Span<'sta
 }
 
 fn render_preview(frame: &mut Frame, app: &App, area: Rect) {
-    let title = match &app.selected_pane {
-        Some(pane) => format!(" {}:{} ({}) ", pane.session, pane.window_name, pane.id),
-        None if app.selected_transcript.is_some() => " Conversation · live transcript ".into(),
-        None => " Preview ".into(),
+    // A selected transcript always provides the content, even when the
+    // session's pane exists but only hosts it as a background tab.
+    let title = if app.selected_transcript.is_some() {
+        " Conversation · live transcript ".into()
+    } else {
+        match &app.selected_pane {
+            Some(pane) => format!(" {}:{} ({}) ", pane.session, pane.window_name, pane.id),
+            None => " Preview ".into(),
+        }
     };
     let block = Block::bordered().title(title);
     let inner = block.inner(area);

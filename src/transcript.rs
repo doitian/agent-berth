@@ -1,4 +1,4 @@
-//! Bounded, incremental readers for local desktop conversation logs.
+//! Bounded, incremental readers for local agent conversation logs.
 use std::collections::VecDeque;
 use std::fs::{File, Metadata};
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -19,6 +19,11 @@ pub(crate) struct Source {
     pub session_id: String,
     pub path: Option<String>,
     pub root: Option<PathBuf>,
+}
+
+/// Whether `Reader` can parse and locate this provider's conversation logs.
+pub(crate) fn supports(provider: &str) -> bool {
+    matches!(provider, "claude" | "codex")
 }
 
 #[derive(Default)]

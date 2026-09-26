@@ -89,14 +89,17 @@ used one outside tmux — and attached. The left column lists sessions with the 
 right column shows session details, plus a live tmux pane preview when the
 selected session runs in tmux. Local Claude Code sessions in Claude Desktop
 and Codex desktop sessions show a live conversation preview instead, with
-user messages, assistant responses, and concise tool activity.
+user messages, assistant responses, and concise tool activity. CLI sessions
+fall back to the same conversation preview when no front tmux pane shows
+their output — no pane at all, or the pane hosts the session only as a
+background tab — if the provider supports transcripts (Claude and Codex).
 
-Desktop previews follow the transcript path reported by agent hooks. For
+Conversation previews follow the transcript path reported by agent hooks. For
 already-running sessions, agent-berth also looks for a matching session file
 under `CLAUDE_CONFIG_DIR/projects` or `CODEX_HOME/sessions` (using the default
 provider directories when these variables are unset). If no transcript can
 be located, the preview waits for a hook to provide its path. Run `setup` to
-install hooks, then send a prompt in the desktop session.
+install hooks, then send a prompt in the session.
 
 Previews refresh about once a second as transcript records reach disk;
 they do not stream individual tokens. Switching back to a session shows its

@@ -1268,6 +1268,78 @@ fn desktop_without_path_shows_unavailable_state_and_accepts_later_hook() {
     assert!(app.preview_pending_since.is_some());
 }
 
+fn cli_app(provider: &str) -> App {
+    let mut app = App::new();
+    let mut session = listed(provider, "one", None);
+    session.transcript_path = Some("/logs/one.jsonl".into());
+    app.sessions = vec![session];
+    app.update_selection();
+    app
+}
+
+#[test]
+fn cli_without_front_pane_previews_conversation_when_supported() {
+    for provider in ["claude", "codex"] {
+        let mut app = cli_app(provider);
+        assert!(app.selected_transcript.is_some(), "{provider}");
+        assert!(app.has_preview(), "{provider}");
+        let result = transcript_completion(&mut app, "Assistant: hi");
+        app.handle_fetched(result);
+        assert_eq!(app.preview.as_deref(), Some("Assistant: hi"), "{provider}");
+    }
+}
+
+#[test]
+fn cli_without_front_pane_needs_provider_transcript_support() {
+    let mut app = cli_app("opencode");
+    assert!(app.selected_transcript.is_none());
+    assert!(!app.has_preview());
+    assert!(app.preview.is_none());
+    assert!(app.next_preview_fetch(Instant::now() + REFRESH).is_none());
+}
+
+#[test]
+fn background_tab_cli_session_previews_conversation_over_pane_screen() {
+    let mut app = cli_app("claude");
+    // The session is also hosted as a background tab of a pane: the pane stays
+    // known for attach, but the conversation provides the preview content.
+    app.select_preview(Some(preview_pane("%1")));
+    assert!(!app.pane_shows_session);
+    let result = transcript_completion(&mut app, "Assistant: hi");
+    app.handle_fetched(result);
+    assert_eq!(app.preview.as_deref(), Some("Assistant: hi"));
+    assert!(matches!(app.attach_selected(), Effect::Attach(pane) if pane.id == "%1"));
+
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(60, 5)).unwrap();
+    terminal
+        .draw(|frame| render_preview(frame, &app, frame.area()))
+        .unwrap();
+    let buffer = terminal.backend().buffer();
+    let title: String = (0..60).map(|x| buffer[(x, 0)].symbol()).collect();
+    assert!(title.contains("Conversation"), "{title}");
+}
+
+#[test]
+fn cli_front_pane_keeps_pane_preview_over_conversation() {
+    let mut app = cli_app("claude");
+    // The session's own process runs in the pane: live pane output wins and
+    // the transcript stays unused.
+    let me = std::process::id();
+    app.sessions[0].pid = Some(me);
+    app.panes = vec![Pane {
+        pid: me,
+        ..preview_pane("%1")
+    }];
+    app.update_selection();
+    assert!(app.pane_shows_session);
+    assert!(app.selected_transcript.is_none());
+    assert!(app.has_preview());
+    let request = start_preview(&mut app);
+    assert_eq!(request.0, "%1");
+    finish_preview(&mut app, request, Some("pane screen"));
+    assert_eq!(app.preview.as_deref(), Some("pane screen"));
+}
+
 #[test]
 fn logos_cover_known_providers() {
     for provider in ["claude", "codex", "grok", "opencode", "pi"] {

@@ -241,3 +241,12 @@ fn unavailable_and_read_errors_are_distinct_and_recoverable() {
     source.path = Some(dir.path().join("missing").to_string_lossy().into_owned());
     assert!(reader.preview(&source).contains("file is missing"));
 }
+
+#[test]
+fn supports_covers_exactly_the_parseable_providers() {
+    assert!(supports("claude"));
+    assert!(supports("codex"));
+    for provider in ["grok", "opencode", "pi", "unknown"] {
+        assert!(!supports(provider), "{provider}");
+    }
+}
