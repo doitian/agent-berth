@@ -92,12 +92,14 @@ and Codex desktop sessions show a live conversation preview instead, with
 user messages, assistant responses, and concise tool activity. CLI sessions
 fall back to the same conversation preview when no front tmux pane shows
 their output — no pane at all, or the pane hosts the session only as a
-background tab — if the provider supports transcripts (Claude and Codex).
+background tab — if the provider supports transcripts (Claude, Codex, and
+Pi).
 
 Conversation previews follow the transcript path reported by agent hooks. For
 already-running sessions, agent-berth also looks for a matching session file
-under `CLAUDE_CONFIG_DIR/projects` or `CODEX_HOME/sessions` (using the default
-provider directories when these variables are unset). If no transcript can
+under `CLAUDE_CONFIG_DIR/projects`, `CODEX_HOME/sessions`, or
+`PI_CODING_AGENT_DIR/sessions` (using the default provider directories when
+these variables are unset). If no transcript can
 be located, the preview waits for a hook to provide its path. Run `setup` to
 install hooks, then send a prompt in the session.
 

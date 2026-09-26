@@ -23,7 +23,7 @@ pub(crate) struct Source {
 
 /// Whether `Reader` can parse and locate this provider's conversation logs.
 pub(crate) fn supports(provider: &str) -> bool {
-    matches!(provider, "claude" | "codex")
+    matches!(provider, "claude" | "codex" | "pi")
 }
 
 #[derive(Default)]
@@ -225,6 +225,7 @@ fn locate(source: &Source) -> Option<PathBuf> {
                     "codex" => {
                         name.starts_with("rollout-") && name.ends_with(&format!("-{id}.jsonl"))
                     }
+                    "pi" => name.ends_with(&format!("_{id}.jsonl")),
                     _ => false,
                 };
                 if matches && belongs_to(&entry.path(), source) {
@@ -259,6 +260,9 @@ fn belongs_to(path: &Path, source: &Source) -> bool {
                         .as_str()
                         .or_else(|| row["payload"]["session_id"].as_str())
                         == Some(source.session_id.as_str())
+            }
+            "pi" => {
+                row["type"] == "session" && row["id"].as_str() == Some(source.session_id.as_str())
             }
             _ => false,
         })
@@ -298,6 +302,15 @@ fn parse(provider: &str, row: &Value) -> Option<String> {
                 _ => return None,
             }
         }
+        "pi" if row["type"] == "message" => {
+            let message = &row["message"];
+            let role = message["role"].as_str()?;
+            match role {
+                "user" | "assistant" => content(&mut output, role, &message["content"]),
+                "toolResult" => tool_result(&mut output, &message["content"]),
+                _ => return None,
+            }
+        }
         _ => return None,
     }
     (!output.is_empty()).then_some(output)
@@ -316,6 +329,10 @@ fn content(output: &mut String, role: &str, value: &Value) {
                 Some("tool_use") => {
                     append(output, "Tool", block["name"].as_str().unwrap_or("call"));
                     append(output, "Input", &block["input"].to_string());
+                }
+                Some("toolCall") => {
+                    append(output, "Tool", block["name"].as_str().unwrap_or("call"));
+                    append(output, "Input", &block["arguments"].to_string());
                 }
                 Some("tool_result") => tool_result(output, &block["content"]),
                 Some("image" | "input_image") => append(output, label, "[image]"),

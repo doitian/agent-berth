@@ -128,6 +128,49 @@ fn codex_uses_response_items_without_event_mirrors_or_instructions() {
 }
 
 #[test]
+fn parses_pi_message_entries_and_skips_other_roles_and_entries() {
+    assert_eq!(
+        parse(
+            "pi",
+            &json!({"type":"message","id":"a1","parentId":null,
+                "message":{"role":"user","content":"Hello","timestamp":1}})
+        )
+        .as_deref(),
+        Some("You: Hello")
+    );
+    let row = json!({"type":"message","id":"a2","parentId":"a1","message":{
+        "role":"assistant",
+        "content":[
+            {"type":"thinking","thinking":"private reasoning"},
+            {"type":"text","text":"Checking"},
+            {"type":"toolCall","id":"call_1","name":"bash","arguments":{"command":"ls"}}
+        ],
+        "stopReason":"toolUse"
+    }});
+    let output = parse("pi", &row).unwrap();
+    assert!(output.contains("Assistant: Checking"));
+    assert!(output.contains("Tool: bash"));
+    assert!(output.contains("\"command\":\"ls\""));
+    assert!(!output.contains("private reasoning"));
+    let row = json!({"type":"message","id":"a3","parentId":"a2","message":{
+        "role":"toolResult","toolCallId":"call_1","toolName":"bash",
+        "content":[{"type":"text","text":"output"},{"type":"image","data":"base64"}],
+        "isError":false
+    }});
+    assert_eq!(parse("pi", &row).as_deref(), Some("Result: output"));
+    assert!(parse("pi", &json!({"type":"session","version":3,"id":"s"})).is_none());
+    assert!(parse("pi", &json!({"type":"model_change","id":"m","modelId":"m"})).is_none());
+    assert!(
+        parse(
+            "pi",
+            &json!({"type":"message","id":"a4","message":{"role":"system","content":"",
+                "sections":{"preamble":"prompt text"}}})
+        )
+        .is_none()
+    );
+}
+
+#[test]
 fn resets_after_truncate_regrow_and_replacement() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("session.jsonl");
@@ -195,11 +238,11 @@ fn bounds_text_and_removes_terminal_controls() {
 #[test]
 fn discovers_only_transcripts_with_matching_session_identity() {
     let dir = tempfile::tempdir().unwrap();
-    for provider in ["claude", "codex"] {
-        let path = dir.path().join(if provider == "claude" {
-            "s.jsonl"
-        } else {
-            "rollout-date-s.jsonl"
+    for provider in ["claude", "codex", "pi"] {
+        let path = dir.path().join(match provider {
+            "claude" => "s.jsonl",
+            "codex" => "rollout-date-s.jsonl",
+            _ => "2026-09-26T12-00-00_s.jsonl",
         });
         let source = Source {
             provider: provider.into(),
@@ -209,10 +252,10 @@ fn discovers_only_transcripts_with_matching_session_identity() {
         };
         std::fs::write(&path, "{\"sessionId\":\"other\"}\n").unwrap();
         assert!(locate(&source).is_none());
-        let header = if provider == "claude" {
-            json!({"sessionId":"s"})
-        } else {
-            json!({"type":"session_meta","payload":{"id":"s"}})
+        let header = match provider {
+            "claude" => json!({"sessionId":"s"}),
+            "codex" => json!({"type":"session_meta","payload":{"id":"s"}}),
+            _ => json!({"type":"session","version":3,"id":"s"}),
         };
         std::fs::write(&path, format!("{header}\n")).unwrap();
         assert_eq!(locate(&source), Some(path));
@@ -246,7 +289,8 @@ fn unavailable_and_read_errors_are_distinct_and_recoverable() {
 fn supports_covers_exactly_the_parseable_providers() {
     assert!(supports("claude"));
     assert!(supports("codex"));
-    for provider in ["grok", "opencode", "pi", "unknown"] {
+    assert!(supports("pi"));
+    for provider in ["grok", "opencode", "unknown"] {
         assert!(!supports(provider), "{provider}");
     }
 }

@@ -355,6 +355,8 @@ impl App {
             .insert("claude".into(), ctx.claude_config_dir.join("projects"));
         self.transcript_roots
             .insert("codex".into(), ctx.codex_home.join("sessions"));
+        self.transcript_roots
+            .insert("pi".into(), ctx.pi_dir.join("sessions"));
         self.refresh_generation += 1;
         let (resumable, idle) = match self.view {
             View::Active => (false, None),

@@ -1279,7 +1279,7 @@ fn cli_app(provider: &str) -> App {
 
 #[test]
 fn cli_without_front_pane_previews_conversation_when_supported() {
-    for provider in ["claude", "codex"] {
+    for provider in ["claude", "codex", "pi"] {
         let mut app = cli_app(provider);
         assert!(app.selected_transcript.is_some(), "{provider}");
         assert!(app.has_preview(), "{provider}");
