@@ -96,3 +96,31 @@ fn notify_command_includes_provider() {
         "/bin/agent-berth notify --provider claude"
     );
 }
+
+#[test]
+fn find_executable_resolves_launchable_shims() {
+    let dir = tempfile::tempdir().unwrap();
+    if cfg!(windows) {
+        std::fs::write(dir.path().join("probe.cmd"), "").unwrap();
+        assert_eq!(
+            find_executable_in("probe", dir.path().as_os_str()),
+            Some(dir.path().join("probe.cmd"))
+        );
+        // A real executable wins over the shim.
+        std::fs::write(dir.path().join("probe.exe"), "").unwrap();
+        assert_eq!(
+            find_executable_in("probe", dir.path().as_os_str()),
+            Some(dir.path().join("probe.exe"))
+        );
+        // An extensionless file is not launchable through CreateProcess.
+        std::fs::write(dir.path().join("plain"), "").unwrap();
+        assert_eq!(find_executable_in("plain", dir.path().as_os_str()), None);
+    } else {
+        std::fs::write(dir.path().join("probe"), "").unwrap();
+        assert_eq!(
+            find_executable_in("probe", dir.path().as_os_str()),
+            Some(dir.path().join("probe"))
+        );
+    }
+    assert_eq!(find_executable_in("missing", dir.path().as_os_str()), None);
+}

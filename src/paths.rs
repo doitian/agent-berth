@@ -1,4 +1,5 @@
 use std::env;
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result};
@@ -219,6 +220,27 @@ pub fn on_path(name: &str) -> bool {
         exts.iter().any(|ext| {
             let candidate = dir.join(format!("{name}{ext}"));
             candidate.is_file()
+        })
+    })
+}
+
+/// The first file on PATH that `name` can spawn. npm installs `.cmd` shims on
+/// Windows, which `Command::new(name)` cannot resolve because CreateProcess
+/// only appends `.exe`.
+pub fn find_executable(name: &str) -> Option<PathBuf> {
+    find_executable_in(name, &env::var_os("PATH")?)
+}
+
+fn find_executable_in(name: &str, path: &OsStr) -> Option<PathBuf> {
+    let exts: &[&str] = if cfg!(windows) {
+        &[".exe", ".cmd", ".bat", ".com"]
+    } else {
+        &[""]
+    };
+    env::split_paths(path).find_map(|dir| {
+        exts.iter().find_map(|ext| {
+            let candidate = dir.join(format!("{name}{ext}"));
+            candidate.is_file().then_some(candidate)
         })
     })
 }

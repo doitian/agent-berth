@@ -170,7 +170,11 @@ fn detect_opencode_major() -> Option<u32> {
 }
 
 fn opencode_version_output() -> std::io::Result<std::process::Output> {
-    let mut cmd = Command::new("opencode");
+    // npm installs only `opencode.cmd` into its prefix on Windows, which
+    // `Command::new("opencode")` cannot spawn; resolve the launchable file.
+    let program =
+        crate::paths::find_executable("opencode").unwrap_or_else(|| PathBuf::from("opencode"));
+    let mut cmd = Command::new(program);
     cmd.arg("--version")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
