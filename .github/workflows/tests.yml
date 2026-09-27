@@ -46,6 +46,8 @@ jobs:
         run: mbx clippy --locked --all-targets -- -D warnings
       - name: Run unit and integration tests
         run: mbx test --locked --no-fail-fast
+      - name: Run plugin lifecycle tests
+        run: node --test tests/opencode-v2.test.mjs
       - name: Install tmux
         if: runner.os != 'Windows'
         run: |
