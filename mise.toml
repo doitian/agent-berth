@@ -13,6 +13,10 @@ usage = 'arg "[filters]" var=#true'
 description = "Run isolated agent-berth integration tests without model calls"
 run = "cargo test --test integration"
 
+[tasks."test:plugins"]
+description = "Test plugin lifecycle events without agent clients or model calls"
+run = "node --test tests/opencode-v2.test.mjs"
+
 [tasks."test:tmux"]
 description = "Test resume with real tmux/psmux in a disposable namespace"
 run = "cargo test --test integration real_tmux -- --ignored"

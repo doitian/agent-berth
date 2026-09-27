@@ -23,6 +23,14 @@ Coverage includes:
 - Resume pattern selection, `--here` filtering, and `rm` hiding sessions until
   they report again.
 
+## Plugin lifecycle tests
+
+Run `node --test tests/opencode-v2.test.mjs` or `mise run test:plugins`
+with Node.js 18 or newer. These tests execute the OpenCode 2 reporter with
+synthetic events and captured heartbeats, without an agent client or model.
+They cover success, failure, and all interruption reasons for root and child
+sessions while the reporter stays alive. CI runs them alongside the Rust suite.
+
 ## Real tmux / psmux
 
 ```powershell

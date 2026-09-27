@@ -46,7 +46,6 @@ export default {
     function drop(sid) {
       seen.delete(sid)
       running.delete(sid)
-      child.delete(sid)
       names.delete(sid)
       sessionDirs.delete(sid)
       for (const [id, session] of pending) if (session === sid) pending.delete(id)
@@ -122,6 +121,7 @@ export default {
       const props = fields(event)
       const sid = props.sessionID || props.info?.id
       if (type === "session.deleted" && sid) {
+        child.delete(sid)
         drop(sid)
         return
       }
@@ -168,7 +168,11 @@ export default {
       } else if (sid && (type === "session.execution.started" || type === "session.retry.scheduled")) {
         seen.add(sid)
         running.add(sid)
-      } else if (sid && (type === "session.execution.succeeded" || type === "session.execution.failed")) {
+      } else if (sid && (
+        type === "session.execution.succeeded" ||
+        type === "session.execution.failed" ||
+        type === "session.execution.interrupted"
+      )) {
         running.delete(sid)
         if (child.has(sid)) drop(sid)
       } else if (sid && requestID && /permission|question/.test(type) && /asked|updated/.test(type)) {
