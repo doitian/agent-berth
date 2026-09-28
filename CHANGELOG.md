@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [3.0.2](https://github.com/doitian/agent-berth/releases/tag/v3.0.2) - 2026-09-28
+
+### Fixed
+
+- Fix interrupted opencode sessions remaining running (#11) ([783c1d2](https://github.com/doitian/agent-berth/commit/783c1d243bd7099396b0fd8d71941d64b3705e33))
+
 ## [3.0.1](https://github.com/doitian/agent-berth/releases/tag/v3.0.1) - 2026-09-26
 
 ### Changed
@@ -11,6 +17,7 @@ All notable changes to this project are documented in this file.
 ### Fixed
 
 - Fix: stop live transcript preview flashing loading on refresh ([1cc8b0d](https://github.com/doitian/agent-berth/commit/1cc8b0dce8debd72b94abd60533e8b7cd59167ad))
+
 ## [3.0.0](https://github.com/doitian/agent-berth/releases/tag/v3.0.0) - 2026-09-26
 
 ### Added
