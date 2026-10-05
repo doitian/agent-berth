@@ -1101,7 +1101,8 @@ fn paseo_sessions_stream_and_focus_paseo_instead_of_the_terminal() {
             window_name: "daemon".into(),
             path: "/tmp/project".into(),
         }];
-        app.paseo_home = Some(PathBuf::from("/paseo-home"));
+        app.transcript_roots
+            .insert("paseo".into(), PathBuf::from("/paseo-home"));
         app.update_selection();
         assert!(app.selected_pane.is_none());
         assert!(!app.pane_shows_session);

@@ -44,11 +44,12 @@ impl Timeline {
                 payload["seq"].as_u64(),
                 event["turnId"].as_str(),
             );
-        } else if matches!(
-            event["type"].as_str(),
-            Some("turn_failed" | "turn_canceled")
-        ) {
-            let message = event["error"].as_str().unwrap_or("Turn canceled");
+        } else if let Some(fallback) = match event["type"].as_str() {
+            Some("turn_failed") => Some("Turn failed"),
+            Some("turn_canceled") => Some("Turn canceled"),
+            _ => None,
+        } {
+            let message = event["error"].as_str().unwrap_or(fallback);
             self.item(
                 &serde_json::json!({"type":"error", "message":message}),
                 None,
@@ -109,9 +110,7 @@ impl Timeline {
                 .find(|entry| entry.label == label && entry.key == key)
         {
             existing.text = text;
-            return;
-        }
-        if label == "Assistant"
+        } else if label == "Assistant"
             && let Some(existing) = self.entries.back_mut().filter(|entry| {
                 entry.label == label && entry.key == key && entry.turn.as_deref() == turn
             })

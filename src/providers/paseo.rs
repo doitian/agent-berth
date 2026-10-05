@@ -9,7 +9,8 @@ use std::time::{Duration, SystemTime};
 use anyhow::{Result, ensure};
 use serde_json::Value;
 
-use crate::paths::{self, Context};
+use crate::paths::Context;
+use crate::process;
 use crate::status::string_field;
 use crate::store::ListedSession;
 
@@ -21,7 +22,20 @@ mod timeline;
 // the existing provider hooks and snapshots.
 pub fn attribute(ctx: &Context, sessions: &mut [ListedSession]) {
     let mut ids = HashMap::new();
-    collect_ids(&ctx.paseo_home.join("agents"), &mut ids);
+    let cache = RECORDS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut cache = cache
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    // Rebuilding the cache from this walk evicts records deleted since the last one.
+    let mut visited = HashMap::new();
+    collect_ids(
+        &ctx.paseo_home.join("agents"),
+        &cache,
+        &mut visited,
+        &mut ids,
+    );
+    *cache = visited;
+    drop(cache);
     for session in sessions {
         let Some(route) = ids.get(&(session.provider.clone(), session.session_id.clone())) else {
             continue;
@@ -39,10 +53,13 @@ pub fn attribute(ctx: &Context, sessions: &mut [ListedSession]) {
     }
 }
 
+#[derive(Clone)]
 struct Route {
     agent_id: String,
     created_ms: Option<u64>,
 }
+
+type RouteKey = (String, String);
 
 fn parse_timestamp(value: &str) -> Option<u64> {
     let time =
@@ -50,10 +67,15 @@ fn parse_timestamp(value: &str) -> Option<u64> {
     u64::try_from(time.unix_timestamp_nanos() / 1_000_000).ok()
 }
 
-type RecordCache = HashMap<PathBuf, (SystemTime, u64, Option<Value>)>;
+type RecordCache = HashMap<PathBuf, (SystemTime, u64, Option<(RouteKey, Route)>)>;
 static RECORDS: OnceLock<Mutex<RecordCache>> = OnceLock::new();
 
-fn collect_ids(root: &Path, ids: &mut HashMap<(String, String), Route>) {
+fn collect_ids(
+    root: &Path,
+    cache: &RecordCache,
+    visited: &mut RecordCache,
+    ids: &mut HashMap<RouteKey, Route>,
+) {
     let Ok(entries) = std::fs::read_dir(root) else {
         return;
     };
@@ -63,62 +85,54 @@ fn collect_ids(root: &Path, ids: &mut HashMap<(String, String), Route>) {
         };
         let path = entry.path();
         if kind.is_dir() {
-            collect_ids(&path, ids);
+            collect_ids(&path, cache, visited, ids);
             continue;
         }
         if !kind.is_file() || path.extension().is_none_or(|ext| ext != "json") {
             continue;
         }
-        let Some(row) = read_record(&path) else {
+        let Ok(meta) = std::fs::metadata(&path) else {
             continue;
         };
-        if row["internal"] == true
-            || string_field(&row, &["archivedAt"]).is_some()
-            || row["lastStatus"] == "closed"
-        {
-            continue;
-        }
-        let (Some(agent_id), Some(provider), Some(sid)) = (
-            string_field(&row, &["id"]),
-            string_field(&row, &["provider"]),
-            string_field(&row["runtimeInfo"], &["sessionId"])
-                .or_else(|| string_field(&row["persistence"], &["sessionId"])),
-        ) else {
+        let Ok(modified) = meta.modified() else {
             continue;
         };
-        if valid_id(agent_id) {
-            let route = Route {
-                agent_id: agent_id.to_string(),
-                created_ms: row["createdAt"].as_str().and_then(parse_timestamp),
-            };
-            let key = (provider.to_string(), sid.to_string());
-            if ids.get(&key).is_none_or(|old| {
-                (route.created_ms, &route.agent_id) > (old.created_ms, &old.agent_id)
-            }) {
-                ids.insert(key, route);
+        let record = match cache.get(&path) {
+            Some((mtime, len, record)) if *mtime == modified && *len == meta.len() => {
+                record.clone()
             }
+            _ => read_record(&path),
+        };
+        if let Some((key, route)) = &record
+            && ids.get(key).is_none_or(|old| {
+                (route.created_ms, &route.agent_id) > (old.created_ms, &old.agent_id)
+            })
+        {
+            ids.insert(key.clone(), route.clone());
         }
+        visited.insert(path, (modified, meta.len(), record));
     }
 }
 
-fn read_record(path: &Path) -> Option<Value> {
-    let meta = std::fs::metadata(path).ok()?;
-    let modified = meta.modified().ok()?;
-    let cache = RECORDS.get_or_init(|| Mutex::new(HashMap::new()));
-    if let Ok(guard) = cache.lock()
-        && let Some((mtime, len, row)) = guard.get(path)
-        && *mtime == modified
-        && *len == meta.len()
+fn read_record(path: &Path) -> Option<(RouteKey, Route)> {
+    let row: Value = serde_json::from_slice(&std::fs::read(path).ok()?).ok()?;
+    if row["internal"] == true
+        || string_field(&row, &["archivedAt"]).is_some()
+        || row["lastStatus"] == "closed"
     {
-        return row.clone();
+        return None;
     }
-    let row = std::fs::read(path)
-        .ok()
-        .and_then(|bytes| serde_json::from_slice(&bytes).ok());
-    if let Ok(mut guard) = cache.lock() {
-        guard.insert(path.to_path_buf(), (modified, meta.len(), row.clone()));
-    }
-    row
+    let agent_id = string_field(&row, &["id"]).filter(|id| valid_id(id))?;
+    let provider = string_field(&row, &["provider"])?;
+    let sid = string_field(&row["runtimeInfo"], &["sessionId"])
+        .or_else(|| string_field(&row["persistence"], &["sessionId"]))?;
+    Some((
+        (provider.to_string(), sid.to_string()),
+        Route {
+            agent_id: agent_id.to_string(),
+            created_ms: row["createdAt"].as_str().and_then(parse_timestamp),
+        },
+    ))
 }
 
 pub(crate) fn valid_id(id: &str) -> bool {
@@ -172,13 +186,10 @@ pub(crate) struct Stream {
 }
 
 impl Stream {
-    pub fn new(agent_id: &str, home: Option<&Path>) -> Self {
+    pub fn new(agent_id: &str, home: &Path) -> Self {
         let state = Arc::new(Mutex::new(StreamState::default()));
         let cancel = Arc::new(AtomicBool::new(false));
-        let home = home
-            .map(Path::to_path_buf)
-            .or_else(|| paths::env_path("PASEO_HOME"))
-            .unwrap_or_else(|| paths::home_dir().unwrap_or_default().join(".paseo"));
+        let home = home.to_path_buf();
         let agent_id = agent_id.to_string();
         let worker_state = state.clone();
         let worker_cancel = cancel.clone();
@@ -253,22 +264,31 @@ fn follow(
         {
             continue;
         }
-        let replacement = message["type"] == "agent.timeline.replacement";
-        let epoch_changed = payload["epoch"].as_str().is_some_and(|epoch| {
+        let event_epoch = payload["epoch"].as_str();
+        let current_epoch = || {
             state
                 .lock()
                 .ok()
-                .is_some_and(|state| state.timeline.epoch.as_deref() != Some(epoch))
-        });
-        if replacement || epoch_changed {
+                .and_then(|state| state.timeline.epoch.clone())
+        };
+        let mut epoch = current_epoch();
+        if message["type"] == "agent.timeline.replacement"
+            || event_epoch.is_some_and(|event| epoch.as_deref().is_some_and(|epoch| epoch != event))
+        {
             let history = api.history(agent_id, cancel)?;
             if let Ok(mut state) = state.lock() {
                 state.timeline.history(&history);
             }
+            epoch = current_epoch();
         }
+        // Events buffered while fetching history can predate the epoch it returned.
         if message["type"] == "agent_stream"
+            && event_epoch.is_none_or(|event| epoch.as_deref().is_none_or(|epoch| epoch == event))
             && let Ok(mut state) = state.lock()
         {
+            if state.timeline.epoch.is_none() {
+                state.timeline.epoch = event_epoch.map(str::to_string);
+            }
             state.timeline.event(payload);
         }
     }
@@ -277,24 +297,36 @@ fn follow(
 
 pub fn preview(ctx: &Context, agent_id: &str) -> Result<()> {
     ensure!(valid_id(agent_id), "invalid Paseo agent ID");
-    let mut stream = Stream::new(agent_id, Some(&ctx.paseo_home));
+    let mut stream = Stream::new(agent_id, &ctx.paseo_home);
+    // fzf on Windows kills only the preview shell, and a failed write never
+    // reveals that while the agent is idle, so watch the shell instead.
+    let parent = process::ancestors(std::process::id()).get(1).copied();
     let rows = std::env::var("FZF_PREVIEW_LINES")
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
         .unwrap_or(40)
         .clamp(1, 200);
     let mut last = String::new();
-    loop {
+    let mut stdout = std::io::stdout();
+    for tick in 0u64.. {
+        if tick % 10 == 0 && parent.is_some_and(|pid| !process::pid_alive(pid)) {
+            break;
+        }
         let content = stream.preview();
         if content != last {
             let lines: Vec<_> = content.lines().rev().take(rows).collect();
             let content_tail = lines.into_iter().rev().collect::<Vec<_>>().join("\n");
-            print!("\x1b[2J\x1b[H{content_tail}");
-            std::io::stdout().flush()?;
+            if write!(stdout, "\x1b[2J\x1b[H{content_tail}")
+                .and_then(|()| stdout.flush())
+                .is_err()
+            {
+                break;
+            }
             last = content;
         }
         thread::sleep(Duration::from_millis(100));
     }
+    Ok(())
 }
 
 #[cfg(test)]

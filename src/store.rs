@@ -55,8 +55,10 @@ pub struct PluginSnapshot {
     pub tabs: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub paseo_agent_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub paseo_host_changed_ms: Option<u64>,
+    /// When each reported session first appeared under the current host
+    /// identity; a long-lived process can open sessions well after it starts.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub paseo_host_changed_ms: BTreeMap<String, u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -275,14 +277,23 @@ impl Store {
             .filter(|created| *created > 0)
             .unwrap_or_else(now_ms);
         let paseo_agent_id = string_field(&payload, &["paseo_agent_id"]).map(str::to_string);
-        let paseo_host_changed_ms = if payload.get("paseo_agent_id").is_some() {
-            existing
-                .filter(|old| old.paseo_agent_id == paseo_agent_id && old.pid == pid)
-                .and_then(|old| old.paseo_host_changed_ms)
-                .or_else(|| Some(now_ms()))
-        } else {
-            existing.and_then(|old| old.paseo_host_changed_ms)
-        };
+        let reports_host = payload.get("paseo_agent_id").is_some();
+        let kept = existing.filter(|old| {
+            !reports_host || (old.paseo_agent_id == paseo_agent_id && old.pid == pid)
+        });
+        let paseo_host_changed_ms = status
+            .keys()
+            .chain(tabs.iter().flatten())
+            .filter_map(|sid| {
+                let previous = kept.and_then(|old| old.paseo_host_changed_ms.get(sid).copied());
+                let changed = if reports_host {
+                    Some(previous.unwrap_or_else(now_ms))
+                } else {
+                    previous
+                };
+                changed.map(|ms| (sid.clone(), ms))
+            })
+            .collect();
         let hosted_tabs = tabs.clone();
         let snapshot = PluginSnapshot {
             status,
@@ -412,7 +423,7 @@ impl Store {
                         title: snapshot.titles.get(sid).cloned(),
                         transcript_path: None,
                         paseo_agent_id: snapshot.paseo_agent_id.clone(),
-                        paseo_host_changed_ms: snapshot.paseo_host_changed_ms,
+                        paseo_host_changed_ms: snapshot.paseo_host_changed_ms.get(sid).copied(),
                         pane_pid: None,
                         front: false,
                     });
@@ -551,7 +562,7 @@ struct SessionHost {
     provider: String,
     pid: u32,
     paseo_agent_id: Option<String>,
-    paseo_host_changed_ms: Option<u64>,
+    paseo_host_changed_ms: BTreeMap<String, u64>,
     front: Option<String>,
     tabs: BTreeSet<String>,
     last_report_ms: u64,
@@ -575,7 +586,7 @@ fn reporting_hosts(
                 provider: provider.clone(),
                 pid,
                 paseo_agent_id: snapshot.paseo_agent_id.clone(),
-                paseo_host_changed_ms: snapshot.paseo_host_changed_ms,
+                paseo_host_changed_ms: snapshot.paseo_host_changed_ms.clone(),
                 front: snapshot.front.clone(),
                 tabs: tabs.iter().cloned().collect(),
                 last_report_ms: snapshot.last_report_ms,
@@ -601,11 +612,10 @@ fn attribute_host(session: &mut ListedSession, hosts: &[SessionHost]) {
     };
     session.pane_pid = Some(host.pid);
     session.front = host.front.as_deref() == Some(session.session_id.as_str());
-    if host.paseo_host_changed_ms.is_some()
-        && host.paseo_host_changed_ms > session.paseo_host_changed_ms
-    {
+    let changed = host.paseo_host_changed_ms.get(&session.session_id).copied();
+    if changed.is_some() && changed > session.paseo_host_changed_ms {
         session.paseo_agent_id = host.paseo_agent_id.clone();
-        session.paseo_host_changed_ms = host.paseo_host_changed_ms;
+        session.paseo_host_changed_ms = changed;
     }
 }
 

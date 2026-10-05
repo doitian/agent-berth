@@ -107,7 +107,7 @@ fn api_stream_merges_chunks_deduplicates_history_and_closes_on_drop() {
     let root = tempfile::tempdir().unwrap();
     let ctx = context(root.path());
     let mock = MockPaseo::new(&ctx.paseo_home, Options::default());
-    let mut stream = Stream::new("paseo-agent", Some(&ctx.paseo_home));
+    let mut stream = Stream::new("paseo-agent", &ctx.paseo_home);
     wait(|| stream.preview().contains("Hello streamed"));
     let content = stream.preview();
     assert_eq!(content.matches("Hello").count(), 1);
@@ -139,7 +139,7 @@ fn replacement_refetches_history_and_discards_the_previous_epoch() {
             ..Options::default()
         },
     );
-    let mut stream = Stream::new("paseo-agent", Some(&ctx.paseo_home));
+    let mut stream = Stream::new("paseo-agent", &ctx.paseo_home);
     wait(|| stream.preview().contains("replacement history"));
     assert!(!stream.preview().contains("Hello"));
 }
@@ -155,7 +155,7 @@ fn stream_reconnects_and_refreshes_history_with_a_new_client_identity() {
             ..Options::default()
         },
     );
-    let mut stream = Stream::new("paseo-agent", Some(&ctx.paseo_home));
+    let mut stream = Stream::new("paseo-agent", &ctx.paseo_home);
     wait(|| {
         mock.connections.load(Ordering::Relaxed) >= 2 && stream.preview().contains("Hello streamed")
     });
@@ -324,4 +324,31 @@ fn timeline_is_bounded_and_omits_reasoning_and_terminal_controls() {
     assert!(content.len() < 70 * 1024);
     assert!(content.chars().all(|ch| !ch.is_control() || ch == '\n'));
     assert!(!content.contains("hidden reasoning"));
+}
+
+#[test]
+fn growing_tool_updates_stay_within_the_total_limit() {
+    let mut timeline = timeline::Timeline::default();
+    timeline.history(&json!({"epoch":"e", "entries":[]}));
+    for call in 0..48 {
+        timeline.event(&json!({"event":{"type":"timeline", "item":{
+            "type":"tool_call", "callId":format!("call-{call}"), "name":"t"
+        }}}));
+    }
+    for call in 0..48 {
+        timeline.event(&json!({"event":{"type":"timeline", "item":{
+            "type":"tool_call", "callId":format!("call-{call}"), "name":"x".repeat(8192)
+        }}}));
+    }
+    assert!(timeline.render().len() < 70 * 1024);
+}
+
+#[test]
+fn failed_and_canceled_turns_are_labeled_by_their_event() {
+    let mut timeline = timeline::Timeline::default();
+    timeline.event(&json!({"event":{"type":"turn_failed"}}));
+    timeline.event(&json!({"event":{"type":"turn_canceled"}}));
+    let content = timeline.render();
+    assert!(content.contains("Error: Turn failed"));
+    assert!(content.contains("Error: Turn canceled"));
 }

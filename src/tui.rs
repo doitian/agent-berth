@@ -271,7 +271,6 @@ struct App {
     selected_transcript: Option<transcript::Source>,
     transcript_reader: Box<transcript::Reader>,
     transcript_roots: HashMap<String, PathBuf>,
-    paseo_home: Option<PathBuf>,
     preview: Option<String>,
     preview_pending_since: Option<Instant>,
     preview_in_flight: Option<u64>,
@@ -317,7 +316,6 @@ impl App {
             selected_transcript: None,
             transcript_reader: Box::default(),
             transcript_roots: HashMap::new(),
-            paseo_home: None,
             preview: None,
             preview_pending_since: None,
             preview_in_flight: None,
@@ -361,7 +359,8 @@ impl App {
     }
 
     fn refresh(&mut self, ctx: &Context) {
-        self.paseo_home = Some(ctx.paseo_home.clone());
+        self.transcript_roots
+            .insert("paseo".into(), ctx.paseo_home.clone());
         self.transcript_roots
             .insert("claude".into(), ctx.claude_config_dir.join("projects"));
         self.transcript_roots
@@ -560,7 +559,7 @@ impl App {
                     provider: "paseo".into(),
                     session_id: agent_id.clone(),
                     path: None,
-                    root: self.paseo_home.clone(),
+                    root: self.transcript_roots.get("paseo").cloned(),
                 });
             }
             (transcript::supports(&session.provider)

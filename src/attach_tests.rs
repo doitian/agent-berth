@@ -53,7 +53,10 @@ fn line_exposes_title_folder_and_branch() {
     let root = repo("project", "main");
     let project = root.path().join("project");
     let cwd = project.display().to_string();
-    let candidate = Candidate::new(pane("%1", 1, &cwd), listed(Some(&cwd), Some("Fix attach")));
+    let candidate = Candidate::new(
+        Target::Pane(pane("%1", 1, &cwd)),
+        listed(Some(&cwd), Some("Fix attach")),
+    );
     assert_eq!(
         candidate.line(),
         "%1\tclaude\trunning\tFix attach\tproject\tmain\tabc"
@@ -65,7 +68,7 @@ fn line_falls_back_to_pane_path_and_dashes() {
     let root = repo("project", "topic");
     let project = root.path().join("project");
     let cwd = project.display().to_string();
-    let candidate = Candidate::new(pane("%2", 1, &cwd), listed(None, None));
+    let candidate = Candidate::new(Target::Pane(pane("%2", 1, &cwd)), listed(None, None));
     assert_eq!(
         candidate.line(),
         "%2\tclaude\trunning\t-\tproject\ttopic\tabc"
@@ -76,7 +79,10 @@ fn line_falls_back_to_pane_path_and_dashes() {
 fn missing_branch_is_dashed() {
     let root = tempfile::tempdir().unwrap();
     let cwd = root.path().display().to_string();
-    let candidate = Candidate::new(pane("%3", 1, &cwd), listed(Some(&cwd), Some("Task")));
+    let candidate = Candidate::new(
+        Target::Pane(pane("%3", 1, &cwd)),
+        listed(Some(&cwd), Some("Task")),
+    );
     let line = candidate.line();
     let fields: Vec<_> = line.split('\t').collect();
     assert_eq!(fields[5], "-");
@@ -94,7 +100,7 @@ fn paseo_target_uses_paseo_identity_and_never_matches_a_daemon_pane() {
     let mut session = listed(Some("/work"), Some("Paseo task"));
     session.pid = Some(std::process::id());
     session.paseo_agent_id = Some("paseo-agent".into());
-    let candidate = Candidate::paseo("paseo-agent".into(), session.clone());
+    let candidate = Candidate::new(Target::Paseo("paseo-agent".into()), session.clone());
     assert!(
         candidate
             .line()
@@ -104,7 +110,7 @@ fn paseo_target_uses_paseo_identity_and_never_matches_a_daemon_pane() {
     let panes = [pane("%1", std::process::id(), "/work")];
     assert!(resolve_session_pane(&panes, &session, std::process::id()).is_none());
     assert!(
-        fzf_args(None, true)
+        fzf_args(Path::new("agent-berth"), None, true)
             .iter()
             .any(|arg| arg.contains("paseo-preview") && !arg.contains("paseo agent logs"))
     );
@@ -143,7 +149,7 @@ fn client_binary_strips_windows_directories() {
 
 #[test]
 fn fzf_never_auto_selects() {
-    let args = fzf_args(Some("query"), true);
+    let args = fzf_args(Path::new("agent-berth"), Some("query"), true);
     assert!(
         !args.iter().any(|arg| arg == "-1" || arg == "-0"),
         "{args:?}"
@@ -157,18 +163,22 @@ fn fzf_never_auto_selects() {
 #[test]
 fn fzf_hides_preview_by_default() {
     assert!(
-        fzf_args(None, false)
+        fzf_args(Path::new("agent-berth"), None, false)
             .iter()
             .any(|arg| arg == "up:80%:hidden")
     );
-    assert!(fzf_args(None, true).iter().any(|arg| arg == "up:80%"));
+    assert!(
+        fzf_args(Path::new("agent-berth"), None, true)
+            .iter()
+            .any(|arg| arg == "up:80%")
+    );
 }
 
 #[test]
 #[cfg(windows)]
 fn fzf_uses_powershell_for_preview() {
     assert!(
-        fzf_args(None, true)
+        fzf_args(Path::new("agent-berth"), None, true)
             .windows(2)
             .any(|pair| pair == ["--with-shell", tmux::PREVIEW_SHELL])
     );
