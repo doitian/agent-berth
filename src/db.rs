@@ -62,7 +62,11 @@ pub fn load(db: &Database) -> Result<Store> {
             let Some((provider, instance)) = split_key(key.value()) else {
                 continue;
             };
-            let snapshot: PluginSnapshot = serde_json::from_slice(value.value())?;
+            // Plugins re-report within seconds, so a row written by an older
+            // schema is dropped rather than blocking startup.
+            let Ok(snapshot) = serde_json::from_slice::<PluginSnapshot>(value.value()) else {
+                continue;
+            };
             store
                 .snapshots
                 .entry(provider.to_string())

@@ -98,6 +98,37 @@ fn persists_plugin_snapshot_and_heartbeats() {
 }
 
 #[test]
+fn load_skips_snapshots_from_incompatible_schema() {
+    let root = tempdir().unwrap();
+    let ctx = Context::for_test(root.path(), &root.path().join("agent-berth"));
+    std::fs::create_dir_all(&ctx.state_dir).unwrap();
+    let db = open(&ctx).unwrap();
+    let txn = db.begin_write().unwrap();
+    {
+        let mut table = txn.open_table(SNAPSHOTS).unwrap();
+        table
+            .insert(
+                "paseo\0old",
+                br#"{"paseo_host_changed_ms":1791207380441}"#.as_slice(),
+            )
+            .unwrap();
+        table
+            .insert("paseo\0new", br#"{"cwd":"/proj"}"#.as_slice())
+            .unwrap();
+    }
+    txn.commit().unwrap();
+
+    let loaded = load(&db).unwrap();
+    let bucket = &loaded.snapshots["paseo"];
+    assert!(!bucket.contains_key("old"));
+    assert_eq!(bucket["new"].cwd.as_deref(), Some("/proj"));
+
+    persist_all(&db, &loaded).unwrap();
+    drop(db);
+    assert!(!load_from_path(&ctx).unwrap().snapshots["paseo"].contains_key("old"));
+}
+
+#[test]
 fn persist_all_drops_pruned_entries() {
     let root = tempdir().unwrap();
     let ctx = Context::for_test(root.path(), &root.path().join("agent-berth"));
