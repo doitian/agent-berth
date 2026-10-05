@@ -1,5 +1,6 @@
 use super::*;
 use crate::status::{AgentEvent, AgentEventKind, apply_event};
+use serde_json::json;
 
 #[test]
 fn stats_aggregate_active_sessions_by_provider_and_status() {
@@ -619,6 +620,50 @@ fn closing_the_last_host_hides_its_sessions_for_good() {
 }
 
 #[test]
+fn paseo_host_changes_follow_process_moves_not_turn_events_or_heartbeats() {
+    let mut store = Store::default();
+    let event = |pid, agent: Option<&str>| json!({"session_id":"moving", "hook_event_name":"UserPromptSubmit", "pid":pid, "paseo_agent_id":agent});
+    store
+        .update("claude", event(10, Some("paseo-agent")))
+        .unwrap();
+    store
+        .hooks
+        .get_mut("claude")
+        .unwrap()
+        .get_mut("moving")
+        .unwrap()
+        .paseo_host_changed_ms = Some(123);
+    store
+        .update("claude", event(10, Some("paseo-agent")))
+        .unwrap();
+    assert_eq!(
+        store.hooks["claude"]["moving"].paseo_host_changed_ms,
+        Some(123)
+    );
+    store.update("claude", event(20, None)).unwrap();
+    assert!(store.hooks["claude"]["moving"].paseo_agent_id.is_none());
+    assert!(store.hooks["claude"]["moving"].paseo_host_changed_ms > Some(123));
+
+    let snapshot =
+        |pid| json!({"id":"host", "pid":pid, "status":{"moving":"busy"}, "paseo_agent_id":null});
+    store.update("pi", snapshot(10)).unwrap();
+    store
+        .snapshots
+        .get_mut("pi")
+        .unwrap()
+        .get_mut("host")
+        .unwrap()
+        .paseo_host_changed_ms = Some(123);
+    store.update("pi", snapshot(10)).unwrap();
+    assert_eq!(
+        store.snapshots["pi"]["host"].paseo_host_changed_ms,
+        Some(123)
+    );
+    store.update("pi", snapshot(20)).unwrap();
+    assert!(store.snapshots["pi"]["host"].paseo_host_changed_ms > Some(123));
+}
+
+#[test]
 fn host_attribution_prefers_the_pane_showing_the_session_in_front() {
     let session = |sid: &str| {
         let mut session = plugin_session(sid);
@@ -630,6 +675,8 @@ fn host_attribution_prefers_the_pane_showing_the_session_in_front() {
                     pid: 10,
                     front: Some("a".into()),
                     tabs: ["a".into(), "b".into()].into_iter().collect(),
+                    paseo_agent_id: None,
+                    paseo_host_changed_ms: None,
                     last_report_ms: 5,
                 },
                 SessionHost {
@@ -637,6 +684,8 @@ fn host_attribution_prefers_the_pane_showing_the_session_in_front() {
                     pid: 20,
                     front: Some("b".into()),
                     tabs: ["a".into(), "b".into()].into_iter().collect(),
+                    paseo_agent_id: None,
+                    paseo_host_changed_ms: None,
                     last_report_ms: 6,
                 },
             ],
@@ -661,6 +710,8 @@ fn host_attribution_prefers_the_pane_showing_the_session_in_front() {
                 pid: 10,
                 front: Some("a".into()),
                 tabs: ["a".into(), "c".into()].into_iter().collect(),
+                paseo_agent_id: None,
+                paseo_host_changed_ms: None,
                 last_report_ms: 5,
             },
             SessionHost {
@@ -668,6 +719,8 @@ fn host_attribution_prefers_the_pane_showing_the_session_in_front() {
                 pid: 20,
                 front: Some("a".into()),
                 tabs: ["a".into(), "c".into()].into_iter().collect(),
+                paseo_agent_id: None,
+                paseo_host_changed_ms: None,
                 last_report_ms: 6,
             },
         ],
@@ -682,6 +735,8 @@ fn host_attribution_prefers_the_pane_showing_the_session_in_front() {
         &[SessionHost {
             provider: "pi".into(),
             pid: 30,
+            paseo_agent_id: None,
+            paseo_host_changed_ms: None,
             front: Some("d".into()),
             tabs: ["d".into()].into_iter().collect(),
             last_report_ms: 5,
@@ -705,6 +760,8 @@ fn plugin_session(sid: &str) -> ListedSession {
         kind: SessionKind::Plugin,
         parent_id: None,
         transcript_path: None,
+        paseo_agent_id: None,
+        paseo_host_changed_ms: None,
         exited: false,
         title: None,
         pane_pid: None,

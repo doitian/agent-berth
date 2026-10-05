@@ -13,6 +13,7 @@ use serde_json::{Value, json};
 use tempfile::TempDir;
 
 pub mod mock_llm;
+pub mod paseo;
 
 pub const BERTH: &str = env!("CARGO_BIN_EXE_agent-berth");
 
@@ -101,6 +102,7 @@ impl Sandbox {
             ("CODEX_HOME", "codex"),
             ("GROK_HOME", "grok"),
             ("PI_CODING_AGENT_DIR", "pi"),
+            ("PASEO_HOME", "paseo"),
             ("PSMUX_DATA_DIR", "psmux"),
             ("TEMP", "tmp"),
             ("TMP", "tmp"),

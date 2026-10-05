@@ -16,6 +16,8 @@ fn listed(cwd: Option<&str>, title: Option<&str>) -> ListedSession {
         kind: SessionKind::Hook,
         parent_id: None,
         transcript_path: None,
+        paseo_agent_id: None,
+        paseo_host_changed_ms: None,
         exited: false,
         title: title.map(str::to_string),
         pane_pid: None,
@@ -85,6 +87,27 @@ fn pane_matches_by_pid_in_ancestor_chain() {
     let panes = [pane("%1", 10, "/a"), pane("%2", 20, "/b")];
     assert_eq!(pane_for_pid(&panes, &[99, 20, 5]).unwrap().id, "%2");
     assert!(pane_for_pid(&panes, &[99, 98]).is_none());
+}
+
+#[test]
+fn paseo_target_uses_paseo_identity_and_never_matches_a_daemon_pane() {
+    let mut session = listed(Some("/work"), Some("Paseo task"));
+    session.pid = Some(std::process::id());
+    session.paseo_agent_id = Some("paseo-agent".into());
+    let candidate = Candidate::paseo("paseo-agent".into(), session.clone());
+    assert!(
+        candidate
+            .line()
+            .starts_with("paseo:paseo-agent\tclaude\trunning\tPaseo task\t")
+    );
+    assert!(candidate.line().ends_with("\tabc"));
+    let panes = [pane("%1", std::process::id(), "/work")];
+    assert!(resolve_session_pane(&panes, &session, std::process::id()).is_none());
+    assert!(
+        fzf_args(None, true)
+            .iter()
+            .any(|arg| arg.contains("paseo-preview") && !arg.contains("paseo agent logs"))
+    );
 }
 
 #[test]

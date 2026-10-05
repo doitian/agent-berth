@@ -14,6 +14,9 @@ tmux, authentication, or model request is needed for the default suite.
 Coverage includes:
 
 - Claude, Codex, and Grok hook lifecycle transitions, including session removal.
+- Paseo identity forwarding and record-based routing of existing sessions,
+  API-backed focus and deep links without tmux or the Paseo CLI, and streaming
+  against an in-process WebSocket daemon with lifecycle and output bounds.
 - OpenCode and Pi snapshots, blocking, and replacement of previous snapshots.
 - Two concurrent agent-berth servers with separate endpoints and databases, duplicate
   server rejection, offline reads, and persistence after a server restart.

@@ -16,6 +16,8 @@ fn listed(provider: &str, session_id: &str, title: Option<&str>) -> ListedSessio
         kind: SessionKind::Hook,
         parent_id: None,
         transcript_path: None,
+        paseo_agent_id: None,
+        paseo_host_changed_ms: None,
         exited: false,
         title: title.map(str::to_string),
         pane_pid: None,
@@ -1080,6 +1082,97 @@ fn deselecting_preview_clears_pending_work_and_ignores_completion() {
     assert!(app.preview_in_flight.is_none());
     assert!(!app.needs_redraw);
     assert!(app.next_preview_fetch(Instant::now() + REFRESH).is_none());
+}
+
+#[test]
+fn paseo_sessions_stream_and_focus_paseo_instead_of_the_terminal() {
+    for provider in ["claude", "codex", "opencode", "pi"] {
+        let mut app = App::new();
+        let me = std::process::id();
+        let mut session = listed(provider, "native-id", Some("Paseo task"));
+        session.pid = Some(me);
+        session.paseo_agent_id = Some("paseo-agent".into());
+        app.sessions = vec![session];
+        app.panes = vec![Pane {
+            id: "%1".into(),
+            pid: me,
+            session: "test".into(),
+            window: "0".into(),
+            window_name: "daemon".into(),
+            path: "/tmp/project".into(),
+        }];
+        app.paseo_home = Some(PathBuf::from("/paseo-home"));
+        app.update_selection();
+        assert!(app.selected_pane.is_none());
+        assert!(!app.pane_shows_session);
+        assert!(app.has_preview());
+        let source = app.selected_transcript.as_ref().unwrap();
+        assert_eq!(source.provider, "paseo");
+        assert_eq!(source.session_id, "paseo-agent");
+        assert_eq!(source.root.as_deref(), Some(Path::new("/paseo-home")));
+        assert!(matches!(app.attach_selected(), Effect::FocusPaseo(id) if id == "paseo-agent"));
+        let result = transcript_completion(&mut app, "live Paseo content");
+        app.handle_fetched(result);
+        assert_eq!(app.preview.as_deref(), Some("live Paseo content"));
+        app.toggle_maximized();
+        assert!(app.preview_maximized);
+    }
+}
+
+#[test]
+fn moving_the_same_session_switches_preview_and_attach_between_paseo_and_tmux() {
+    let mut app = App::new();
+    let mut session = listed("pi", "same-native-id", None);
+    session.pid = Some(std::process::id());
+    session.paseo_agent_id = Some("paseo-agent".into());
+    let pane = Pane {
+        id: "%1".into(),
+        pid: std::process::id(),
+        session: "test".into(),
+        window: "0".into(),
+        window_name: "shell".into(),
+        path: "/tmp/project".into(),
+    };
+    app.apply_refresh(vec![session.clone()], vec![pane.clone()]);
+    let late_stream = transcript_completion(&mut app, "late Paseo content");
+    session.paseo_agent_id = None;
+    app.previews.insert("%1".into(), "tmux content".into());
+    app.apply_refresh(vec![session.clone()], vec![pane.clone()]);
+    assert!(app.selected_transcript.is_none());
+    assert_eq!(app.preview.as_deref(), Some("tmux content"));
+    assert!(matches!(app.attach_selected(), Effect::Attach(selected) if selected.id == "%1"));
+    app.handle_fetched(late_stream);
+    assert_eq!(app.preview.as_deref(), Some("tmux content"));
+    session.paseo_agent_id = Some("imported-agent".into());
+    app.apply_refresh(vec![session], vec![pane]);
+    assert!(app.selected_pane.is_none());
+    assert_eq!(
+        app.selected_transcript.as_ref().unwrap().session_id,
+        "imported-agent"
+    );
+    assert!(matches!(app.attach_selected(), Effect::FocusPaseo(id) if id == "imported-agent"));
+}
+
+#[test]
+fn switching_paseo_sessions_rejects_late_stream_content_and_preserves_cache() {
+    let mut app = App::new();
+    let mut one = listed("opencode", "native-one", None);
+    one.paseo_agent_id = Some("paseo-one".into());
+    let mut two = listed("opencode", "native-two", None);
+    two.paseo_agent_id = Some("paseo-two".into());
+    app.sessions = vec![one, two];
+    app.update_selection();
+    let first = transcript_completion(&mut app, "first stream");
+    app.selected = 1;
+    app.update_selection();
+    let second = transcript_completion(&mut app, "second stream");
+    app.handle_fetched(first);
+    assert!(app.preview.is_none());
+    app.handle_fetched(second);
+    assert_eq!(app.preview.as_deref(), Some("second stream"));
+    app.selected = 0;
+    app.update_selection();
+    assert_eq!(app.preview.as_deref(), Some("first stream"));
 }
 
 fn desktop_app() -> App {

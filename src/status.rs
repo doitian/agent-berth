@@ -128,6 +128,10 @@ pub struct AgentSession {
     pub title: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transcript_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paseo_agent_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paseo_host_changed_ms: Option<u64>,
 }
 
 impl Default for AgentSession {
@@ -147,6 +151,8 @@ impl Default for AgentSession {
             hooked: false,
             title: None,
             transcript_path: None,
+            paseo_agent_id: None,
+            paseo_host_changed_ms: None,
         }
     }
 }

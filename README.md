@@ -15,8 +15,8 @@ by working directory.
 - **Session resume** — restart sessions that were interrupted by a reboot or
   server restart, each in its own tmux window via the agent's native resume
   command (`claude --resume`, `codex resume`, …).
-- **Attach** — fuzzy-find a running agent pane with fzf and jump straight to
-  it in tmux.
+- **Attach** — fuzzy-find a running agent with fzf and jump to its tmux pane
+  or focus its session in Paseo.
 - **Session search** — find stored sessions across agents by keywords and
   creation time, even when they are no longer active.
 - **Persistent state** — sessions survive server and host restarts (redb
@@ -77,7 +77,7 @@ uses [fzf](https://github.com/junegunn/fzf).
 | `agent-berth search [patterns...] [--created-in DURATION] [--json]` | Search stored sessions across all providers, newest first |
 | `agent-berth stats [--json]` | Aggregate active session counts by status and provider |
 | `agent-berth resume [pattern] [--idle 20m] [--here] [--dry-run]` | Resume sessions in tmux |
-| `agent-berth attach [query] [--preview] [--session] [--dry-run]` | Attach to a running agent pane with fzf |
+| `agent-berth attach [query] [--preview] [--session] [--dry-run]` | Select an agent with fzf and attach in tmux or focus it in Paseo |
 | `agent-berth rm [patterns...]` | Hide sessions so they are never resumed |
 | `agent-berth doctor` | Check server, service, and hook installation |
 | `agent-berth notify --provider <name>` | Report agent status (used by hooks) |
@@ -114,6 +114,34 @@ are retried automatically. These previews cover local Code sessions, not
 ordinary Claude chats or remote/cloud sessions. Claude's optional
 `MessageDisplay` hook is not required or installed.
 
+Sessions hosted in [Paseo](https://paseo.sh) show a live conversation stream
+through its daemon API, including providers without local transcript support.
+Press `a` to focus that session by passing a `paseo://` deep link directly to
+the Paseo Desktop executable, without relying on an OS URL handler.
+The CLI `attach` command does the same; its `--preview` displays a Paseo stream
+instead of a tmux screen. `--session` remains restricted to the current tmux
+session. No Paseo CLI is required; the local daemon must be running. Attach
+looks for Desktop in standard installation locations and Windows Scoop
+(`~/scoop/apps/paseo/current/Paseo.exe`). Set `PASEO_DESKTOP_BIN` to its executable
+path for a custom installation. Linux launches `Paseo` or `Paseo.AppImage` with
+the URL argument; macOS launches the app bundle using `open --args`.
+
+Paseo identity is forwarded from `PASEO_AGENT_ID` in the hook/plugin environment.
+For already-running sessions, agent-berth also matches the native session ID to
+local records under `$PASEO_HOME/agents` (default `~/.paseo/agents`). This only
+routes sessions already monitored by agent-berth; it does not add sessions or
+change their status tracking or resume behavior. A later native host report
+clears an older Paseo association, while a newer Paseo import routes the same
+session back to Paseo. Host changes, rather than repeated heartbeats, determine
+the route; preview and attach switch on refresh. Before focusing or streaming,
+agent-berth verifies the session through the API. It reads the daemon endpoint
+from `$PASEO_HOME/paseo.pid` rather than assuming a port, supporting loopback TCP,
+Unix sockets, and Windows named pipes. Authentication uses
+`$PASEO_HOME/local-credential` or `PASEO_PASSWORD` if set. This integration targets
+the local daemon in `PASEO_HOME`, not remote `PASEO_HOST` connections. The stream
+is bounded, stops when you leave the session or quit, and reconnects after
+interruption.
+
 Press `a` on a Claude or Codex desktop session to open it in the app.
 Codex uses `codex://threads/<session-id>` to select the session and raise the
 desktop app. For Claude on Linux under niri, agent-berth first tries to raise
@@ -141,7 +169,7 @@ symbol. Clean repositories without an upstream show only the branch name.
 | `w` | Toggle group headers for the current sort (hidden by default) |
 | `I` | In the resumable list, toggle idle sessions; asks for the idle window (default `20m`, prefilled) |
 | `=` | Toggle maximization of the tmux or conversation preview |
-| `a` | Focus a Claude or Codex desktop session, or attach to a terminal session's tmux pane: switch-client inside tmux, attach outside; detaching returns to the TUI |
+| `a` | Focus a Paseo, Claude Desktop, or Codex desktop session, or attach to its tmux pane: switch-client inside tmux, attach outside; detaching returns to the TUI |
 | `r` | Resume the selected resumable session in tmux and attach to it |
 | `d` | Delete the selected session after confirming with `y` |
 | `q` | Quit |
@@ -205,6 +233,7 @@ named pipe on Windows.
 
 | Variable | Effect |
 | --- | --- |
+| `PASEO_HOME` | Override the local Paseo directory used for routing, streaming, and focus (default `~/.paseo`) |
 | `AGENT_BERTH_SOCK` | Override the IPC endpoint (socket path or pipe name) |
 | `AGENT_BERTH_TMUX_SOCKET` | Add `tmux -L <name>` to every tmux invocation |
 | `AGENT_BERTH_TMUX_CONFIG` | Add `tmux -f <path>` to every tmux invocation |

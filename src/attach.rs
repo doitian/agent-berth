@@ -24,7 +24,7 @@ pub fn run(
     let sessions = db::query_sessions(ctx, false, None)?;
     let candidates = collect(&sessions, session)?;
     if candidates.is_empty() {
-        println!("No active agents in tmux panes.");
+        println!("No active agents in tmux panes or Paseo.");
         return Ok(());
     }
     if dry_run {
@@ -37,25 +37,57 @@ pub fn run(
         bail!("fzf is required to select a session");
     }
     let lines: Vec<String> = candidates.iter().map(Candidate::line).collect();
-    let Some(selected) = select(&lines, query.as_deref(), preview)? else {
+    let Some(selected) = select(ctx, &lines, query.as_deref(), preview)? else {
         return Ok(());
     };
-    let pane_id = selected.split('\t').next().unwrap_or("");
+    let target_id = selected.split('\t').next().unwrap_or("");
     let candidate = candidates
         .iter()
-        .find(|candidate| candidate.pane.id == pane_id)
-        .context("selected pane is no longer active")?;
-    tmux::attach_pane(&candidate.pane)
+        .find(|candidate| candidate.id() == target_id)
+        .context("selected session is no longer active")?;
+    let refreshed = collect(&db::query_sessions(ctx, false, None)?, session)?;
+    let current = refreshed
+        .iter()
+        .find(|current| {
+            current.session.provider == candidate.session.provider
+                && current.session.session_id == candidate.session.session_id
+        })
+        .context("selected session is no longer active")?;
+    match &current.target {
+        Target::Pane(pane) => tmux::attach_pane(pane),
+        Target::Paseo(agent_id) => crate::providers::paseo::focus(ctx, agent_id),
+    }
 }
 
 fn collect(sessions: &[ListedSession], session: bool) -> Result<Vec<Candidate>> {
-    let panes = tmux::list_panes(!session)?;
+    let panes = match tmux::list_panes(!session) {
+        Ok(panes) => panes,
+        Err(_)
+            if sessions
+                .iter()
+                .any(|session| session.paseo_agent_id.is_some()) =>
+        {
+            Vec::new()
+        }
+        Err(error) => return Err(error),
+    };
     let me = std::process::id();
     let mut ordered: Vec<&ListedSession> = sessions.iter().collect();
     ordered.sort_by_key(|session| std::cmp::Reverse(session.last_report_ms));
     let mut seen = HashSet::new();
     let mut candidates = Vec::new();
-    for session in ordered {
+    for item in ordered {
+        if let Some(agent_id) = item
+            .paseo_agent_id
+            .as_ref()
+            .filter(|id| crate::providers::paseo::valid_id(id))
+        {
+            if !session && seen.insert(format!("paseo:{agent_id}")) {
+                candidates.push(Candidate::paseo(agent_id.clone(), item.clone()));
+            }
+            continue;
+        }
+        let session = item;
         if session.source != Source::Cli {
             continue;
         }
@@ -70,7 +102,7 @@ fn collect(sessions: &[ListedSession], session: bool) -> Result<Vec<Candidate>> 
         }
         candidates.push(Candidate::new(resolved.pane.clone(), session.clone()));
     }
-    candidates.sort_by(|a, b| a.pane.id.cmp(&b.pane.id));
+    candidates.sort_by_key(Candidate::id);
     Ok(candidates)
 }
 
@@ -93,7 +125,7 @@ pub(crate) fn resolve_session_pane<'a>(
     session: &ListedSession,
     me: u32,
 ) -> Option<SessionPane<'a>> {
-    if session.source != Source::Cli {
+    if session.source != Source::Cli || session.paseo_agent_id.is_some() {
         return None;
     }
     // A shared reporter process can itself descend from a tmux pane while
@@ -172,9 +204,16 @@ fn same_path(left: &str, right: &str) -> bool {
     fold(left) == fold(right)
 }
 
-fn select(lines: &[String], query: Option<&str>, preview: bool) -> Result<Option<String>> {
+fn select(
+    ctx: &AppContext,
+    lines: &[String],
+    query: Option<&str>,
+    preview: bool,
+) -> Result<Option<String>> {
     let mut command = Command::new("fzf");
-    command.args(fzf_args(query, preview));
+    command
+        .args(fzf_args(query, preview))
+        .env("PASEO_HOME", &ctx.paseo_home);
     let mut child = command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -193,8 +232,13 @@ fn select(lines: &[String], query: Option<&str>, preview: bool) -> Result<Option
     Ok(text.lines().next().map(str::to_string))
 }
 
+enum Target {
+    Pane(Pane),
+    Paseo(String),
+}
+
 struct Candidate {
-    pane: Pane,
+    target: Target,
     session: ListedSession,
     cwd: String,
     branch: Option<String>,
@@ -209,17 +253,35 @@ impl Candidate {
             .unwrap_or_else(|| pane.path.clone());
         let branch = git::branch(Path::new(&cwd));
         Self {
-            pane,
+            target: Target::Pane(pane),
             session,
             cwd,
             branch,
         }
     }
 
+    fn paseo(agent_id: String, session: ListedSession) -> Self {
+        let cwd = session.cwd.clone().unwrap_or_default();
+        let branch = git::branch(Path::new(&cwd));
+        Self {
+            target: Target::Paseo(agent_id),
+            session,
+            cwd,
+            branch,
+        }
+    }
+
+    fn id(&self) -> String {
+        match &self.target {
+            Target::Pane(pane) => pane.id.clone(),
+            Target::Paseo(agent_id) => format!("paseo:{agent_id}"),
+        }
+    }
+
     fn line(&self) -> String {
         format!(
             "{}\t{}\t{}\t{}\t{}\t{}\t{}",
-            self.pane.id,
+            self.id(),
             self.session.provider,
             self.session.status.as_str(),
             self.session.title.as_deref().unwrap_or("-"),
@@ -237,7 +299,22 @@ fn folder_name(path: &str) -> Option<String> {
 }
 
 fn fzf_args(query: Option<&str>, preview: bool) -> Vec<String> {
-    let preview_command = tmux::preview_command();
+    let pane_preview = tmux::preview_command();
+    let binary = std::env::current_exe()
+        .unwrap_or_else(|_| "agent-berth".into())
+        .display()
+        .to_string();
+    let preview_command = if cfg!(windows) {
+        let binary = binary.replace('\'', "''");
+        format!(
+            "if ('{{1}}'.StartsWith('paseo:')) {{ & '{binary}' paseo-preview ('{{1}}'.Substring(6)) }} else {{ {pane_preview} }}"
+        )
+    } else {
+        let binary = binary.replace('\'', "'\\''");
+        format!(
+            "key={{1}}; case \"$key\" in paseo:*) '{binary}' paseo-preview \"${{key#paseo:}}\" ;; *) {pane_preview} ;; esac"
+        )
+    };
     let preview_window = if preview { "up:80%" } else { "up:80%:hidden" };
     let mut args: Vec<String> = [
         "--delimiter",

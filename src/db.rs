@@ -109,33 +109,39 @@ pub fn query_sessions(
 ) -> Result<Vec<ListedSession>> {
     let idle_ms = idle.map(|d| d.as_millis() as u64);
     if let Ok(sessions) = ipc::list(ctx, resumable, idle_ms) {
-        return Ok(sessions);
+        return Ok(with_paseo(ctx, sessions));
     }
     let mut store = load_from_path(ctx)?;
     store.discover(ctx);
-    if resumable {
-        Ok(store.resumable(idle))
+    let sessions = if resumable {
+        store.resumable(idle)
     } else {
-        Ok(store.active())
-    }
+        store.active()
+    };
+    Ok(with_paseo(ctx, sessions))
 }
 
 pub fn query_all(ctx: &AppContext) -> Result<Vec<ListedSession>> {
     if let Ok(sessions) = ipc::list_all(ctx) {
-        return Ok(sessions);
+        return Ok(with_paseo(ctx, sessions));
     }
     let mut store = load_from_path(ctx)?;
     store.discover(ctx);
-    Ok(store.listed())
+    Ok(with_paseo(ctx, store.listed()))
 }
 
 pub fn query_stored(ctx: &AppContext) -> Result<Vec<ListedSession>> {
     if let Ok(sessions) = ipc::list_stored(ctx) {
-        return Ok(sessions);
+        return Ok(with_paseo(ctx, sessions));
     }
     let mut store = load_from_path(ctx)?;
     store.discover(ctx);
-    Ok(store.stored())
+    Ok(with_paseo(ctx, store.stored()))
+}
+
+fn with_paseo(ctx: &AppContext, mut sessions: Vec<ListedSession>) -> Vec<ListedSession> {
+    crate::providers::paseo::attribute(ctx, &mut sessions);
+    sessions
 }
 
 pub fn query_stats(ctx: &AppContext) -> Result<Vec<ProviderStats>> {

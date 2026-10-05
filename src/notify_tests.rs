@@ -21,6 +21,24 @@ fn codex_originator_comes_from_the_hook_environment_unless_explicit() {
 }
 
 #[test]
+fn paseo_identity_comes_from_the_hook_environment_unless_explicit() {
+    for environment in [Some("agent-123"), None, Some("")] {
+        let mut payload = serde_json::json!({});
+        enrich_paseo_agent(&mut payload, environment);
+        assert_eq!(
+            payload["paseo_agent_id"].as_str(),
+            environment.filter(|id| !id.is_empty())
+        );
+        let mut payload = serde_json::json!({"paseo_agent_id":"explicit"});
+        enrich_paseo_agent(&mut payload, environment);
+        assert_eq!(payload["paseo_agent_id"], "explicit");
+    }
+    let mut payload = Value::Null;
+    enrich_paseo_agent(&mut payload, Some("agent-123"));
+    assert!(payload.is_null());
+}
+
+#[test]
 fn ipc_failure_is_success() {
     let root = tempdir().unwrap();
     let ctx = Context::for_test(root.path(), &root.path().join("agent-berth"));
