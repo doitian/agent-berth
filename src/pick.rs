@@ -29,7 +29,7 @@ pub fn multi(sessions: &[ListedSession], patterns: &[String]) -> Result<Vec<List
     select(&candidates, patterns, true)
 }
 
-fn filter(sessions: &[ListedSession], patterns: &[String]) -> Vec<ListedSession> {
+pub(crate) fn filter(sessions: &[ListedSession], patterns: &[String]) -> Vec<ListedSession> {
     let terms = terms(patterns);
     sessions
         .iter()
@@ -51,6 +51,9 @@ fn terms(patterns: &[String]) -> Vec<String> {
 }
 
 fn matches_terms(session: &ListedSession, terms: &[String]) -> bool {
+    if terms.is_empty() {
+        return true;
+    }
     let haystack = search_text(session);
     terms.iter().all(|term| haystack.contains(term.as_str()))
 }

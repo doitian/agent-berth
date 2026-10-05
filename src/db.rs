@@ -129,6 +129,15 @@ pub fn query_all(ctx: &AppContext) -> Result<Vec<ListedSession>> {
     Ok(store.listed())
 }
 
+pub fn query_stored(ctx: &AppContext) -> Result<Vec<ListedSession>> {
+    if let Ok(sessions) = ipc::list_stored(ctx) {
+        return Ok(sessions);
+    }
+    let mut store = load_from_path(ctx)?;
+    store.discover(ctx);
+    Ok(store.stored())
+}
+
 pub fn query_stats(ctx: &AppContext) -> Result<Vec<ProviderStats>> {
     if let Ok(stats) = ipc::stats(ctx) {
         return Ok(stats);

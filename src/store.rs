@@ -317,7 +317,15 @@ impl Store {
         claude || codex
     }
 
+    pub fn stored(&self) -> Vec<ListedSession> {
+        self.listed_sessions(true)
+    }
+
     pub fn listed(&self) -> Vec<ListedSession> {
+        self.listed_sessions(false)
+    }
+
+    fn listed_sessions(&self, include_closed: bool) -> Vec<ListedSession> {
         let mut out = Vec::new();
         let hosts = reporting_hosts(&self.snapshots);
         for (provider, sessions) in &self.hooks {
@@ -409,7 +417,8 @@ impl Store {
         // provider. Busy sessions keep running in the server even after
         // their tab closes.
         out.retain(|session| {
-            if session.kind != SessionKind::Plugin
+            if include_closed
+                || session.kind != SessionKind::Plugin
                 || session.status.is_busy()
                 || session.pane_pid.is_some()
             {

@@ -1,9 +1,9 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
-use crate::duration::parse_idle;
+use crate::duration::{parse_duration, parse_idle};
 use crate::paths::Context;
-use crate::{attach, doctor, list, notify, resume, rm, server, service, setup, stats, tui};
+use crate::{attach, doctor, list, notify, resume, rm, search, server, service, setup, stats, tui};
 
 /// Monitor coding agents and resume their sessions.
 #[derive(Debug, Parser)]
@@ -57,6 +57,17 @@ enum Command {
         /// Restrict to sessions in the current directory
         #[arg(long, requires = "resumable")]
         here: bool,
+    },
+    /// Search stored sessions across all providers, including inactive sessions
+    Search {
+        /// Match all terms against provider, session ID, title, status, directory, or branch
+        patterns: Vec<String>,
+        /// Only include sessions created within this window (e.g. 3h, 2d)
+        #[arg(long, value_name = "DURATION", value_parser = parse_duration)]
+        created_in: Option<std::time::Duration>,
+        /// Print JSON
+        #[arg(long)]
+        json: bool,
     },
     /// Aggregate active session counts by status and provider
     Stats {
@@ -162,6 +173,11 @@ pub fn run() -> Result<()> {
             };
             list::run(&ctx, json, resumable, idle, here)
         }
+        Command::Search {
+            patterns,
+            created_in,
+            json,
+        } => search::run(&ctx, &patterns, created_in, json),
         Command::Stats { json } => stats::run(&ctx, json),
         Command::Notify { provider } => notify::run(&ctx, provider),
         Command::Attach {

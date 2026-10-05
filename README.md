@@ -17,6 +17,8 @@ by working directory.
   command (`claude --resume`, `codex resume`, …).
 - **Attach** — fuzzy-find a running agent pane with fzf and jump straight to
   it in tmux.
+- **Session search** — find stored sessions across agents by keywords and
+  creation time, even when they are no longer active.
 - **Persistent state** — sessions survive server and host restarts (redb
   database on disk).
 - **Cross-platform** — Linux, macOS, and Windows; IPC over Unix sockets or
@@ -72,6 +74,7 @@ uses [fzf](https://github.com/junegunn/fzf).
 | `agent-berth service start\|stop\|restart` | Manage the background server |
 | `agent-berth server` | Run the server in the foreground |
 | `agent-berth list [--json] [--resumable [--idle 20m] [--here]]` | List sessions |
+| `agent-berth search [patterns...] [--created-in DURATION] [--json]` | Search stored sessions across all providers, newest first |
 | `agent-berth stats [--json]` | Aggregate active session counts by status and provider |
 | `agent-berth resume [pattern] [--idle 20m] [--here] [--dry-run]` | Resume sessions in tmux |
 | `agent-berth attach [query] [--preview] [--session] [--dry-run]` | Attach to a running agent pane with fzf |
@@ -149,6 +152,29 @@ days, and older than seven days. Other sorts group by agent name, status,
 or full working directory. Directory labels show the last two components
 with `/` separators, such as `codebase/agent-berth`; missing directories show
 `-`. Headers are skipped when moving between sessions.
+
+### Search
+
+Use `search` when you cannot remember which coding CLI you used:
+
+```sh
+agent-berth search --created-in 3h
+agent-berth search login --created-in 2d
+agent-berth search claude my-project --json
+```
+
+With no keywords, it shows all stored sessions, including inactive sessions
+and closed tabs, newest first. Keywords are case-insensitive; every term must
+match the provider, session ID, title, status, working directory, or current
+Git branch. `--created-in` restricts creation time, not recent activity, and
+accepts seconds, minutes, hours, or days (e.g. `30m`, `1.5h`, `2d`). The table's
+`CREATED` column shows the age since creation; JSON includes `created_ms`.
+
+Search works with or without the server. Sessions hidden with `rm` remain
+hidden. It searches agent-berth's retained state, not full transcript contents
+or every agent's historical archive; ended or pruned sessions may no longer
+be stored. The server prunes sessions after seven days without reports unless
+their process is still alive.
 
 ### Resume behavior
 

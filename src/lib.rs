@@ -14,6 +14,7 @@ mod protocol;
 mod providers;
 mod resume;
 mod rm;
+mod search;
 mod server;
 mod service;
 mod setup;

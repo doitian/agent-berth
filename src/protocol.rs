@@ -17,6 +17,7 @@ pub enum Request {
         idle_ms: Option<u64>,
     },
     ListAll,
+    ListStored,
     Stats,
     Remove {
         provider: String,

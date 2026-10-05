@@ -29,7 +29,8 @@ pub fn parse_duration(input: &str) -> Result<Duration> {
         "d" | "day" | "days" => 86400.0,
         other => bail!("unknown duration unit {other:?} in {input:?}"),
     };
-    Ok(Duration::from_secs_f64(value * factor))
+    Duration::try_from_secs_f64(value * factor)
+        .with_context(|| format!("duration {input:?} is out of range"))
 }
 
 pub fn parse_idle(input: Option<&str>) -> Result<Option<Duration>> {

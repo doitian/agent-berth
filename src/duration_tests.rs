@@ -16,6 +16,7 @@ fn rejects_bad_input() {
     assert!(parse_duration("m").is_err());
     assert!(parse_duration("20x").is_err());
     assert!(parse_duration("-1m").is_err());
+    assert!(parse_duration("999999999999999999999999999999d").is_err());
 }
 
 #[test]

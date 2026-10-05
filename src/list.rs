@@ -29,13 +29,20 @@ pub fn run(
         }
         return Ok(());
     }
-    print_table(&sessions)?;
+    print_table(&sessions, false)?;
     Ok(())
 }
 
-fn print_table(sessions: &[ListedSession]) -> Result<()> {
+pub(crate) fn print_table(sessions: &[ListedSession], created: bool) -> Result<()> {
     let headers = [
-        "PROVIDER", "STATUS", "SOURCE", "SESSION", "TITLE", "CWD", "PID", "AGO",
+        "PROVIDER",
+        "STATUS",
+        "SOURCE",
+        "SESSION",
+        "TITLE",
+        "CWD",
+        "PID",
+        if created { "CREATED" } else { "AGO" },
     ];
     let rows: Vec<[String; 8]> = sessions
         .iter()
@@ -51,7 +58,11 @@ fn print_table(sessions: &[ListedSession]) -> Result<()> {
                     .pid
                     .map(|pid| pid.to_string())
                     .unwrap_or_else(|| "-".into()),
-                ago_label(session.last_report_ms),
+                ago_label(if created {
+                    session.created_ms
+                } else {
+                    session.last_report_ms
+                }),
             ]
         })
         .collect();

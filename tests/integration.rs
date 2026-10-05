@@ -90,6 +90,116 @@ fn hook_clients_report_lifecycle_over_ipc() {
 }
 
 #[test]
+fn search_finds_inactive_sessions_across_providers_online_and_offline() {
+    let mut sandbox = Sandbox::new();
+    sandbox.start();
+    for provider in ["claude", "codex", "grok"] {
+        sandbox.hook(
+            provider,
+            &format!("{provider}-session"),
+            "UserPromptSubmit",
+            None,
+        );
+        sandbox.notify(
+            provider,
+            json!({
+                "session_id": format!("{provider}-session"),
+                "hook_event_name": "Stop",
+                "cwd": sandbox.project(),
+                "title": "Fix login flow"
+            }),
+        );
+    }
+    sandbox.notify(
+        "pi",
+        json!({
+            "id": "pi-reporter", "status": {"pi-session": "idle"},
+            "titles": {"pi-session": "Fix login flow"}
+        }),
+    );
+    sandbox.notify(
+        "opencode",
+        json!({
+            "id": "server", "status": {"closed-tab": "idle"},
+            "titles": {"closed-tab": "Fix login flow"}
+        }),
+    );
+    sandbox.notify(
+        "opencode",
+        json!({
+            "id": "host", "status": {}, "tabs": ["closed-tab"]
+        }),
+    );
+    let removed = sandbox.request(json!({
+        "op": "remove", "provider": "grok", "session_id": "grok-session"
+    }));
+    assert_eq!(removed["status"], "ok");
+    assert!(
+        sandbox
+            .sessions(false)
+            .iter()
+            .all(|s| s["provider"] == "pi")
+    );
+    for online in [true, false] {
+        if !online {
+            sandbox.stop();
+        }
+        let output = success(
+            sandbox
+                .berth()
+                .args(["search", "--created-in", "3h", "--json"]),
+        );
+        let sessions: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(sessions.len(), 4, "{sessions:?}");
+        assert!(
+            sessions
+                .windows(2)
+                .all(|pair| { pair[0]["created_ms"].as_u64() >= pair[1]["created_ms"].as_u64() })
+        );
+        assert!(sessions.iter().any(|s| s["session_id"] == "closed-tab"));
+        let output = success(
+            sandbox
+                .berth()
+                .args(["search", "CLAUDE", "login", "--json"]),
+        );
+        let sessions: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0]["provider"], "claude");
+        let output = success(sandbox.berth().args(["search", "not-found", "--json"]));
+        assert_eq!(
+            serde_json::from_slice::<Value>(&output.stdout).unwrap(),
+            json!([])
+        );
+        let output = success(sandbox.berth().args(["search", "claude"]));
+        let table = String::from_utf8(output.stdout).unwrap();
+        assert!(table.contains("PROVIDER") && table.contains("CREATED"));
+        assert!(table.contains("claude-session"));
+    }
+}
+
+#[test]
+fn search_rejects_invalid_creation_windows() {
+    let sandbox = Sandbox::new();
+    for value in ["bad", "-3h", "1w", "999999999999999999999999999999d"] {
+        let output = sandbox
+            .berth()
+            .args(["search", &format!("--created-in={value}")])
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert!(error.contains("--created-in"), "{error}");
+        assert!(!error.contains("panicked"), "{error}");
+    }
+    let output = sandbox
+        .berth()
+        .args(["search", "--created-in"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+}
+
+#[test]
 fn transcript_paths_roundtrip_through_notify_ipc_and_database() {
     let mut sandbox = Sandbox::new();
     sandbox.start();
