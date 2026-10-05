@@ -53,6 +53,12 @@ pub struct PluginSnapshot {
     /// without tabs, such as the OpenCode server plugin.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tabs: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paseo_agent_id: Option<String>,
+    /// When each reported session first appeared under the current host
+    /// identity; a long-lived process can open sessions well after it starts.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub paseo_host_changed_ms: BTreeMap<String, u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -129,6 +135,10 @@ pub struct ListedSession {
     pub title: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transcript_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paseo_agent_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paseo_host_changed_ms: Option<u64>,
     /// Process hosting the session's tab, when a plugin reported it. The
     /// session's own `pid` may be a shared server that never sits in a pane.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -162,10 +172,14 @@ impl Store {
                 self.clear_removed(provider, sid);
             }
             let bucket = self.hooks.entry(provider.to_string()).or_default();
+            let previous_pid = sid
+                .as_ref()
+                .and_then(|sid| bucket.get(sid))
+                .and_then(|session| session.pid);
             providers::apply_hook(provider, bucket, &payload);
             if let Some(sid) = sid {
                 if let Some(session) = bucket.get_mut(&sid) {
-                    touch_session(session, &payload, provider);
+                    touch_session(session, &payload, provider, previous_pid);
                     if session.exited {
                         bucket.remove(&sid);
                     }
@@ -254,13 +268,32 @@ impl Store {
             }
             Some(_) => anyhow::bail!("tabs must be an array of strings"),
         };
-        let created_ms = self
+        let existing = self
             .snapshots
             .get(provider)
-            .and_then(|instances| instances.get(instance))
+            .and_then(|instances| instances.get(instance));
+        let created_ms = existing
             .map(|existing| existing.created_ms)
             .filter(|created| *created > 0)
             .unwrap_or_else(now_ms);
+        let paseo_agent_id = string_field(&payload, &["paseo_agent_id"]).map(str::to_string);
+        let reports_host = payload.get("paseo_agent_id").is_some();
+        let kept = existing.filter(|old| {
+            !reports_host || (old.paseo_agent_id == paseo_agent_id && old.pid == pid)
+        });
+        let paseo_host_changed_ms = status
+            .keys()
+            .chain(tabs.iter().flatten())
+            .filter_map(|sid| {
+                let previous = kept.and_then(|old| old.paseo_host_changed_ms.get(sid).copied());
+                let changed = if reports_host {
+                    Some(previous.unwrap_or_else(now_ms))
+                } else {
+                    previous
+                };
+                changed.map(|ms| (sid.clone(), ms))
+            })
+            .collect();
         let hosted_tabs = tabs.clone();
         let snapshot = PluginSnapshot {
             status,
@@ -273,6 +306,8 @@ impl Store {
             last_report_ms: now_ms(),
             front,
             tabs,
+            paseo_agent_id,
+            paseo_host_changed_ms,
         };
         self.snapshots
             .entry(provider.to_string())
@@ -349,6 +384,8 @@ impl Store {
                     exited: session.exited,
                     title: session.title.clone(),
                     transcript_path: session.transcript_path.clone(),
+                    paseo_agent_id: session.paseo_agent_id.clone(),
+                    paseo_host_changed_ms: session.paseo_host_changed_ms,
                     pane_pid: None,
                     front: false,
                 });
@@ -385,6 +422,8 @@ impl Store {
                         exited: false,
                         title: snapshot.titles.get(sid).cloned(),
                         transcript_path: None,
+                        paseo_agent_id: snapshot.paseo_agent_id.clone(),
+                        paseo_host_changed_ms: snapshot.paseo_host_changed_ms.get(sid).copied(),
                         pane_pid: None,
                         front: false,
                     });
@@ -522,6 +561,8 @@ impl Store {
 struct SessionHost {
     provider: String,
     pid: u32,
+    paseo_agent_id: Option<String>,
+    paseo_host_changed_ms: BTreeMap<String, u64>,
     front: Option<String>,
     tabs: BTreeSet<String>,
     last_report_ms: u64,
@@ -544,6 +585,8 @@ fn reporting_hosts(
             Some(SessionHost {
                 provider: provider.clone(),
                 pid,
+                paseo_agent_id: snapshot.paseo_agent_id.clone(),
+                paseo_host_changed_ms: snapshot.paseo_host_changed_ms.clone(),
                 front: snapshot.front.clone(),
                 tabs: tabs.iter().cloned().collect(),
                 last_report_ms: snapshot.last_report_ms,
@@ -569,6 +612,11 @@ fn attribute_host(session: &mut ListedSession, hosts: &[SessionHost]) {
     };
     session.pane_pid = Some(host.pid);
     session.front = host.front.as_deref() == Some(session.session_id.as_str());
+    let changed = host.paseo_host_changed_ms.get(&session.session_id).copied();
+    if changed.is_some() && changed > session.paseo_host_changed_ms {
+        session.paseo_agent_id = host.paseo_agent_id.clone();
+        session.paseo_host_changed_ms = changed;
+    }
 }
 
 impl ListedSession {
@@ -632,7 +680,12 @@ fn idle_age_ms(session: &ListedSession, store: &Store, now_ms: u64) -> u64 {
     }
 }
 
-fn touch_session(session: &mut AgentSession, payload: &Value, provider: &str) {
+fn touch_session(
+    session: &mut AgentSession,
+    payload: &Value,
+    provider: &str,
+    previous_pid: Option<u32>,
+) {
     // Child hooks may carry the parent's transcript_path. Never show it as the
     // child's conversation; use the explicitly supplied child transcript instead.
     let keys: &[&str] = if session.parent_id.is_some() {
@@ -644,6 +697,21 @@ fn touch_session(session: &mut AgentSession, payload: &Value, provider: &str) {
         && let Some(path) = string_field(payload, keys).filter(|path| !path.is_empty())
     {
         session.transcript_path = Some(path.to_string());
+    }
+    if payload.get("paseo_agent_id").is_some() {
+        let id = string_field(payload, &["paseo_agent_id"]).map(str::to_string);
+        let pid_changed = u32_field(payload, &["pid"]).is_some_and(|pid| Some(pid) != previous_pid);
+        let starting = string_field(payload, &["hook_event_name", "hookEventName"])
+            .is_some_and(|name| name.eq_ignore_ascii_case("SessionStart"));
+        // Heartbeats and turn events must not make an older host look newly opened.
+        if session.paseo_host_changed_ms.is_none()
+            || session.paseo_agent_id != id
+            || pid_changed
+            || starting
+        {
+            session.paseo_host_changed_ms = Some(now_ms());
+        }
+        session.paseo_agent_id = id;
     }
     session.hooked = true;
     session.last_report_ms = now_ms();

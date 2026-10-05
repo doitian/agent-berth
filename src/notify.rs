@@ -13,6 +13,10 @@ pub fn run(ctx: &AppContext, provider: String) -> Result<()> {
 }
 
 pub fn send_payload(ctx: &AppContext, provider: String, mut payload: Value) -> Result<()> {
+    enrich_paseo_agent(
+        &mut payload,
+        std::env::var("PASEO_AGENT_ID").ok().as_deref(),
+    );
     if provider == "codex" && payload.is_object() {
         enrich_codex_originator(
             &mut payload,
@@ -33,6 +37,15 @@ pub fn send_payload(ctx: &AppContext, provider: String, mut payload: Value) -> R
     match ipc::notify(ctx, provider, payload) {
         Ok(()) => Ok(()),
         Err(_) => Ok(()),
+    }
+}
+
+fn enrich_paseo_agent(payload: &mut Value, agent_id: Option<&str>) {
+    if payload.is_object() && payload.get("paseo_agent_id").is_none() {
+        payload["paseo_agent_id"] = agent_id
+            .filter(|id| !id.is_empty())
+            .map(|id| Value::String(id.to_string()))
+            .unwrap_or(Value::Null);
     }
 }
 

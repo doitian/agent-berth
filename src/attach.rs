@@ -22,9 +22,9 @@ pub fn run(
     dry_run: bool,
 ) -> Result<()> {
     let sessions = db::query_sessions(ctx, false, None)?;
-    let candidates = collect(&sessions, session)?;
+    let candidates = collect(&sessions, &list_panes(&sessions, session)?, session);
     if candidates.is_empty() {
-        println!("No active agents in tmux panes.");
+        println!("No active agents in tmux panes or Paseo.");
         return Ok(());
     }
     if dry_run {
@@ -37,41 +37,80 @@ pub fn run(
         bail!("fzf is required to select a session");
     }
     let lines: Vec<String> = candidates.iter().map(Candidate::line).collect();
-    let Some(selected) = select(&lines, query.as_deref(), preview)? else {
+    let Some(selected) = select(ctx, &lines, query.as_deref(), preview)? else {
         return Ok(());
     };
-    let pane_id = selected.split('\t').next().unwrap_or("");
+    let target_id = selected.split('\t').next().unwrap_or("");
     let candidate = candidates
         .iter()
-        .find(|candidate| candidate.pane.id == pane_id)
-        .context("selected pane is no longer active")?;
-    tmux::attach_pane(&candidate.pane)
+        .find(|candidate| candidate.id() == target_id)
+        .context("selected session is no longer active")?;
+    // Resolve only the picked session again: another session reporting from
+    // the same pane while fzf was open would displace it from `collect`.
+    let sessions = db::query_sessions(ctx, false, None)?;
+    let current = sessions
+        .iter()
+        .find(|current| {
+            current.provider == candidate.session.provider
+                && current.session_id == candidate.session.session_id
+        })
+        .context("selected session is no longer active")?;
+    let panes = list_panes(std::slice::from_ref(current), session)?;
+    match target(current, &panes, session, std::process::id())
+        .context("selected session is no longer active")?
+    {
+        Target::Pane(pane) => tmux::attach_pane(&pane),
+        Target::Paseo(agent_id) => crate::providers::paseo::focus(ctx, &agent_id),
+    }
 }
 
-fn collect(sessions: &[ListedSession], session: bool) -> Result<Vec<Candidate>> {
-    let panes = tmux::list_panes(!session)?;
+fn list_panes(sessions: &[ListedSession], session: bool) -> Result<Vec<Pane>> {
+    match tmux::list_panes(!session) {
+        Ok(panes) => Ok(panes),
+        // Paseo targets need no tmux, but `--session` excludes them.
+        Err(_) if !session && sessions.iter().any(|item| paseo_id(item).is_some()) => {
+            Ok(Vec::new())
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn paseo_id(session: &ListedSession) -> Option<&String> {
+    session
+        .paseo_agent_id
+        .as_ref()
+        .filter(|id| crate::providers::paseo::valid_id(id))
+}
+
+fn target(item: &ListedSession, panes: &[Pane], session: bool, me: u32) -> Option<Target> {
+    if let Some(agent_id) = paseo_id(item) {
+        return (!session).then(|| Target::Paseo(agent_id.clone()));
+    }
+    if item.source != Source::Cli {
+        return None;
+    }
+    if item.kind == SessionKind::Hook && !item.pid.is_some_and(process::pid_alive) {
+        return None;
+    }
+    resolve_session_pane(panes, item, me).map(|resolved| Target::Pane(resolved.pane.clone()))
+}
+
+fn collect(sessions: &[ListedSession], panes: &[Pane], session: bool) -> Vec<Candidate> {
     let me = std::process::id();
     let mut ordered: Vec<&ListedSession> = sessions.iter().collect();
     ordered.sort_by_key(|session| std::cmp::Reverse(session.last_report_ms));
     let mut seen = HashSet::new();
     let mut candidates = Vec::new();
-    for session in ordered {
-        if session.source != Source::Cli {
-            continue;
-        }
-        if session.kind == SessionKind::Hook && !session.pid.is_some_and(process::pid_alive) {
-            continue;
-        }
-        let Some(resolved) = resolve_session_pane(&panes, session, me) else {
+    for item in ordered {
+        let Some(target) = target(item, panes, session, me) else {
             continue;
         };
-        if !seen.insert(resolved.pane.id.clone()) {
-            continue;
+        if seen.insert(target.id()) {
+            candidates.push(Candidate::new(target, item.clone()));
         }
-        candidates.push(Candidate::new(resolved.pane.clone(), session.clone()));
     }
-    candidates.sort_by(|a, b| a.pane.id.cmp(&b.pane.id));
-    Ok(candidates)
+    candidates.sort_by_key(Candidate::id);
+    candidates
 }
 
 fn pane_for_pid<'a>(panes: &'a [Pane], chain: &[u32]) -> Option<&'a Pane> {
@@ -93,7 +132,7 @@ pub(crate) fn resolve_session_pane<'a>(
     session: &ListedSession,
     me: u32,
 ) -> Option<SessionPane<'a>> {
-    if session.source != Source::Cli {
+    if session.source != Source::Cli || session.paseo_agent_id.is_some() {
         return None;
     }
     // A shared reporter process can itself descend from a tmux pane while
@@ -172,9 +211,16 @@ fn same_path(left: &str, right: &str) -> bool {
     fold(left) == fold(right)
 }
 
-fn select(lines: &[String], query: Option<&str>, preview: bool) -> Result<Option<String>> {
+fn select(
+    ctx: &AppContext,
+    lines: &[String],
+    query: Option<&str>,
+    preview: bool,
+) -> Result<Option<String>> {
     let mut command = Command::new("fzf");
-    command.args(fzf_args(query, preview));
+    command
+        .args(fzf_args(&ctx.berth_bin, query, preview))
+        .env("PASEO_HOME", &ctx.paseo_home);
     let mut child = command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -193,33 +239,55 @@ fn select(lines: &[String], query: Option<&str>, preview: bool) -> Result<Option
     Ok(text.lines().next().map(str::to_string))
 }
 
+enum Target {
+    Pane(Pane),
+    Paseo(String),
+}
+
+impl Target {
+    fn id(&self) -> String {
+        match self {
+            Self::Pane(pane) => pane.id.clone(),
+            Self::Paseo(agent_id) => format!("paseo:{agent_id}"),
+        }
+    }
+}
+
 struct Candidate {
-    pane: Pane,
+    target: Target,
     session: ListedSession,
     cwd: String,
     branch: Option<String>,
 }
 
 impl Candidate {
-    fn new(pane: Pane, session: ListedSession) -> Self {
+    fn new(target: Target, session: ListedSession) -> Self {
         let cwd = session
             .cwd
             .clone()
             .filter(|cwd| !cwd.is_empty())
-            .unwrap_or_else(|| pane.path.clone());
+            .or_else(|| match &target {
+                Target::Pane(pane) => Some(pane.path.clone()),
+                Target::Paseo(_) => None,
+            })
+            .unwrap_or_default();
         let branch = git::branch(Path::new(&cwd));
         Self {
-            pane,
+            target,
             session,
             cwd,
             branch,
         }
     }
 
+    fn id(&self) -> String {
+        self.target.id()
+    }
+
     fn line(&self) -> String {
         format!(
             "{}\t{}\t{}\t{}\t{}\t{}\t{}",
-            self.pane.id,
+            self.id(),
             self.session.provider,
             self.session.status.as_str(),
             self.session.title.as_deref().unwrap_or("-"),
@@ -236,8 +304,21 @@ fn folder_name(path: &str) -> Option<String> {
         .map(|name| name.to_string_lossy().into_owned())
 }
 
-fn fzf_args(query: Option<&str>, preview: bool) -> Vec<String> {
-    let preview_command = tmux::preview_command();
+fn fzf_args(binary: &Path, query: Option<&str>, preview: bool) -> Vec<String> {
+    let pane_preview = tmux::preview_command();
+    let binary = binary.display().to_string();
+    // fzf already quotes `{1}` for the preview shell.
+    let preview_command = if cfg!(windows) {
+        let binary = binary.replace('\'', "''");
+        format!(
+            "if (({{1}}).StartsWith('paseo:')) {{ & '{binary}' paseo-preview (({{1}}).Substring(6)) }} else {{ {pane_preview} }}"
+        )
+    } else {
+        let binary = binary.replace('\'', "'\\''");
+        format!(
+            "key={{1}}; case \"$key\" in paseo:*) '{binary}' paseo-preview \"${{key#paseo:}}\" ;; *) {pane_preview} ;; esac"
+        )
+    };
     let preview_window = if preview { "up:80%" } else { "up:80%:hidden" };
     let mut args: Vec<String> = [
         "--delimiter",

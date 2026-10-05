@@ -80,20 +80,22 @@ enum Command {
         #[arg(long)]
         provider: String,
     },
-    /// Attach to a running agent in tmux
+    /// Attach to a running agent in tmux or focus its Paseo session
     Attach {
         /// Initial fzf query
         query: Option<String>,
-        /// Show the pane preview (toggle with ctrl-t)
+        /// Show the pane or Paseo stream preview (toggle with ctrl-t)
         #[arg(short, long)]
         preview: bool,
         /// Only consider panes in the current tmux session
         #[arg(short, long)]
         session: bool,
-        /// Print candidate panes without attaching
+        /// Print candidate sessions without attaching
         #[arg(long)]
         dry_run: bool,
     },
+    #[command(hide = true)]
+    PaseoPreview { agent_id: String },
     /// Check server, service, and agent hooks
     Doctor,
     /// Resume sessions after the server or host restarts
@@ -186,6 +188,7 @@ pub fn run() -> Result<()> {
             session,
             dry_run,
         } => attach::run(&ctx, query, preview, session, dry_run),
+        Command::PaseoPreview { agent_id } => crate::providers::paseo::preview(&ctx, &agent_id),
         Command::Doctor => doctor::run(&ctx),
         Command::Resume {
             pattern,

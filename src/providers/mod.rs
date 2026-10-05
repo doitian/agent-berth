@@ -12,6 +12,7 @@ mod claude;
 mod codex;
 mod grok;
 pub(crate) mod opencode;
+pub(crate) mod paseo;
 mod pi;
 
 pub(crate) fn focus_desktop(ctx: &AppContext, provider: &str, session_id: &str) -> Result<()> {

@@ -296,6 +296,303 @@ fn codex_source_tracks_current_client_when_resuming_across_cli_and_desktop() {
 }
 
 #[test]
+fn attach_focuses_monitored_paseo_sessions_via_api_and_deep_link_without_clis() {
+    use support::paseo::{MockPaseo, Options};
+    let mut sandbox = Sandbox::new();
+    let mock = MockPaseo::new(&sandbox.root.path().join("paseo"), Options::default());
+    let bin = sandbox.root.path().join("bin");
+    let desktop = bin.join(format!("Paseo{}", std::env::consts::EXE_SUFFIX));
+    fs::copy(
+        bin.join(format!("fzf{}", std::env::consts::EXE_SUFFIX)),
+        &desktop,
+    )
+    .unwrap();
+    sandbox
+        .env
+        .insert("PASEO_DESKTOP_BIN".into(), desktop.into_os_string());
+    for key in [
+        "ELECTRON_RUN_AS_NODE",
+        "ELECTRON_NO_ATTACH_CONSOLE",
+        "PASEO_NODE_ENV",
+        "PASEO_DESKTOP_CLI",
+    ] {
+        sandbox.env.insert(key.into(), "1".into());
+    }
+    // Compare exact names: on case-insensitive filesystems `paseo` resolves to `Paseo`.
+    let cli = if cfg!(windows) { "paseo.cmd" } else { "paseo" };
+    assert!(
+        fs::read_dir(&bin)
+            .unwrap()
+            .all(|entry| entry.unwrap().file_name() != cli)
+    );
+    sandbox.start();
+    sandbox
+        .env
+        .insert("PASEO_AGENT_ID".into(), "paseo-agent".into());
+    sandbox.notify("claude", json!({
+        "session_id":"native-id", "hook_event_name":"UserPromptSubmit", "pid":std::process::id(),
+        "cwd":sandbox.project(), "title":"Paseo task"
+    }));
+    sandbox.env.remove(OsStr::new("PASEO_AGENT_ID"));
+    fs::remove_file(
+        sandbox
+            .root
+            .path()
+            .join("bin")
+            .join(format!("tmux{}", std::env::consts::EXE_SUFFIX)),
+    )
+    .unwrap();
+    let output = success(sandbox.berth().args(["attach", "--dry-run"]));
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        text.starts_with("paseo:paseo-agent\tclaude\trunning\t"),
+        "{text}"
+    );
+    assert!(text.contains("native-id"));
+    success(sandbox.berth().args(["attach", "Paseo task"]));
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let logs = loop {
+        let logs: Vec<String> = fs::read_dir(sandbox.root.path().join("tmux-log"))
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "url"))
+            .map(|entry| fs::read_to_string(entry.path()).unwrap())
+            .collect();
+        if !logs.is_empty() {
+            break logs;
+        }
+        assert!(Instant::now() < deadline, "deep link was not launched");
+        std::thread::sleep(Duration::from_millis(25));
+    };
+    assert_eq!(logs.len(), 1, "{logs:?}");
+    assert_eq!(logs[0], "paseo://h/server-id/agent/paseo-agent");
+    assert_eq!(
+        mock.connections.load(std::sync::atomic::Ordering::Relaxed),
+        1
+    );
+    sandbox.stop();
+    let output = success(sandbox.berth().args(["list", "--json"]));
+    let sessions: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(sessions[0]["paseo_agent_id"], "paseo-agent");
+}
+
+#[test]
+fn paseo_preview_helper_streams_the_api_without_a_paseo_executable() {
+    use std::io::Read;
+    use std::process::Stdio;
+    use std::sync::{Arc, Mutex};
+    use support::paseo::{MockPaseo, Options};
+    let sandbox = Sandbox::new();
+    let mock = MockPaseo::new(&sandbox.root.path().join("paseo"), Options::default());
+    let mut child = sandbox
+        .berth()
+        .args(["paseo-preview", "paseo-agent"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut stdout = child.stdout.take().unwrap();
+    let output = Arc::new(Mutex::new(Vec::new()));
+    let reader_output = output.clone();
+    let reader = std::thread::spawn(move || {
+        let mut bytes = [0; 1024];
+        while let Ok(size) = stdout.read(&mut bytes) {
+            if size == 0 {
+                break;
+            }
+            reader_output
+                .lock()
+                .unwrap()
+                .extend_from_slice(&bytes[..size]);
+        }
+    });
+    let result = std::panic::catch_unwind(|| {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let bytes = output.lock().unwrap();
+            if String::from_utf8_lossy(&bytes).contains("Hello streamed") {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "no Paseo API preview: {}",
+                String::from_utf8_lossy(&bytes)
+            );
+            drop(bytes);
+            std::thread::sleep(Duration::from_millis(25));
+        }
+    });
+    let _ = child.kill();
+    let _ = child.wait();
+    reader.join().unwrap();
+    if let Err(error) = result {
+        std::panic::resume_unwind(error)
+    }
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while mock.closed.load(std::sync::atomic::Ordering::Relaxed) == 0 {
+        assert!(
+            Instant::now() < deadline,
+            "preview connection was not closed"
+        );
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    assert!(
+        mock.received
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|frame| frame["message"]["type"] == "fetch_agent_timeline_request")
+    );
+}
+
+#[test]
+fn paseo_attach_reports_missing_sessions_without_changing_monitoring() {
+    use support::paseo::{MockPaseo, Options};
+    let mut sandbox = Sandbox::new();
+    let _mock = MockPaseo::new(
+        &sandbox.root.path().join("paseo"),
+        Options {
+            missing: true,
+            ..Options::default()
+        },
+    );
+    sandbox.start();
+    sandbox
+        .env
+        .insert("PASEO_AGENT_ID".into(), "paseo-agent".into());
+    sandbox.hook(
+        "claude",
+        "native-id",
+        "UserPromptSubmit",
+        Some(std::process::id()),
+    );
+    let output = sandbox
+        .berth()
+        .args(["attach", "native-id"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("does not exist in Paseo"));
+    assert_eq!(sandbox.sessions(false)[0]["status"], "running");
+}
+
+#[test]
+fn paseo_records_only_route_already_monitored_sessions() {
+    let mut sandbox = Sandbox::new();
+    sandbox.start();
+    sandbox.hook(
+        "codex",
+        "native-id",
+        "UserPromptSubmit",
+        Some(std::process::id()),
+    );
+    let records = sandbox.root.path().join("paseo/agents/project");
+    fs::create_dir_all(&records).unwrap();
+    for sid in ["native-id", "not-monitored"] {
+        fs::write(
+            records.join(format!("{sid}.json")),
+            json!({
+                "id":format!("paseo-{sid}"), "provider":"codex", "lastStatus":"running",
+                "createdAt":"9999-12-31T23:59:59Z", "runtimeInfo":{"sessionId":sid}
+            })
+            .to_string(),
+        )
+        .unwrap();
+    }
+    for online in [true, false] {
+        if !online {
+            sandbox.stop();
+        }
+        let output = success(sandbox.berth().args(["list", "--json"]));
+        let sessions: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0]["session_id"], "native-id");
+        assert_eq!(sessions[0]["paseo_agent_id"], "paseo-native-id");
+        assert_eq!(sessions[0]["status"], "running");
+        assert_eq!(sessions[0]["source"], "cli");
+        assert_eq!(
+            sessions[0]["cmdline"],
+            json!(["codex", "resume", "native-id"])
+        );
+    }
+}
+
+#[test]
+fn paseo_routing_switches_to_tmux_on_reopen_and_back_on_import() {
+    let mut sandbox = Sandbox::new();
+    sandbox.start();
+    sandbox
+        .env
+        .insert("PASEO_AGENT_ID".into(), "paseo-agent".into());
+    sandbox.hook(
+        "codex",
+        "moving",
+        "UserPromptSubmit",
+        Some(std::process::id()),
+    );
+    let records = sandbox.root.path().join("paseo/agents/project");
+    fs::create_dir_all(&records).unwrap();
+    let record = |id: &str, created: &str| {
+        json!({"id":id,"provider":"codex","createdAt":created,
+        "lastStatus":"idle","persistence":{"sessionId":"moving"}})
+        .to_string()
+    };
+    fs::write(
+        records.join("old.json"),
+        record("paseo-agent", "2000-01-01T00:00:00Z"),
+    )
+    .unwrap();
+    sandbox.env.insert(
+        "FIXTURE_TMUX_PANES".into(),
+        format!(
+            "%7\t{}\tproject\t0\tshell\t{}",
+            std::process::id(),
+            sandbox.project().display()
+        )
+        .into(),
+    );
+    let output = success(sandbox.berth().args(["attach", "--dry-run"]));
+    assert!(String::from_utf8_lossy(&output.stdout).starts_with("paseo:paseo-agent\t"));
+    sandbox.env.remove(OsStr::new("PASEO_AGENT_ID"));
+    sandbox.hook("codex", "moving", "SessionStart", Some(std::process::id()));
+    let output = success(sandbox.berth().args(["attach", "--dry-run"]));
+    assert!(String::from_utf8_lossy(&output.stdout).starts_with("%7\t"));
+    assert!(sandbox.sessions(false)[0]["paseo_agent_id"].is_null());
+    success(sandbox.berth().args(["attach", "moving"]));
+    fs::write(
+        records.join("import.json"),
+        record("imported-agent", "9999-12-31T23:59:59Z"),
+    )
+    .unwrap();
+    let output = success(sandbox.berth().args(["attach", "--dry-run"]));
+    assert!(String::from_utf8_lossy(&output.stdout).starts_with("paseo:imported-agent\t"));
+    let output = success(sandbox.berth().args(["list", "--json"]));
+    let sessions: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(sessions[0]["paseo_agent_id"], "imported-agent");
+    assert_eq!(sessions[0]["status"], "running");
+}
+
+#[test]
+fn paseo_plugin_reports_preserve_routing_identity() {
+    let mut sandbox = Sandbox::new();
+    sandbox.start();
+    sandbox
+        .env
+        .insert("PASEO_AGENT_ID".into(), "paseo-agent".into());
+    sandbox.notify(
+        "pi",
+        json!({"id":"reporter", "status":{"native-id":"busy"}}),
+    );
+    assert_eq!(sandbox.sessions(false)[0]["paseo_agent_id"], "paseo-agent");
+    sandbox.env.remove(OsStr::new("PASEO_AGENT_ID"));
+    sandbox.notify(
+        "pi",
+        json!({"id":"reporter", "status":{"native-id":"busy"}}),
+    );
+    assert!(sandbox.sessions(false)[0]["paseo_agent_id"].is_null());
+}
+
+#[test]
 fn codex_titles_refresh_from_index_without_hook_events() {
     use std::io::Write;
 

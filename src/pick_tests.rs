@@ -16,6 +16,8 @@ fn session(provider: &str, title: &str, cwd: &str) -> ListedSession {
         kind: SessionKind::Hook,
         parent_id: None,
         transcript_path: None,
+        paseo_agent_id: None,
+        paseo_host_changed_ms: None,
         exited: false,
         title: Some(title.into()),
         pane_pid: None,

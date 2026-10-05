@@ -106,6 +106,7 @@ pub(crate) enum Effect {
     None,
     Quit,
     Attach(Pane),
+    FocusPaseo(String),
     FocusDesktop {
         provider: String,
         session_id: String,
@@ -118,6 +119,10 @@ pub(crate) enum Effect {
 
 /// Blocking I/O (db, tmux, git) runs on worker threads so the UI never stalls.
 enum Fetch {
+    FocusPaseo {
+        ctx: Box<Context>,
+        agent_id: String,
+    },
     FocusDesktop {
         ctx: Box<Context>,
         provider: String,
@@ -186,6 +191,9 @@ fn spawn_fetch(tx: &Sender<Fetched>, fetch: Fetch) {
     let tx = tx.clone();
     thread::spawn(move || {
         let fetched = match fetch {
+            Fetch::FocusPaseo { ctx, agent_id } => {
+                Fetched::FocusDesktop(crate::providers::paseo::focus(&ctx, &agent_id))
+            }
             Fetch::FocusDesktop {
                 ctx,
                 provider,
@@ -351,6 +359,8 @@ impl App {
     }
 
     fn refresh(&mut self, ctx: &Context) {
+        self.transcript_roots
+            .insert("paseo".into(), ctx.paseo_home.clone());
         self.transcript_roots
             .insert("claude".into(), ctx.claude_config_dir.join("projects"));
         self.transcript_roots
@@ -543,21 +553,24 @@ impl App {
         let (pane, own_content) = resolved.unzip();
         self.pane_shows_session = own_content.unwrap_or(false);
         self.select_preview(pane);
-        let transcript = self
-            .selected_session()
-            .filter(|session| {
-                transcript::supports(&session.provider)
-                    // Desktop sessions never show pane output; CLI sessions
-                    // fall back to the transcript when no pane displays their
-                    // own output (no pane, or only a background tab).
-                    && (session.source == Source::Desktop || !self.pane_shows_session)
-            })
-            .map(|session| transcript::Source {
-                provider: session.provider.clone(),
-                session_id: session.session_id.clone(),
-                path: session.transcript_path.clone(),
-                root: self.transcript_roots.get(&session.provider).cloned(),
-            });
+        let transcript = self.selected_session().and_then(|session| {
+            if let Some(agent_id) = &session.paseo_agent_id {
+                return Some(transcript::Source {
+                    provider: "paseo".into(),
+                    session_id: agent_id.clone(),
+                    path: None,
+                    root: self.transcript_roots.get("paseo").cloned(),
+                });
+            }
+            (transcript::supports(&session.provider)
+                && (session.source == Source::Desktop || !self.pane_shows_session))
+                .then(|| transcript::Source {
+                    provider: session.provider.clone(),
+                    session_id: session.session_id.clone(),
+                    path: session.transcript_path.clone(),
+                    root: self.transcript_roots.get(&session.provider).cloned(),
+                })
+        });
         if transcript != self.selected_transcript {
             self.selected_transcript = transcript;
             *self.transcript_reader = Default::default();
@@ -879,6 +892,12 @@ impl App {
     }
 
     fn attach_selected(&mut self) -> Effect {
+        if let Some(agent_id) = self
+            .selected_session()
+            .and_then(|session| session.paseo_agent_id.clone())
+        {
+            return Effect::FocusPaseo(agent_id);
+        }
         if let Some(session) = self.selected_session()
             && matches!(session.provider.as_str(), "claude" | "codex")
             && session.source == Source::Desktop
@@ -1033,6 +1052,13 @@ pub fn run(ctx: &Context) -> Result<()> {
                     Effect::None => {}
                     Effect::Quit => break,
                     Effect::Attach(pane) => attach_effect(&mut guard, &mut app, &pane),
+                    Effect::FocusPaseo(agent_id) => spawn_fetch(
+                        &app.fetch_tx,
+                        Fetch::FocusPaseo {
+                            ctx: Box::new(ctx.clone()),
+                            agent_id,
+                        },
+                    ),
                     Effect::FocusDesktop {
                         provider,
                         session_id,
@@ -1426,7 +1452,13 @@ fn branch_spans(branch: &str, status: Option<&git::RepoStatus>) -> Vec<Span<'sta
 fn render_preview(frame: &mut Frame, app: &App, area: Rect) {
     // A selected transcript always provides the content, even when the
     // session's pane exists but only hosts it as a background tab.
-    let title = if app.selected_transcript.is_some() {
+    let title = if app
+        .selected_transcript
+        .as_ref()
+        .is_some_and(|source| source.provider == "paseo")
+    {
+        " Conversation · Paseo stream ".into()
+    } else if app.selected_transcript.is_some() {
         " Conversation · live transcript ".into()
     } else {
         match &app.selected_pane {

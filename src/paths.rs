@@ -17,6 +17,7 @@ pub struct Context {
     pub codex_home: PathBuf,
     pub grok_home: PathBuf,
     pub pi_dir: PathBuf,
+    pub paseo_home: PathBuf,
     pub appdata: Option<PathBuf>,
     pub berth_bin: PathBuf,
     pub socket_override: Option<String>,
@@ -47,6 +48,7 @@ impl Context {
             grok_home: env_path("GROK_HOME").unwrap_or_else(|| home.join(".grok")),
             pi_dir: env_path("PI_CODING_AGENT_DIR")
                 .unwrap_or_else(|| home.join(".pi").join("agent")),
+            paseo_home: env_path("PASEO_HOME").unwrap_or_else(|| home.join(".paseo")),
             appdata: env_path("APPDATA"),
             berth_bin: env::current_exe().unwrap_or_else(|_| PathBuf::from(APP)),
             socket_override: env::var("AGENT_BERTH_SOCK").ok(),
@@ -257,6 +259,7 @@ impl Context {
             codex_home: root.join("codex"),
             grok_home: root.join("grok"),
             pi_dir: root.join("pi"),
+            paseo_home: root.join(".paseo"),
             appdata: Some(root.join("appdata")),
             berth_bin: bin.to_path_buf(),
             socket_override: Some(

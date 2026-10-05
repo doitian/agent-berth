@@ -37,6 +37,7 @@ pub(crate) struct Reader {
     identity: Option<FileIdentity>,
     omitted: bool,
     resolved: Option<PathBuf>,
+    paseo: Option<crate::providers::paseo::Stream>,
 }
 
 #[derive(PartialEq, Eq)]
@@ -64,6 +65,17 @@ impl FileIdentity {
 
 impl Reader {
     pub fn preview(&mut self, source: &Source) -> String {
+        if source.provider == "paseo" {
+            let Some(home) = source.root.as_deref() else {
+                return "Paseo home is unknown".into();
+            };
+            return self
+                .paseo
+                .get_or_insert_with(|| {
+                    crate::providers::paseo::Stream::new(&source.session_id, home)
+                })
+                .preview();
+        }
         let path = source
             .path
             .as_ref()
