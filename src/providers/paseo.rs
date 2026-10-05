@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -10,7 +9,6 @@ use anyhow::{Result, ensure};
 use serde_json::Value;
 
 use crate::paths::Context;
-use crate::process;
 use crate::status::string_field;
 use crate::store::ListedSession;
 
@@ -291,40 +289,6 @@ fn follow(
             }
             state.timeline.event(payload);
         }
-    }
-    Ok(())
-}
-
-pub fn preview(ctx: &Context, agent_id: &str) -> Result<()> {
-    ensure!(valid_id(agent_id), "invalid Paseo agent ID");
-    let mut stream = Stream::new(agent_id, &ctx.paseo_home);
-    // fzf on Windows kills only the preview shell, and a failed write never
-    // reveals that while the agent is idle, so watch the shell instead.
-    let parent = process::ancestors(std::process::id()).get(1).copied();
-    let rows = std::env::var("FZF_PREVIEW_LINES")
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .unwrap_or(40)
-        .clamp(1, 200);
-    let mut last = String::new();
-    let mut stdout = std::io::stdout();
-    for tick in 0u64.. {
-        if tick % 10 == 0 && parent.is_some_and(|pid| !process::pid_alive(pid)) {
-            break;
-        }
-        let content = stream.preview();
-        if content != last {
-            let lines: Vec<_> = content.lines().rev().take(rows).collect();
-            let content_tail = lines.into_iter().rev().collect::<Vec<_>>().join("\n");
-            if write!(stdout, "\x1b[2J\x1b[H{content_tail}")
-                .and_then(|()| stdout.flush())
-                .is_err()
-            {
-                break;
-            }
-            last = content;
-        }
-        thread::sleep(Duration::from_millis(100));
     }
     Ok(())
 }

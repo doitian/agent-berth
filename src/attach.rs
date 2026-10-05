@@ -22,9 +22,9 @@ pub fn run(
     dry_run: bool,
 ) -> Result<()> {
     let sessions = db::query_sessions(ctx, false, None)?;
-    let candidates = collect(&sessions, &list_panes(&sessions, session)?, session);
+    let candidates = collect(&sessions, &tmux::list_panes(!session)?);
     if candidates.is_empty() {
-        println!("No active agents in tmux panes or Paseo.");
+        println!("No active agents in tmux panes.");
         return Ok(());
     }
     if dry_run {
@@ -37,7 +37,7 @@ pub fn run(
         bail!("fzf is required to select a session");
     }
     let lines: Vec<String> = candidates.iter().map(Candidate::line).collect();
-    let Some(selected) = select(ctx, &lines, query.as_deref(), preview)? else {
+    let Some(selected) = select(&lines, query.as_deref(), preview)? else {
         return Ok(());
     };
     let target_id = selected.split('\t').next().unwrap_or("");
@@ -55,61 +55,36 @@ pub fn run(
                 && current.session_id == candidate.session.session_id
         })
         .context("selected session is no longer active")?;
-    let panes = list_panes(std::slice::from_ref(current), session)?;
-    match target(current, &panes, session, std::process::id())
-        .context("selected session is no longer active")?
-    {
-        Target::Pane(pane) => tmux::attach_pane(&pane),
-        Target::Paseo(agent_id) => crate::providers::paseo::focus(ctx, &agent_id),
-    }
+    let panes = tmux::list_panes(!session)?;
+    let pane = target(current, &panes, std::process::id())
+        .context("selected session is no longer active")?;
+    tmux::attach_pane(&pane)
 }
 
-fn list_panes(sessions: &[ListedSession], session: bool) -> Result<Vec<Pane>> {
-    match tmux::list_panes(!session) {
-        Ok(panes) => Ok(panes),
-        // Paseo targets need no tmux, but `--session` excludes them.
-        Err(_) if !session && sessions.iter().any(|item| paseo_id(item).is_some()) => {
-            Ok(Vec::new())
-        }
-        Err(error) => Err(error),
-    }
-}
-
-fn paseo_id(session: &ListedSession) -> Option<&String> {
-    session
-        .paseo_agent_id
-        .as_ref()
-        .filter(|id| crate::providers::paseo::valid_id(id))
-}
-
-fn target(item: &ListedSession, panes: &[Pane], session: bool, me: u32) -> Option<Target> {
-    if let Some(agent_id) = paseo_id(item) {
-        return (!session).then(|| Target::Paseo(agent_id.clone()));
-    }
-    if item.source != Source::Cli {
-        return None;
-    }
+/// Pane to attach to. Paseo and desktop sessions are not in tmux; the TUI
+/// focuses them instead.
+fn target(item: &ListedSession, panes: &[Pane], me: u32) -> Option<Pane> {
     if item.kind == SessionKind::Hook && !item.pid.is_some_and(process::pid_alive) {
         return None;
     }
-    resolve_session_pane(panes, item, me).map(|resolved| Target::Pane(resolved.pane.clone()))
+    resolve_session_pane(panes, item, me).map(|resolved| resolved.pane.clone())
 }
 
-fn collect(sessions: &[ListedSession], panes: &[Pane], session: bool) -> Vec<Candidate> {
+fn collect(sessions: &[ListedSession], panes: &[Pane]) -> Vec<Candidate> {
     let me = std::process::id();
     let mut ordered: Vec<&ListedSession> = sessions.iter().collect();
     ordered.sort_by_key(|session| std::cmp::Reverse(session.last_report_ms));
     let mut seen = HashSet::new();
     let mut candidates = Vec::new();
     for item in ordered {
-        let Some(target) = target(item, panes, session, me) else {
+        let Some(pane) = target(item, panes, me) else {
             continue;
         };
-        if seen.insert(target.id()) {
-            candidates.push(Candidate::new(target, item.clone()));
+        if seen.insert(pane.id.clone()) {
+            candidates.push(Candidate::new(pane, item.clone()));
         }
     }
-    candidates.sort_by_key(Candidate::id);
+    candidates.sort_by(|left, right| left.id().cmp(right.id()));
     candidates
 }
 
@@ -211,17 +186,9 @@ fn same_path(left: &str, right: &str) -> bool {
     fold(left) == fold(right)
 }
 
-fn select(
-    ctx: &AppContext,
-    lines: &[String],
-    query: Option<&str>,
-    preview: bool,
-) -> Result<Option<String>> {
-    let mut command = Command::new("fzf");
-    command
-        .args(fzf_args(&ctx.berth_bin, query, preview))
-        .env("PASEO_HOME", &ctx.paseo_home);
-    let mut child = command
+fn select(lines: &[String], query: Option<&str>, preview: bool) -> Result<Option<String>> {
+    let mut child = Command::new("fzf")
+        .args(fzf_args(query, preview))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()
@@ -239,49 +206,31 @@ fn select(
     Ok(text.lines().next().map(str::to_string))
 }
 
-enum Target {
-    Pane(Pane),
-    Paseo(String),
-}
-
-impl Target {
-    fn id(&self) -> String {
-        match self {
-            Self::Pane(pane) => pane.id.clone(),
-            Self::Paseo(agent_id) => format!("paseo:{agent_id}"),
-        }
-    }
-}
-
 struct Candidate {
-    target: Target,
+    pane: Pane,
     session: ListedSession,
     cwd: String,
     branch: Option<String>,
 }
 
 impl Candidate {
-    fn new(target: Target, session: ListedSession) -> Self {
+    fn new(pane: Pane, session: ListedSession) -> Self {
         let cwd = session
             .cwd
             .clone()
             .filter(|cwd| !cwd.is_empty())
-            .or_else(|| match &target {
-                Target::Pane(pane) => Some(pane.path.clone()),
-                Target::Paseo(_) => None,
-            })
-            .unwrap_or_default();
+            .unwrap_or_else(|| pane.path.clone());
         let branch = git::branch(Path::new(&cwd));
         Self {
-            target,
+            pane,
             session,
             cwd,
             branch,
         }
     }
 
-    fn id(&self) -> String {
-        self.target.id()
+    fn id(&self) -> &str {
+        &self.pane.id
     }
 
     fn line(&self) -> String {
@@ -304,21 +253,8 @@ fn folder_name(path: &str) -> Option<String> {
         .map(|name| name.to_string_lossy().into_owned())
 }
 
-fn fzf_args(binary: &Path, query: Option<&str>, preview: bool) -> Vec<String> {
-    let pane_preview = tmux::preview_command();
-    let binary = binary.display().to_string();
-    // fzf already quotes `{1}` for the preview shell.
-    let preview_command = if cfg!(windows) {
-        let binary = binary.replace('\'', "''");
-        format!(
-            "if (({{1}}).StartsWith('paseo:')) {{ & '{binary}' paseo-preview (({{1}}).Substring(6)) }} else {{ {pane_preview} }}"
-        )
-    } else {
-        let binary = binary.replace('\'', "'\\''");
-        format!(
-            "key={{1}}; case \"$key\" in paseo:*) '{binary}' paseo-preview \"${{key#paseo:}}\" ;; *) {pane_preview} ;; esac"
-        )
-    };
+fn fzf_args(query: Option<&str>, preview: bool) -> Vec<String> {
+    let preview_command = tmux::preview_command();
     let preview_window = if preview { "up:80%" } else { "up:80%:hidden" };
     let mut args: Vec<String> = [
         "--delimiter",

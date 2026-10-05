@@ -13,7 +13,6 @@ use serde_json::{Value, json};
 use tempfile::TempDir;
 
 pub mod mock_llm;
-pub mod paseo;
 
 pub const BERTH: &str = env!("CARGO_BIN_EXE_agent-berth");
 

@@ -77,7 +77,7 @@ uses [fzf](https://github.com/junegunn/fzf).
 | `agent-berth search [patterns...] [--created-in DURATION] [--json]` | Search stored sessions across all providers, newest first |
 | `agent-berth stats [--json]` | Aggregate active session counts by status and provider |
 | `agent-berth resume [pattern] [--idle 20m] [--here] [--dry-run]` | Resume sessions in tmux |
-| `agent-berth attach [query] [--preview] [--session] [--dry-run]` | Select an agent with fzf and attach in tmux or focus it in Paseo |
+| `agent-berth attach [query] [--preview] [--session] [--dry-run]` | Select an agent running in a tmux pane with fzf and attach to it; Paseo and desktop sessions are only reachable from the TUI |
 | `agent-berth rm [patterns...]` | Hide sessions so they are never resumed |
 | `agent-berth doctor` | Check server, service, and hook installation |
 | `agent-berth notify --provider <name>` | Report agent status (used by hooks) |
@@ -118,9 +118,8 @@ Sessions hosted in [Paseo](https://paseo.sh) show a live conversation stream
 through its daemon API, including providers without local transcript support.
 Press `a` to focus that session by passing a `paseo://` deep link directly to
 the Paseo Desktop executable, without relying on an OS URL handler.
-The CLI `attach` command does the same; its `--preview` displays a Paseo stream
-instead of a tmux screen. `--session` remains restricted to the current tmux
-session. No Paseo CLI is required; the local daemon must be running. Attach
+The CLI `attach` command lists only tmux panes and skips Paseo sessions.
+No Paseo CLI is required; the local daemon must be running. Focusing
 looks for Desktop in standard installation locations and Windows Scoop
 (`~/scoop/apps/paseo/current/Paseo.exe`). Set `PASEO_DESKTOP_BIN` to its executable
 path for a custom installation. Linux launches `Paseo` or `Paseo.AppImage` with
@@ -133,7 +132,7 @@ routes sessions already monitored by agent-berth; it does not add sessions or
 change their status tracking or resume behavior. A later native host report
 clears an older Paseo association, while a newer Paseo import routes the same
 session back to Paseo. Host changes, rather than repeated heartbeats, determine
-the route; preview and attach switch on refresh. Before focusing or streaming,
+the route; preview and focus switch on refresh. Before focusing or streaming,
 agent-berth verifies the session through the API. It reads the daemon endpoint
 from `$PASEO_HOME/paseo.pid` rather than assuming a port, supporting loopback TCP,
 Unix sockets, and Windows named pipes. Authentication uses
