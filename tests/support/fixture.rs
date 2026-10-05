@@ -54,8 +54,15 @@ fn main() {
     } else if name == "Paseo" {
         let dir = PathBuf::from(env::var_os("FIXTURE_LOG_DIR").unwrap());
         let mut log = args.join("\n");
-        for key in ["ELECTRON_RUN_AS_NODE", "ELECTRON_NO_ATTACH_CONSOLE", "PASEO_NODE_ENV", "PASEO_DESKTOP_CLI"] {
-            if env::var_os(key).is_some() { log.push_str(&format!("\nUNEXPECTED_ENV={key}")); }
+        for key in [
+            "ELECTRON_RUN_AS_NODE",
+            "ELECTRON_NO_ATTACH_CONSOLE",
+            "PASEO_NODE_ENV",
+            "PASEO_DESKTOP_CLI",
+        ] {
+            if env::var_os(key).is_some() {
+                log.push_str(&format!("\nUNEXPECTED_ENV={key}"));
+            }
         }
         fs::write(dir.join(format!("{}.url", std::process::id())), log).unwrap();
     } else if name == "claude" && args == ["agents", "--json"] {

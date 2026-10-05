@@ -156,8 +156,19 @@ fn stream_reconnects_and_refreshes_history_with_a_new_client_identity() {
         },
     );
     let mut stream = Stream::new("paseo-agent", &ctx.paseo_home);
+    // Connections are counted on accept, before the reconnect's hello arrives.
+    let hellos = || {
+        mock.received
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|frame| frame["type"] == "hello")
+            .count()
+    };
     wait(|| {
-        mock.connections.load(Ordering::Relaxed) >= 2 && stream.preview().contains("Hello streamed")
+        mock.connections.load(Ordering::Relaxed) >= 2
+            && hellos() >= 2
+            && stream.preview().contains("Hello streamed")
     });
     let frames = mock.received.lock().unwrap();
     let clients: Vec<_> = frames
