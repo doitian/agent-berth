@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [3.1.1](https://github.com/doitian/agent-berth/releases/tag/v3.1.1) - 2026-10-05
+
+### Changed
+
+- Remove Paseo sessions from CLI attach ([5648707](https://github.com/doitian/agent-berth/commit/56487074b6bd8a059207be593823b0825b2dfe92))
+
 ## [3.1.0](https://github.com/doitian/agent-berth/releases/tag/v3.1.0) - 2026-10-05
 
 ### Added
