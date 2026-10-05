@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented in this file.
 
+## [3.1.0](https://github.com/doitian/agent-berth/releases/tag/v3.1.0) - 2026-10-05
+
+### Added
+
+- Add session search across providers with creation time filtering ([cfb8866](https://github.com/doitian/agent-berth/commit/cfb8866fa0cfcff2e2ca9606c769a43f8290a9fa))
+- Add Paseo API previews and desktop attach (#12) ([763d22c](https://github.com/doitian/agent-berth/commit/763d22ce2ce5a256ffa4283740a931eaf4aabae5))
+
+### Fixed
+
+- Fix server startup failing on incompatible plugin snapshots ([bf7523b](https://github.com/doitian/agent-berth/commit/bf7523b85ade1a3c4d33288847c53ced23ceb188))
+
 ## [3.0.2](https://github.com/doitian/agent-berth/releases/tag/v3.0.2) - 2026-09-28
 
 ### Fixed
