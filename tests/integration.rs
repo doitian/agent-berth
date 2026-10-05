@@ -318,9 +318,12 @@ fn attach_focuses_monitored_paseo_sessions_via_api_and_deep_link_without_clis() 
     ] {
         sandbox.env.insert(key.into(), "1".into());
     }
+    // Compare exact names: on case-insensitive filesystems `paseo` resolves to `Paseo`.
+    let cli = if cfg!(windows) { "paseo.cmd" } else { "paseo" };
     assert!(
-        !bin.join(if cfg!(windows) { "paseo.cmd" } else { "paseo" })
-            .exists()
+        fs::read_dir(&bin)
+            .unwrap()
+            .all(|entry| entry.unwrap().file_name() != cli)
     );
     sandbox.start();
     sandbox
