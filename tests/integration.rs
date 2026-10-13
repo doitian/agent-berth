@@ -86,6 +86,18 @@ fn hook_clients_report_lifecycle_over_ipc() {
         sandbox.hook(provider, &sid, "SessionEnd", Some(std::process::id()));
         assert!(sandbox.sessions(false).is_empty());
         assert!(sandbox.sessions(true).is_empty());
+        let result =
+            success(
+                sandbox
+                    .berth()
+                    .args(["list", "--json", "--resumable", "--idle", "20m"]),
+            );
+        let sessions: Vec<Value> = serde_json::from_slice(&result.stdout).unwrap();
+        assert!(
+            sessions
+                .iter()
+                .any(|session| session["session_id"] == sid && session["status"] == "done")
+        );
     }
 }
 

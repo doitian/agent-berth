@@ -264,7 +264,7 @@ fn idle_sessions_need_an_explicit_window() {
 }
 
 #[test]
-fn session_end_is_not_resumable() {
+fn ended_cli_session_is_resumable_within_idle_window() {
     let mut store = Store::default();
     store
         .update(
@@ -286,7 +286,127 @@ fn session_end_is_not_resumable() {
             }),
         )
         .unwrap();
+    assert!(store.listed().is_empty());
+    assert!(store.active().is_empty());
+    assert!(store.resumable(None).is_empty());
+    let sessions = store.resumable(Some(Duration::from_secs(1200)));
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0].status, AgentStatus::Done);
+    assert!(sessions[0].exited);
+    store
+        .hooks
+        .get_mut("claude")
+        .unwrap()
+        .get_mut("abc")
+        .unwrap()
+        .last_report_ms = now_ms() - 1_300_000;
     assert!(store.resumable(Some(Duration::from_secs(1200))).is_empty());
+    store
+        .update(
+            "claude",
+            json!({
+                "session_id":"abc", "hook_event_name":"UserPromptSubmit",
+                "cwd":"/work", "pid":std::process::id()
+            }),
+        )
+        .unwrap();
+    assert_eq!(store.active().len(), 1);
+    assert!(!store.active()[0].exited);
+}
+
+#[test]
+fn closed_tabs_are_resumable_even_with_a_live_shared_server() {
+    let me = std::process::id();
+    let mut store = Store::default();
+    store
+        .update(
+            "opencode",
+            json!({
+                "id":"server", "pid":me, "cwd":"/work",
+                "status":{"closed":"idle", "open":"idle", "old":"idle"}
+            }),
+        )
+        .unwrap();
+    store
+        .update(
+            "opencode",
+            json!({
+                "id":"host", "pid":me, "cwd":"/work", "status":{},
+                "tabs":["closed", "open", "old"]
+            }),
+        )
+        .unwrap();
+    store
+        .update(
+            "opencode",
+            json!({
+                "id":"host", "pid":me, "cwd":"/work", "status":{},
+                "tabs":["open"]
+            }),
+        )
+        .unwrap();
+    assert_eq!(store.listed().len(), 1);
+    assert!(store.resumable(None).is_empty());
+    let sessions = store.resumable(Some(Duration::from_secs(1200)));
+    assert_eq!(
+        sessions
+            .iter()
+            .map(|s| s.session_id.as_str())
+            .collect::<Vec<_>>(),
+        ["closed", "old"]
+    );
+    store
+        .snapshots
+        .get_mut("opencode")
+        .unwrap()
+        .get_mut("server")
+        .unwrap()
+        .last_report_ms = now_ms() - 1_300_000;
+    assert!(store.resumable(Some(Duration::from_secs(1200))).is_empty());
+}
+
+#[test]
+fn closed_tabs_remain_resumable_after_the_host_exits() {
+    let mut store = Store::default();
+    store
+        .update(
+            "opencode",
+            json!({
+                "id":"server", "pid":u32::MAX, "cwd":"/work", "status":{"closed":"idle"}
+            }),
+        )
+        .unwrap();
+    store
+        .update(
+            "opencode",
+            json!({
+                "id":"host", "pid":u32::MAX, "cwd":"/work", "status":{}, "tabs":["closed"]
+            }),
+        )
+        .unwrap();
+    assert!(store.listed().is_empty());
+    assert_eq!(store.resumable(Some(Duration::from_secs(1200))).len(), 1);
+    store.mark_removed("opencode", "closed");
+    assert!(store.resumable(Some(Duration::from_secs(1200))).is_empty());
+}
+
+#[test]
+fn idle_desktop_sessions_are_not_cli_resumable() {
+    let mut store = Store::default();
+    for event in ["UserPromptSubmit", "Stop", "SessionEnd"] {
+        store
+            .update(
+                "claude",
+                json!({
+                    "session_id":"desktop", "hook_event_name":event,
+                    "cwd":"/work", "entrypoint":"claude-desktop"
+                }),
+            )
+            .unwrap();
+        if event != "UserPromptSubmit" {
+            assert!(store.resumable(Some(Duration::from_secs(1200))).is_empty());
+        }
+    }
 }
 
 #[test]

@@ -206,8 +206,10 @@ their process is still alive.
 ### Resume behavior
 
 `resume` selects sessions that are still busy (`running`/`waiting`) with no
-live agent process, plus sessions that went idle without a graceful exit
-within the idle window (default `20m`, override with `--idle`). Selected
+live agent process. With `--idle` (default window `20m`, or `--idle 1h`), it also
+includes CLI-resumable idle/done sessions, including closed tabs and gracefully
+ended sessions, within that window. Open tabs remain excluded even if idle;
+an OpenCode shared server staying alive does not count as an open tab. Selected
 sessions are grouped by working directory; each directory gets a tmux session
 and each agent session gets a window running the provider's resume command.
 Pass a `pattern` to pick one session interactively with fzf, `--here` to only

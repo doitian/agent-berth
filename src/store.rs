@@ -176,21 +176,21 @@ impl Store {
                 .as_ref()
                 .and_then(|sid| bucket.get(sid))
                 .and_then(|session| session.pid);
+            let ending = string_field(&payload, &["hook_event_name", "hookEventName"])
+                .is_some_and(|name| name.eq_ignore_ascii_case("SessionEnd"));
+            let ended = sid
+                .as_ref()
+                .filter(|_| ending)
+                .and_then(|sid| bucket.get(sid).cloned());
             providers::apply_hook(provider, bucket, &payload);
-            if let Some(sid) = sid {
-                if let Some(session) = bucket.get_mut(&sid) {
-                    touch_session(session, &payload, provider, previous_pid);
-                    if session.exited {
-                        bucket.remove(&sid);
-                    }
-                } else if crate::status::string_field(
-                    &payload,
-                    &["hook_event_name", "hookEventName"],
-                )
-                .is_some_and(|name| name.eq_ignore_ascii_case("SessionEnd"))
-                {
-                    // already removed
-                }
+            if let (Some(sid), Some(mut session)) = (&sid, ended) {
+                session.status = AgentStatus::Done;
+                bucket.insert(sid.clone(), session);
+            }
+            if let Some(sid) = sid
+                && let Some(session) = bucket.get_mut(&sid)
+            {
+                touch_session(session, &payload, provider, previous_pid);
             }
             return Ok(Change::Hooks {
                 provider: provider.to_string(),
@@ -456,6 +456,9 @@ impl Store {
         // provider. Busy sessions keep running in the server even after
         // their tab closes.
         out.retain(|session| {
+            if !include_closed && session.exited {
+                return false;
+            }
             if include_closed
                 || session.kind != SessionKind::Plugin
                 || session.status.is_busy()
@@ -498,7 +501,7 @@ impl Store {
 
     pub fn resumable(&self, idle: Option<Duration>) -> Vec<ListedSession> {
         let now = now_ms();
-        self.listed()
+        self.stored()
             .into_iter()
             .filter(|session| session.is_resumable(self, now, idle))
             .collect()
@@ -641,10 +644,23 @@ impl ListedSession {
     }
 
     pub fn is_resumable(&self, store: &Store, now_ms: u64, idle: Option<Duration>) -> bool {
-        if self.exited || self.parent_id.is_some() {
+        if self.parent_id.is_some() {
             return false;
         }
-        if self.process_attached() {
+        let tabbed = self.kind == SessionKind::Plugin
+            && store
+                .snapshots
+                .get(&self.provider)
+                .is_some_and(|instances| {
+                    instances.values().any(|snapshot| snapshot.tabs.is_some())
+                });
+        // A tabbed agent's server can outlive its UI; only a live tab is attached.
+        let attached = if tabbed {
+            self.pane_pid.is_some_and(pid_alive)
+        } else {
+            !self.exited && self.process_attached()
+        };
+        if attached {
             return false;
         }
         if self.cwd.as_ref().is_none_or(|cwd| cwd.is_empty()) {
@@ -659,6 +675,9 @@ impl ListedSession {
         let Some(idle) = idle else {
             return false;
         };
+        if self.source != Source::Cli || self.cmdline.is_empty() {
+            return false;
+        }
         idle_age_ms(self, store, now_ms) <= idle.as_millis() as u64
     }
 }
@@ -730,9 +749,7 @@ fn touch_session(
         session.cmdline = providers::resume_cmd(provider, &sid);
     }
     let name = string_field(payload, &["hook_event_name", "hookEventName"]).unwrap_or("");
-    if name.eq_ignore_ascii_case("SessionEnd") {
-        session.exited = true;
-    }
+    session.exited = name.eq_ignore_ascii_case("SessionEnd");
 }
 
 fn string_list(payload: &Value, key: &str) -> Vec<String> {

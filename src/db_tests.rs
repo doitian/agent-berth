@@ -30,7 +30,7 @@ fn heartbeat_does_not_rewrite_sessions() {
 }
 
 #[test]
-fn session_end_removes_only_that_hook() {
+fn session_end_persists_done_session_for_resume() {
     let root = tempdir().unwrap();
     let ctx = Context::for_test(root.path(), &root.path().join("agent-berth"));
     std::fs::create_dir_all(&ctx.state_dir).unwrap();
@@ -60,7 +60,24 @@ fn session_end_removes_only_that_hook() {
 
     let loaded = load_from_path(&ctx).unwrap();
     assert!(loaded.hooks["claude"].contains_key("keep"));
-    assert!(!loaded.hooks["claude"].contains_key("drop"));
+    assert!(loaded.hooks["claude"]["drop"].exited);
+    assert_eq!(
+        loaded.hooks["claude"]["drop"].status,
+        crate::status::AgentStatus::Done
+    );
+    assert_eq!(loaded.listed().len(), 1);
+    assert!(
+        loaded
+            .resumable(None)
+            .iter()
+            .all(|session| session.session_id != "drop")
+    );
+    assert!(
+        loaded
+            .resumable(Some(Duration::from_secs(1200)))
+            .iter()
+            .any(|session| session.session_id == "drop")
+    );
 }
 
 #[test]
