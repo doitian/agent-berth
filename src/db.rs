@@ -144,7 +144,7 @@ pub fn query_stored(ctx: &AppContext) -> Result<Vec<ListedSession>> {
 }
 
 fn with_paseo(ctx: &AppContext, mut sessions: Vec<ListedSession>) -> Vec<ListedSession> {
-    crate::providers::paseo::attribute(ctx, &mut sessions);
+    crate::hubs::paseo::attribute(ctx, &mut sessions);
     sessions
 }
 

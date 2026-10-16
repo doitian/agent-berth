@@ -269,3 +269,21 @@ fn drops_desktop_sessions_without_session_files() {
     assert!(sessions.contains_key("cli-keep"));
     assert!(!sessions.contains_key("test-desktop"));
 }
+
+#[test]
+fn codex_originator_comes_from_the_hook_environment_unless_explicit() {
+    for (environment, expected) in [
+        (Some("Codex Desktop"), "Codex Desktop"),
+        (Some("codex_work_desktop"), "codex_work_desktop"),
+        (Some("codex-tui"), "codex-tui"),
+        (None, "codex-cli"),
+        (Some(""), "codex-cli"),
+    ] {
+        let mut payload = serde_json::json!({});
+        enrich_originator(&mut payload, environment);
+        assert_eq!(payload["originator"], expected);
+        let mut payload = serde_json::json!({"originator":"explicit"});
+        enrich_originator(&mut payload, environment);
+        assert_eq!(payload["originator"], "explicit");
+    }
+}

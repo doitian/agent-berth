@@ -20,11 +20,15 @@ use ratatui::widgets::{Block, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::{Frame, Terminal};
 
 use crate::duration::{format_duration, parse_duration};
+use crate::hubs::tmux::resolve_session_pane;
+use crate::hubs::{self, Hub, Preview, Tmux};
 use crate::paths::Context;
+use crate::providers::{self, logo};
 use crate::status::{AgentStatus, Source};
 use crate::store::ListedSession;
 use crate::tmux::{self, Pane};
-use crate::{attach, db, git, list, pick, process, resume, transcript};
+use crate::transcript::Feed;
+use crate::{db, git, list, pick, process, resume, transcript};
 
 const TICK: Duration = Duration::from_millis(200);
 const REFRESH: Duration = Duration::from_secs(1);
@@ -105,11 +109,9 @@ pub(crate) enum Browse {
 pub(crate) enum Effect {
     None,
     Quit,
-    Attach(Pane),
-    FocusPaseo(String),
-    FocusDesktop {
-        provider: String,
-        session_id: String,
+    Focus {
+        session: Box<ListedSession>,
+        hub: Box<dyn Hub>,
     },
     Resume(ListedSession),
     Remove(ListedSession),
@@ -119,14 +121,10 @@ pub(crate) enum Effect {
 
 /// Blocking I/O (db, tmux, git) runs on worker threads so the UI never stalls.
 enum Fetch {
-    FocusPaseo {
+    Focus {
         ctx: Box<Context>,
-        agent_id: String,
-    },
-    FocusDesktop {
-        ctx: Box<Context>,
-        provider: String,
-        session_id: String,
+        session: Box<ListedSession>,
+        hub: Box<dyn Hub>,
     },
     Refresh(Box<RefreshRequest>),
     Preview {
@@ -134,7 +132,7 @@ enum Fetch {
         generation: u64,
     },
     Transcript {
-        source: transcript::Source,
+        source: Feed,
         reader: Box<transcript::Reader>,
         generation: u64,
     },
@@ -163,9 +161,9 @@ struct CachedTranscript {
 }
 
 enum Fetched {
-    FocusDesktop(Result<()>),
+    Focus(Result<()>),
     Transcript {
-        source: transcript::Source,
+        source: Feed,
         reader: Box<transcript::Reader>,
         content: String,
         generation: u64,
@@ -191,18 +189,9 @@ fn spawn_fetch(tx: &Sender<Fetched>, fetch: Fetch) {
     let tx = tx.clone();
     thread::spawn(move || {
         let fetched = match fetch {
-            Fetch::FocusPaseo { ctx, agent_id } => {
-                Fetched::FocusDesktop(crate::providers::paseo::focus(&ctx, &agent_id))
+            Fetch::Focus { ctx, session, hub } => {
+                Fetched::Focus(providers::focus(&ctx, hub.as_ref(), &session))
             }
-            Fetch::FocusDesktop {
-                ctx,
-                provider,
-                session_id,
-            } => Fetched::FocusDesktop(crate::providers::focus_desktop(
-                &ctx,
-                &provider,
-                &session_id,
-            )),
             Fetch::Refresh(request) => {
                 let RefreshRequest {
                     ctx,
@@ -268,9 +257,9 @@ struct App {
     /// The selected pane shows the selected session's own output. False when
     /// the pane only hosts the session as a background tab.
     pane_shows_session: bool,
-    selected_transcript: Option<transcript::Source>,
+    selected_transcript: Option<Feed>,
     transcript_reader: Box<transcript::Reader>,
-    transcript_roots: HashMap<String, PathBuf>,
+    ctx: Context,
     preview: Option<String>,
     preview_pending_since: Option<Instant>,
     preview_in_flight: Option<u64>,
@@ -295,12 +284,12 @@ struct App {
     preview_generation: u64,
     git_generation: u64,
     previews: HashMap<String, String>,
-    transcript_previews: HashMap<transcript::Source, CachedTranscript>,
+    transcript_previews: HashMap<Feed, CachedTranscript>,
     gits: HashMap<String, CachedGit>,
 }
 
 impl App {
-    fn new() -> Self {
+    fn new(ctx: &Context) -> Self {
         let (fetch_tx, fetch_rx) = mpsc::channel();
         Self {
             view: View::Active,
@@ -315,7 +304,7 @@ impl App {
             pane_shows_session: true,
             selected_transcript: None,
             transcript_reader: Box::default(),
-            transcript_roots: HashMap::new(),
+            ctx: ctx.clone(),
             preview: None,
             preview_pending_since: None,
             preview_in_flight: None,
@@ -358,15 +347,7 @@ impl App {
         self.filtered().get(self.selected).copied()
     }
 
-    fn refresh(&mut self, ctx: &Context) {
-        self.transcript_roots
-            .insert("paseo".into(), ctx.paseo_home.clone());
-        self.transcript_roots
-            .insert("claude".into(), ctx.claude_config_dir.join("projects"));
-        self.transcript_roots
-            .insert("codex".into(), ctx.codex_home.join("sessions"));
-        self.transcript_roots
-            .insert("pi".into(), ctx.pi_dir.join("sessions"));
+    fn refresh(&mut self) {
         self.refresh_generation += 1;
         let (resumable, idle) = match self.view {
             View::Active => (false, None),
@@ -375,7 +356,7 @@ impl App {
         spawn_fetch(
             &self.fetch_tx,
             Fetch::Refresh(Box::new(RefreshRequest {
-                ctx: ctx.clone(),
+                ctx: self.ctx.clone(),
                 resumable,
                 idle,
                 generation: self.refresh_generation,
@@ -391,9 +372,9 @@ impl App {
 
     fn handle_fetched(&mut self, fetched: Fetched) {
         match fetched {
-            Fetched::FocusDesktop(result) => {
+            Fetched::Focus(result) => {
                 self.message = Some(match result {
-                    Ok(()) => "sent focus request to desktop app".into(),
+                    Ok(()) => "sent focus request".into(),
                     Err(err) => format!("focus: {err:#}"),
                 });
                 self.needs_redraw = true;
@@ -544,33 +525,25 @@ impl App {
     }
 
     fn update_selection(&mut self) {
-        let resolved = self
-            .selected_session()
-            .and_then(|session| {
-                attach::resolve_session_pane(&self.panes, session, std::process::id())
-            })
-            .map(|resolved| (resolved.pane.clone(), resolved.own_content));
-        let (pane, own_content) = resolved.unzip();
-        self.pane_shows_session = own_content.unwrap_or(false);
-        self.select_preview(pane);
-        let transcript = self.selected_session().and_then(|session| {
-            if let Some(agent_id) = &session.paseo_agent_id {
-                return Some(transcript::Source {
-                    provider: "paseo".into(),
-                    session_id: agent_id.clone(),
-                    path: None,
-                    root: self.transcript_roots.get("paseo").cloned(),
+        let (resolved, preview) = match self.selected_session() {
+            Some(session) => {
+                let resolved = resolve_session_pane(&self.panes, session, std::process::id())
+                    .map(|resolved| (resolved.pane.clone(), resolved.own_content));
+                let hub = hubs::resolve(session, || {
+                    let (pane, own_content) = resolved.clone().unzip();
+                    Tmux::new(pane, own_content.unwrap_or(false))
                 });
+                let preview = providers::preview(&self.ctx, hub.as_ref(), session);
+                (resolved, preview)
             }
-            (transcript::supports(&session.provider)
-                && (session.source == Source::Desktop || !self.pane_shows_session))
-                .then(|| transcript::Source {
-                    provider: session.provider.clone(),
-                    session_id: session.session_id.clone(),
-                    path: session.transcript_path.clone(),
-                    root: self.transcript_roots.get(&session.provider).cloned(),
-                })
-        });
+            None => (None, None),
+        };
+        self.pane_shows_session = matches!(preview, Some(Preview::Pane(_)));
+        self.select_preview(resolved.map(|(pane, _)| pane));
+        let transcript = match preview {
+            Some(Preview::Feed(feed)) => Some(feed),
+            _ => None,
+        };
         if transcript != self.selected_transcript {
             self.selected_transcript = transcript;
             *self.transcript_reader = Default::default();
@@ -892,27 +865,15 @@ impl App {
     }
 
     fn attach_selected(&mut self) -> Effect {
-        if let Some(agent_id) = self
-            .selected_session()
-            .and_then(|session| session.paseo_agent_id.clone())
-        {
-            return Effect::FocusPaseo(agent_id);
-        }
-        if let Some(session) = self.selected_session()
-            && matches!(session.provider.as_str(), "claude" | "codex")
-            && session.source == Source::Desktop
-        {
-            return Effect::FocusDesktop {
-                provider: session.provider.clone(),
-                session_id: session.session_id.clone(),
-            };
-        }
-        match self.selected_pane.clone() {
-            Some(pane) => Effect::Attach(pane),
-            None => {
-                self.message = Some("selected session is not in a tmux pane".into());
-                Effect::None
-            }
+        let Some(session) = self.selected_session().cloned() else {
+            return Effect::None;
+        };
+        let hub = hubs::resolve(&session, || {
+            Tmux::new(self.selected_pane.clone(), self.pane_shows_session)
+        });
+        Effect::Focus {
+            session: Box::new(session),
+            hub,
         }
     }
 
@@ -1033,12 +994,12 @@ pub fn run_tmux(ctx: &Context) -> Result<()> {
 
 pub fn run(ctx: &Context) -> Result<()> {
     let mut guard = TerminalGuard::enter()?;
-    let mut app = App::new();
-    app.refresh(ctx);
+    let mut app = App::new(ctx);
+    app.refresh();
     let mut last_refresh = Instant::now();
     loop {
         if last_refresh.elapsed() >= REFRESH {
-            app.refresh(ctx);
+            app.refresh();
             last_refresh = Instant::now();
         }
         app.drain_fetched();
@@ -1051,27 +1012,23 @@ pub fn run(ctx: &Context) -> Result<()> {
                 Event::Key(key) => match app.handle_key(key) {
                     Effect::None => {}
                     Effect::Quit => break,
-                    Effect::Attach(pane) => attach_effect(&mut guard, &mut app, &pane),
-                    Effect::FocusPaseo(agent_id) => spawn_fetch(
+                    Effect::Focus { session, hub } if hub.focus_in_foreground(&session) => {
+                        attach_effect(&mut guard, &mut app, || {
+                            providers::focus(ctx, hub.as_ref(), &session)
+                        });
+                    }
+                    Effect::Focus { session, hub } => spawn_fetch(
                         &app.fetch_tx,
-                        Fetch::FocusPaseo {
+                        Fetch::Focus {
                             ctx: Box::new(ctx.clone()),
-                            agent_id,
-                        },
-                    ),
-                    Effect::FocusDesktop {
-                        provider,
-                        session_id,
-                    } => spawn_fetch(
-                        &app.fetch_tx,
-                        Fetch::FocusDesktop {
-                            ctx: Box::new(ctx.clone()),
-                            provider,
-                            session_id,
+                            session,
+                            hub,
                         },
                     ),
                     Effect::Resume(session) => match resume_session(ctx, &session) {
-                        Ok(pane) => attach_effect(&mut guard, &mut app, &pane),
+                        Ok(pane) => {
+                            attach_effect(&mut guard, &mut app, || tmux::attach_pane(&pane))
+                        }
                         Err(err) => app.message = Some(format!("{err:#}")),
                     },
                     Effect::Remove(session) => remove_effect(&mut app, ctx, &session),
@@ -1083,7 +1040,7 @@ pub fn run(ctx: &Context) -> Result<()> {
             }
         }
         if app.dirty {
-            app.refresh(ctx);
+            app.refresh();
             app.dirty = false;
             last_refresh = Instant::now();
         }
@@ -1098,12 +1055,14 @@ pub fn run(ctx: &Context) -> Result<()> {
     Ok(())
 }
 
-fn attach_effect(guard: &mut TerminalGuard, app: &mut App, pane: &Pane) {
+/// Runs `attach`, which drives this terminal's tmux client, releasing the
+/// terminal to it unless the client only switches panes.
+fn attach_effect(guard: &mut TerminalGuard, app: &mut App, attach: impl FnOnce() -> Result<()>) {
     let result = if tmux::should_switch() {
-        tmux::attach_pane(pane)
+        attach()
     } else {
         let _ = guard.suspend();
-        let result = tmux::attach_pane(pane);
+        let result = attach();
         let resumed = guard.resume();
         result.and(resumed)
     };
@@ -1453,19 +1412,11 @@ fn branch_spans(branch: &str, status: Option<&git::RepoStatus>) -> Vec<Span<'sta
 fn render_preview(frame: &mut Frame, app: &App, area: Rect) {
     // A selected transcript always provides the content, even when the
     // session's pane exists but only hosts it as a background tab.
-    let title = if app
-        .selected_transcript
-        .as_ref()
-        .is_some_and(|source| source.provider == "paseo")
-    {
-        " Conversation · Paseo stream ".into()
-    } else if app.selected_transcript.is_some() {
-        " Conversation · live transcript ".into()
-    } else {
-        match &app.selected_pane {
-            Some(pane) => format!(" {}:{} ({}) ", pane.session, pane.window_name, pane.id),
-            None => " Preview ".into(),
-        }
+    let title = match (&app.selected_transcript, &app.selected_pane) {
+        (Some(Feed::Paseo { .. }), _) => " Conversation · Paseo stream ".into(),
+        (Some(Feed::Log(_)), _) => " Conversation · live transcript ".into(),
+        (None, Some(pane)) => format!(" {}:{} ({}) ", pane.session, pane.window_name, pane.id),
+        (None, None) => " Preview ".into(),
     };
     let block = Block::bordered().title(title);
     let inner = block.inner(area);
@@ -1568,17 +1519,6 @@ fn sort_sessions(sessions: &mut [ListedSession], sort: Sort) {
             .then_with(|| b.created_ms.cmp(&a.created_ms))
             .then_with(|| (&a.provider, &a.session_id).cmp(&(&b.provider, &b.session_id)))
     });
-}
-
-fn logo(provider: &str) -> &'static str {
-    match provider {
-        "claude" => "✻",
-        "codex" => "⌘",
-        "grok" => "𝕏",
-        "opencode" => "⧈",
-        "pi" => "π",
-        _ => "●",
-    }
 }
 
 fn status_style(status: AgentStatus) -> Style {

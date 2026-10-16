@@ -25,6 +25,34 @@ fn listed(provider: &str, session_id: &str, title: Option<&str>) -> ListedSessio
     }
 }
 
+fn test_ctx() -> Context {
+    Context::for_test(
+        Path::new("/berth-test"),
+        Path::new("/berth-test/agent-berth"),
+    )
+}
+
+/// Where a focus effect lands, judged by what its hub does for the session.
+#[derive(Debug, PartialEq)]
+enum Target {
+    Tmux,
+    Paseo(String),
+    /// The hub does not host the session; desktop sessions open their app.
+    Unhosted,
+}
+
+fn focus_target(app: &App, effect: Effect) -> (Box<ListedSession>, Target) {
+    let Effect::Focus { session, hub } = effect else {
+        panic!("expected a focus effect, got {effect:?}");
+    };
+    let target = match hub.preview(&app.ctx, &session) {
+        Some(Preview::Feed(Feed::Paseo { agent_id, .. })) => Target::Paseo(agent_id),
+        _ if hub.hosts(&session) => Target::Tmux,
+        _ => Target::Unhosted,
+    };
+    (session, target)
+}
+
 fn key(code: KeyCode) -> KeyEvent {
     KeyEvent::new(code, KeyModifiers::NONE)
 }
@@ -38,7 +66,7 @@ fn shift_char_key(ch: char) -> KeyEvent {
 }
 
 fn app_with_sessions() -> App {
-    let mut app = App::new();
+    let mut app = App::new(&test_ctx());
     app.sessions = vec![
         listed("claude", "abc", Some("Fix attach")),
         listed("codex", "def", Some("Write docs")),
@@ -137,7 +165,7 @@ fn branch_tracking_symbols_match_starship_overrides() {
 
 #[test]
 fn preview_preserves_ansi_colors_attributes_and_resets() {
-    let mut app = App::new();
+    let mut app = App::new(&test_ctx());
     app.preview = Some(
         "\x1b[31;1mR\x1b[0mN\x1b[38;5;123;48;5;234mI\x1b[0m\x1b[38;2;12;34;56;48;2;65;43;21mT\x1b[0m".into(),
     );
@@ -170,7 +198,7 @@ fn preview_preserves_ansi_colors_attributes_and_resets() {
 
 #[test]
 fn preview_keeps_colors_when_scrolled_to_bottom() {
-    let mut app = App::new();
+    let mut app = App::new(&test_ctx());
     app.preview = Some("hidden\n\x1b[32mgreen\nlast\x1b[0m".into());
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(20, 4)).unwrap();
     terminal
@@ -226,7 +254,7 @@ fn details_show_combined_branch_status_with_branch_only_fallback() {
 
 #[test]
 fn starts_on_active_view() {
-    let app = App::new();
+    let app = App::new(&test_ctx());
     assert_eq!(app.view, View::Active);
     assert_eq!(app.sort, Sort::Created);
     assert_eq!(app.input, Input::Normal);
@@ -451,27 +479,38 @@ fn equals_requires_a_preview() {
 }
 
 #[test]
-fn attach_without_pane_shows_message() {
+fn attach_without_pane_fails_to_focus() {
     let mut app = app_with_sessions();
-    assert!(matches!(app.handle_key(char_key('a')), Effect::None));
-    assert!(app.message.is_some());
+    let Effect::Focus { session, hub } = app.handle_key(char_key('a')) else {
+        panic!("expected a focus effect");
+    };
+    let error = providers::focus(&app.ctx, hub.as_ref(), &session).unwrap_err();
+    assert_eq!(error.to_string(), "selected session is not in a tmux pane");
 }
 
 #[test]
 fn attach_focuses_selected_desktop_session() {
     let mut app = desktop_app();
     app.selected_pane = Some(preview_pane("%1"));
-    assert!(matches!(
-        app.handle_key(char_key('a')),
-        Effect::FocusDesktop { provider, session_id } if provider == "claude" && session_id == "one"
-    ));
+    // A desktop session never reaches the pane, so its provider focuses the
+    // desktop app instead.
+    let effect = app.handle_key(char_key('a'));
+    let (session, target) = focus_target(&app, effect);
+    assert_eq!(
+        (session.provider.as_str(), session.session_id.as_str()),
+        ("claude", "one")
+    );
+    assert_eq!(target, Target::Unhosted);
     app.selected = 1;
     app.update_selection();
     app.selected_pane = Some(preview_pane("%2"));
-    assert!(matches!(
-        app.handle_key(char_key('a')),
-        Effect::FocusDesktop { provider, session_id } if provider == "codex" && session_id == "two"
-    ));
+    let effect = app.handle_key(char_key('a'));
+    let (session, target) = focus_target(&app, effect);
+    assert_eq!(
+        (session.provider.as_str(), session.session_id.as_str()),
+        ("codex", "two")
+    );
+    assert_eq!(target, Target::Unhosted);
 }
 
 #[test]
@@ -480,7 +519,8 @@ fn attach_keeps_tmux_for_cli_sessions() {
         let mut app = app_with_sessions();
         app.sessions[0].provider = provider.into();
         app.selected_pane = Some(preview_pane("%1"));
-        assert!(matches!(app.handle_key(char_key('a')), Effect::Attach(_)));
+        let effect = app.handle_key(char_key('a'));
+        assert_eq!(focus_target(&app, effect).1, Target::Tmux);
     }
 }
 
@@ -488,7 +528,7 @@ fn attach_keeps_tmux_for_cli_sessions() {
 fn desktop_focus_error_is_displayed() {
     let mut app = desktop_app();
     app.needs_redraw = false;
-    app.handle_fetched(Fetched::FocusDesktop(Err(anyhow::anyhow!(
+    app.handle_fetched(Fetched::Focus(Err(anyhow::anyhow!(
         "no matching active Claude Desktop session found"
     ))));
     assert_eq!(
@@ -563,7 +603,7 @@ fn confirm_cancel_keys_keep_the_session() {
 
 #[test]
 fn d_without_sessions_shows_message() {
-    let mut app = App::new();
+    let mut app = App::new(&test_ctx());
     assert!(matches!(app.handle_key(char_key('d')), Effect::None));
     assert_eq!(app.input, Input::Normal);
     assert!(app.message.is_some());
@@ -738,7 +778,7 @@ fn sort_keys_reorder_sessions_and_preserve_selection() {
         ('s', Sort::Status, ["a", "c", "b", "d"]),
         ('d', Sort::Directory, ["d", "c", "a", "b"]),
     ] {
-        let mut app = App::new();
+        let mut app = App::new(&test_ctx());
         for (provider, id, created, activity, status, cwd) in [
             ("claude", "a", 100, 100, AgentStatus::Waiting, Some("/z")),
             ("codex", "b", 300, 200, AgentStatus::Done, None),
@@ -838,7 +878,7 @@ fn restore_selection_clamps_when_session_is_gone() {
 
 #[test]
 fn fetched_results_are_cached_and_applied() {
-    let mut app = App::new();
+    let mut app = App::new(&test_ctx());
     app.git_cwd = Some("/tmp/project".into());
     app.git_generation = 1;
     app.handle_fetched(Fetched::Git {
@@ -878,7 +918,7 @@ fn fetched_refresh_preserves_selection_after_navigation_and_reorder() {
 
 #[test]
 fn stale_fetches_are_cached_but_not_applied() {
-    let mut app = App::new();
+    let mut app = App::new(&test_ctx());
     app.git_cwd = Some("/tmp/project".into());
     app.git_generation = 2;
     app.handle_fetched(Fetched::Git {
@@ -942,7 +982,7 @@ fn finish_preview(app: &mut App, request: (String, u64), content: Option<&str>) 
 
 #[test]
 fn background_tab_shows_no_pane_preview() {
-    let mut app = App::new();
+    let mut app = App::new(&test_ctx());
     app.pane_shows_session = false;
     let mut front = listed("opencode", "ses_front", Some("Front work"));
     front.pane_pid = Some(7);
@@ -983,7 +1023,7 @@ fn background_tab_shows_no_pane_preview() {
 
 #[test]
 fn preview_navigation_is_debounced_to_latest_selection() {
-    let mut app = App::new();
+    let mut app = App::new(&test_ctx());
     app.select_preview(Some(preview_pane("%1")));
     let since = app.preview_pending_since.unwrap();
     assert!(app.next_preview_fetch(since).is_none());
@@ -999,7 +1039,7 @@ fn preview_navigation_is_debounced_to_latest_selection() {
 
 #[test]
 fn preview_serializes_fetches_and_preserves_latest_pending_selection() {
-    let mut app = App::new();
+    let mut app = App::new(&test_ctx());
     app.select_preview(Some(preview_pane("%1")));
     let first = start_preview(&mut app);
     app.select_preview(Some(preview_pane("%2")));
@@ -1020,7 +1060,7 @@ fn preview_serializes_fetches_and_preserves_latest_pending_selection() {
 
 #[test]
 fn preview_reselection_keeps_cache_until_changed_content_arrives() {
-    let mut app = App::new();
+    let mut app = App::new(&test_ctx());
     app.select_preview(Some(preview_pane("%1")));
     let first = start_preview(&mut app);
     finish_preview(&mut app, first, Some("cached"));
@@ -1041,7 +1081,7 @@ fn preview_reselection_keeps_cache_until_changed_content_arrives() {
 
 #[test]
 fn failed_preview_preserves_cache_and_allows_retry() {
-    let mut app = App::new();
+    let mut app = App::new(&test_ctx());
     app.previews.insert("%1".into(), "cached".into());
     app.select_preview(Some(preview_pane("%1")));
     let request = start_preview(&mut app);
@@ -1056,7 +1096,7 @@ fn failed_preview_preserves_cache_and_allows_retry() {
 
 #[test]
 fn outdated_preview_completion_cannot_release_current_fetch() {
-    let mut app = App::new();
+    let mut app = App::new(&test_ctx());
     app.select_preview(Some(preview_pane("%1")));
     let first = start_preview(&mut app);
     finish_preview(&mut app, first.clone(), Some("first"));
@@ -1071,7 +1111,7 @@ fn outdated_preview_completion_cannot_release_current_fetch() {
 
 #[test]
 fn deselecting_preview_clears_pending_work_and_ignores_completion() {
-    let mut app = App::new();
+    let mut app = App::new(&test_ctx());
     app.select_preview(Some(preview_pane("%1")));
     let request = start_preview(&mut app);
     app.select_preview(None);
@@ -1087,7 +1127,7 @@ fn deselecting_preview_clears_pending_work_and_ignores_completion() {
 #[test]
 fn paseo_sessions_stream_and_focus_paseo_instead_of_the_terminal() {
     for provider in ["claude", "codex", "opencode", "pi"] {
-        let mut app = App::new();
+        let mut app = App::new(&test_ctx());
         let me = std::process::id();
         let mut session = listed(provider, "native-id", Some("Paseo task"));
         session.pid = Some(me);
@@ -1101,17 +1141,23 @@ fn paseo_sessions_stream_and_focus_paseo_instead_of_the_terminal() {
             window_name: "daemon".into(),
             path: "/tmp/project".into(),
         }];
-        app.transcript_roots
-            .insert("paseo".into(), PathBuf::from("/paseo-home"));
+        app.ctx.paseo_home = PathBuf::from("/paseo-home");
         app.update_selection();
         assert!(app.selected_pane.is_none());
         assert!(!app.pane_shows_session);
         assert!(app.has_preview());
-        let source = app.selected_transcript.as_ref().unwrap();
-        assert_eq!(source.provider, "paseo");
-        assert_eq!(source.session_id, "paseo-agent");
-        assert_eq!(source.root.as_deref(), Some(Path::new("/paseo-home")));
-        assert!(matches!(app.attach_selected(), Effect::FocusPaseo(id) if id == "paseo-agent"));
+        assert_eq!(
+            app.selected_transcript,
+            Some(Feed::Paseo {
+                agent_id: "paseo-agent".into(),
+                home: PathBuf::from("/paseo-home"),
+            })
+        );
+        let effect = app.attach_selected();
+        assert_eq!(
+            focus_target(&app, effect).1,
+            Target::Paseo("paseo-agent".into())
+        );
         let result = transcript_completion(&mut app, "live Paseo content");
         app.handle_fetched(result);
         assert_eq!(app.preview.as_deref(), Some("live Paseo content"));
@@ -1122,7 +1168,7 @@ fn paseo_sessions_stream_and_focus_paseo_instead_of_the_terminal() {
 
 #[test]
 fn moving_the_same_session_switches_preview_and_attach_between_paseo_and_tmux() {
-    let mut app = App::new();
+    let mut app = App::new(&test_ctx());
     let mut session = listed("pi", "same-native-id", None);
     session.pid = Some(std::process::id());
     session.paseo_agent_id = Some("paseo-agent".into());
@@ -1141,22 +1187,27 @@ fn moving_the_same_session_switches_preview_and_attach_between_paseo_and_tmux() 
     app.apply_refresh(vec![session.clone()], vec![pane.clone()]);
     assert!(app.selected_transcript.is_none());
     assert_eq!(app.preview.as_deref(), Some("tmux content"));
-    assert!(matches!(app.attach_selected(), Effect::Attach(selected) if selected.id == "%1"));
+    let effect = app.attach_selected();
+    assert_eq!(focus_target(&app, effect).1, Target::Tmux);
     app.handle_fetched(late_stream);
     assert_eq!(app.preview.as_deref(), Some("tmux content"));
     session.paseo_agent_id = Some("imported-agent".into());
     app.apply_refresh(vec![session], vec![pane]);
     assert!(app.selected_pane.is_none());
+    assert!(matches!(
+        &app.selected_transcript,
+        Some(Feed::Paseo { agent_id, .. }) if agent_id == "imported-agent"
+    ));
+    let effect = app.attach_selected();
     assert_eq!(
-        app.selected_transcript.as_ref().unwrap().session_id,
-        "imported-agent"
+        focus_target(&app, effect).1,
+        Target::Paseo("imported-agent".into())
     );
-    assert!(matches!(app.attach_selected(), Effect::FocusPaseo(id) if id == "imported-agent"));
 }
 
 #[test]
 fn switching_paseo_sessions_rejects_late_stream_content_and_preserves_cache() {
-    let mut app = App::new();
+    let mut app = App::new(&test_ctx());
     let mut one = listed("opencode", "native-one", None);
     one.paseo_agent_id = Some("paseo-one".into());
     let mut two = listed("opencode", "native-two", None);
@@ -1177,7 +1228,7 @@ fn switching_paseo_sessions_rejects_late_stream_content_and_preserves_cache() {
 }
 
 fn desktop_app() -> App {
-    let mut app = App::new();
+    let mut app = App::new(&test_ctx());
     app.sessions = vec![listed("claude", "one", None), listed("codex", "two", None)];
     for session in &mut app.sessions {
         session.source = Source::Desktop;
@@ -1297,7 +1348,8 @@ fn desktop_preview_refreshes_and_supports_zoom_and_focus() {
     assert!(app.has_preview());
     app.toggle_maximized();
     assert!(app.preview_maximized);
-    assert!(matches!(app.attach_selected(), Effect::FocusDesktop { .. }));
+    let effect = app.attach_selected();
+    assert_eq!(focus_target(&app, effect).1, Target::Unhosted);
     app.apply_refresh(app.sessions.clone(), Vec::new());
     let result = transcript_completion(&mut app, "Assistant: updated");
     app.handle_fetched(result);
@@ -1363,7 +1415,7 @@ fn desktop_without_path_shows_unavailable_state_and_accepts_later_hook() {
 }
 
 fn cli_app(provider: &str) -> App {
-    let mut app = App::new();
+    let mut app = App::new(&test_ctx());
     let mut session = listed(provider, "one", None);
     session.transcript_path = Some("/logs/one.jsonl".into());
     app.sessions = vec![session];
@@ -1402,7 +1454,8 @@ fn background_tab_cli_session_previews_conversation_over_pane_screen() {
     let result = transcript_completion(&mut app, "Assistant: hi");
     app.handle_fetched(result);
     assert_eq!(app.preview.as_deref(), Some("Assistant: hi"));
-    assert!(matches!(app.attach_selected(), Effect::Attach(pane) if pane.id == "%1"));
+    let effect = app.attach_selected();
+    assert_eq!(focus_target(&app, effect).1, Target::Tmux);
 
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(60, 5)).unwrap();
     terminal

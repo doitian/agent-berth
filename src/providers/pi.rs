@@ -1,27 +1,109 @@
 use std::path::PathBuf;
 
 use anyhow::Result;
+use serde_json::Value;
 
-use super::write_text;
+use super::{
+    Focus, Integration, Messaging, Provider, Transcript, TranscriptLog, log_preview,
+    log_transcript, write_text,
+};
+use crate::hubs::{Hub, Preview};
 use crate::paths::Context;
+use crate::store::ListedSession;
+use crate::transcript::{content, tool_result};
 
-pub fn install(ctx: &Context) -> Result<PathBuf> {
-    let dest = ctx.pi_dir.join("extensions").join("agent-berth.ts");
-    write_text(&dest, &extension_source(ctx))?;
-    Ok(dest)
-}
+pub struct Pi;
 
-pub fn outdated(ctx: &Context) -> bool {
-    let dest = ctx.pi_dir.join("extensions").join("agent-berth.ts");
-    std::fs::read_to_string(&dest).is_ok_and(|text| text != extension_source(ctx))
-}
-
-pub fn uninstall(ctx: &Context) -> Result<()> {
-    let dest = ctx.pi_dir.join("extensions").join("agent-berth.ts");
-    if dest.exists() {
-        std::fs::remove_file(dest)?;
+impl Provider for Pi {
+    fn name(&self) -> &'static str {
+        "pi"
     }
-    Ok(())
+
+    fn logo(&self) -> &'static str {
+        "π"
+    }
+
+    fn resume_cmd(&self, session_id: &str) -> Vec<String> {
+        vec!["pi".into(), "--session".into(), session_id.into()]
+    }
+
+    fn normalize_title(&self, title: &str) -> String {
+        normalize_title(title)
+    }
+
+    fn log(&self) -> Option<&dyn TranscriptLog> {
+        Some(self)
+    }
+}
+
+impl Integration for Pi {
+    fn install(&self, ctx: &Context) -> Result<PathBuf> {
+        let dest = self.hook_path(ctx);
+        write_text(&dest, &extension_source(ctx))?;
+        Ok(dest)
+    }
+
+    fn uninstall(&self, ctx: &Context) -> Result<()> {
+        let dest = self.hook_path(ctx);
+        if dest.exists() {
+            std::fs::remove_file(dest)?;
+        }
+        Ok(())
+    }
+
+    fn hook_path(&self, ctx: &Context) -> PathBuf {
+        ctx.pi_dir.join("extensions").join("agent-berth.ts")
+    }
+
+    fn outdated(&self, ctx: &Context) -> bool {
+        std::fs::read_to_string(self.hook_path(ctx)).is_ok_and(|text| text != extension_source(ctx))
+    }
+
+    fn config_exists(&self, ctx: &Context) -> bool {
+        ctx.pi_dir.is_dir()
+    }
+}
+
+impl Focus for Pi {}
+
+impl Messaging for Pi {}
+
+impl Transcript for Pi {
+    fn transcript(&self, ctx: &Context, hub: &dyn Hub, session: &ListedSession) -> Result<String> {
+        log_transcript(self, ctx, hub, session)
+    }
+
+    fn preview(&self, ctx: &Context, hub: &dyn Hub, session: &ListedSession) -> Option<Preview> {
+        log_preview(self, ctx, hub, session)
+    }
+}
+
+impl TranscriptLog for Pi {
+    fn root(&self, ctx: &Context) -> PathBuf {
+        ctx.pi_dir.join("sessions")
+    }
+
+    fn is_session_file(&self, file_name: &str, session_id: &str) -> bool {
+        file_name.ends_with(&format!("_{session_id}.jsonl"))
+    }
+
+    fn is_session_record(&self, row: &Value, session_id: &str) -> bool {
+        row["type"] == "session" && row["id"].as_str() == Some(session_id)
+    }
+
+    fn parse(&self, row: &Value, limit: usize) -> Option<String> {
+        if row["type"] != "message" {
+            return None;
+        }
+        let message = &row["message"];
+        let mut output = String::new();
+        match message["role"].as_str()? {
+            role @ ("user" | "assistant") => content(&mut output, role, &message["content"], limit),
+            "toolResult" => tool_result(&mut output, &message["content"], limit),
+            _ => return None,
+        }
+        Some(output)
+    }
 }
 
 fn extension_source(ctx: &Context) -> String {
@@ -34,7 +116,7 @@ fn extension_source(ctx: &Context) -> String {
 /// Pi expands `/skill:name` into a `<skill name=… location=…>…</skill>` user
 /// message, which the plugin reports as the session title. Show the slash
 /// command instead of the raw block.
-pub fn normalize_title(title: &str) -> String {
+fn normalize_title(title: &str) -> String {
     let Some(rest) = title.strip_prefix("<skill name=\"") else {
         return title.to_string();
     };

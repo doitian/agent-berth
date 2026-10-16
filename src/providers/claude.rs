@@ -8,12 +8,19 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use anyhow::{Context as _, Result};
 use serde_json::{Value, json};
 
-use super::{command_handler, group_is_ours, load_object, save_object};
+use super::{
+    Discovery, Focus, HookEvents, Integration, Messaging, Provider, Transcript, TranscriptLog,
+    command_handler, focus_or_desktop, group_is_ours, load_object, log_preview, log_transcript,
+    save_object,
+};
+use crate::hubs::{Hub, Preview};
 use crate::paths::Context;
 use crate::status::{
     AgentEvent, AgentEventKind, AgentSession, AgentStatus, Source, apply_event, session_key,
     string_field, u32_field,
 };
+use crate::store::ListedSession;
+use crate::transcript::content;
 
 const HOOK_EVENTS: &[&str] = &[
     "SessionStart",
@@ -40,7 +47,104 @@ const ASK_NOTIFICATIONS: &[&str] = &[
     "elicitation_url_dialog",
 ];
 
-pub fn apply_hook(sessions: &mut BTreeMap<String, AgentSession>, event: &Value) {
+pub struct Claude;
+
+impl Provider for Claude {
+    fn name(&self) -> &'static str {
+        "claude"
+    }
+
+    fn logo(&self) -> &'static str {
+        "✻"
+    }
+
+    fn resume_cmd(&self, session_id: &str) -> Vec<String> {
+        vec!["claude".into(), "--resume".into(), session_id.into()]
+    }
+
+    fn hooks(&self) -> Option<&dyn HookEvents> {
+        Some(self)
+    }
+
+    fn discovery(&self) -> Option<&dyn Discovery> {
+        Some(self)
+    }
+
+    fn log(&self) -> Option<&dyn TranscriptLog> {
+        Some(self)
+    }
+}
+
+impl HookEvents for Claude {
+    fn apply_hook(&self, sessions: &mut BTreeMap<String, AgentSession>, event: &Value) {
+        apply_hook(sessions, event);
+    }
+}
+
+impl Discovery for Claude {
+    fn discover(&self, ctx: &Context, sessions: &mut BTreeMap<String, AgentSession>) -> bool {
+        let index = desktop_index(ctx);
+        if let Some((rows, observed_ms)) = list_agents() {
+            apply_agents(ctx, sessions, &rows, &index.live, observed_ms);
+        }
+        drop_archived(sessions, &index.archived)
+    }
+}
+
+impl Focus for Claude {
+    fn focus(&self, ctx: &Context, hub: &dyn Hub, session: &ListedSession) -> Result<()> {
+        focus_or_desktop(ctx, hub, session, || {
+            #[cfg(target_os = "linux")]
+            if std::env::var_os("NIRI_SOCKET").is_some() {
+                let _ = raise_niri_window();
+            }
+            let url = desktop_url(ctx, &session.session_id)?;
+            super::open_desktop_url(&url)
+        })
+    }
+}
+
+impl Messaging for Claude {}
+
+impl Transcript for Claude {
+    fn transcript(&self, ctx: &Context, hub: &dyn Hub, session: &ListedSession) -> Result<String> {
+        log_transcript(self, ctx, hub, session)
+    }
+
+    fn preview(&self, ctx: &Context, hub: &dyn Hub, session: &ListedSession) -> Option<Preview> {
+        log_preview(self, ctx, hub, session)
+    }
+}
+
+impl TranscriptLog for Claude {
+    fn root(&self, ctx: &Context) -> PathBuf {
+        ctx.claude_config_dir.join("projects")
+    }
+
+    fn is_session_file(&self, file_name: &str, session_id: &str) -> bool {
+        file_name == format!("{session_id}.jsonl")
+    }
+
+    fn is_session_record(&self, row: &Value, session_id: &str) -> bool {
+        row["sessionId"].as_str() == Some(session_id)
+    }
+
+    fn parse(&self, row: &Value, limit: usize) -> Option<String> {
+        let role = row["type"]
+            .as_str()
+            .filter(|role| matches!(*role, "user" | "assistant"))?;
+        let mut output = String::new();
+        content(&mut output, role, &row["message"]["content"], limit);
+        Some(output)
+    }
+
+    // UUIDs identify records including their revisions.
+    fn record_id<'a>(&self, row: &'a Value) -> Option<&'a str> {
+        row["uuid"].as_str()
+    }
+}
+
+fn apply_hook(sessions: &mut BTreeMap<String, AgentSession>, event: &Value) {
     let Some(sid) = session_key(event) else {
         return;
     };
@@ -115,14 +219,6 @@ fn is_present(value: &Value) -> bool {
         Value::String(text) if text.is_empty() => false,
         _ => true,
     }
-}
-
-pub fn discover(ctx: &Context, sessions: &mut BTreeMap<String, AgentSession>) -> bool {
-    let index = desktop_index(ctx);
-    if let Some((rows, observed_ms)) = list_agents() {
-        apply_agents(ctx, sessions, &rows, &index.live, observed_ms);
-    }
-    drop_archived(sessions, &index.archived)
 }
 
 pub fn drop_archived(
@@ -355,15 +451,6 @@ fn desktop_url(ctx: &Context, session_id: &str) -> Result<String> {
     Ok(format!("claude://code/continue?session={local_id}"))
 }
 
-pub fn focus_desktop(ctx: &Context, session_id: &str) -> Result<()> {
-    #[cfg(target_os = "linux")]
-    if std::env::var_os("NIRI_SOCKET").is_some() {
-        let _ = raise_niri_window();
-    }
-    let url = desktop_url(ctx, session_id)?;
-    super::open_desktop_url(&url)
-}
-
 #[cfg(target_os = "linux")]
 fn raise_niri_window() -> Result<()> {
     let output = Command::new("niri")
@@ -490,7 +577,7 @@ pub fn apply_agents(
             item.title = Some(title);
         }
         if item.cmdline.is_empty() {
-            item.cmdline = super::resume_cmd("claude", &sid);
+            item.cmdline = Claude.resume_cmd(&sid);
         }
         if item.discovered || item.last_report_ms == 0 {
             item.last_report_ms = now;
@@ -550,21 +637,57 @@ fn agent_kind(row: &Value) -> AgentStatus {
     AgentStatus::Idle
 }
 
-pub fn install(ctx: &Context) -> Result<PathBuf> {
-    let dest = ctx.claude_config_dir.join("settings.json");
-    let mut data = load_object(&dest)?;
-    plan(ctx, &mut data);
-    save_object(&dest, &data)?;
-    Ok(dest)
-}
+impl Integration for Claude {
+    fn install(&self, ctx: &Context) -> Result<PathBuf> {
+        let dest = self.hook_path(ctx);
+        let mut data = load_object(&dest)?;
+        plan(ctx, &mut data);
+        save_object(&dest, &data)?;
+        Ok(dest)
+    }
 
-pub fn outdated(ctx: &Context) -> bool {
-    let Ok(current) = load_object(&ctx.claude_config_dir.join("settings.json")) else {
-        return false;
-    };
-    let mut planned = current.clone();
-    plan(ctx, &mut planned);
-    planned != current
+    fn uninstall(&self, ctx: &Context) -> Result<()> {
+        let dest = self.hook_path(ctx);
+        if !dest.exists() {
+            return Ok(());
+        }
+        let mut data = load_object(&dest)?;
+        let Some(hooks) = data.get_mut("hooks").and_then(Value::as_object_mut) else {
+            return Ok(());
+        };
+        let events: Vec<String> = hooks.keys().cloned().collect();
+        for event in events {
+            let Some(groups) = hooks.get_mut(&event).and_then(Value::as_array_mut) else {
+                continue;
+            };
+            groups.retain(|group| !group_is_ours(group, self.name()));
+            if groups.is_empty() {
+                hooks.remove(&event);
+            }
+        }
+        if hooks.is_empty() {
+            data.as_object_mut().unwrap().remove("hooks");
+        }
+        save_object(&dest, &data)?;
+        Ok(())
+    }
+
+    fn hook_path(&self, ctx: &Context) -> PathBuf {
+        ctx.claude_config_dir.join("settings.json")
+    }
+
+    fn outdated(&self, ctx: &Context) -> bool {
+        let Ok(current) = load_object(&self.hook_path(ctx)) else {
+            return false;
+        };
+        let mut planned = current.clone();
+        plan(ctx, &mut planned);
+        planned != current
+    }
+
+    fn config_exists(&self, ctx: &Context) -> bool {
+        ctx.claude_config_dir.is_dir()
+    }
 }
 
 fn plan(ctx: &Context, data: &mut Value) {
@@ -579,7 +702,7 @@ fn plan(ctx: &Context, data: &mut Value) {
     if !hooks.is_object() {
         *hooks = json!({});
     }
-    let handler = command_handler(ctx, "claude", 5, true);
+    let handler = command_handler(ctx, Claude.name(), 5, true);
     let matcher = ASK_NOTIFICATIONS.join("|");
     for event in HOOK_EVENTS {
         let groups = hooks
@@ -592,7 +715,7 @@ fn plan(ctx: &Context, data: &mut Value) {
             kept.extend(
                 items
                     .iter()
-                    .filter(|group| !group_is_ours(group, "claude"))
+                    .filter(|group| !group_is_ours(group, Claude.name()))
                     .cloned(),
             );
         }
@@ -606,32 +729,6 @@ fn plan(ctx: &Context, data: &mut Value) {
         kept.push(group);
         *groups = Value::Array(kept);
     }
-}
-
-pub fn uninstall(ctx: &Context) -> Result<()> {
-    let dest = ctx.claude_config_dir.join("settings.json");
-    if !dest.exists() {
-        return Ok(());
-    }
-    let mut data = load_object(&dest)?;
-    let Some(hooks) = data.get_mut("hooks").and_then(Value::as_object_mut) else {
-        return Ok(());
-    };
-    let events: Vec<String> = hooks.keys().cloned().collect();
-    for event in events {
-        let Some(groups) = hooks.get_mut(&event).and_then(Value::as_array_mut) else {
-            continue;
-        };
-        groups.retain(|group| !group_is_ours(group, "claude"));
-        if groups.is_empty() {
-            hooks.remove(&event);
-        }
-    }
-    if hooks.is_empty() {
-        data.as_object_mut().unwrap().remove("hooks");
-    }
-    save_object(&dest, &data)?;
-    Ok(())
 }
 
 #[cfg(test)]

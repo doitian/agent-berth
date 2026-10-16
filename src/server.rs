@@ -188,12 +188,15 @@ fn persist_discover(db: &Database, store: &mut Store, ctx: &AppContext) {
     if !store.discover(ctx) {
         return;
     }
-    for provider in ["claude", "codex"] {
+    for provider in crate::providers::all() {
+        if provider.discovery().is_none() {
+            continue;
+        }
         let _ = db::persist_change(
             db,
             store,
             &crate::store::Change::Hooks {
-                provider: provider.into(),
+                provider: provider.name().into(),
             },
         );
     }

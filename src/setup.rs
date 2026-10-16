@@ -1,11 +1,11 @@
 use anyhow::Result;
 
 use crate::paths::Context;
-use crate::providers::ProviderKind;
+use crate::providers;
 use crate::service;
 
 pub fn setup(ctx: &Context, no_service: bool) -> Result<()> {
-    for provider in ProviderKind::ALL {
+    for provider in providers::all() {
         if !provider.is_installed(ctx) {
             println!("skip {} (not installed)", provider.name());
             continue;
@@ -30,7 +30,7 @@ pub fn setup(ctx: &Context, no_service: bool) -> Result<()> {
 
 pub fn teardown(ctx: &Context) -> Result<()> {
     service::uninstall(ctx)?;
-    for provider in ProviderKind::ALL {
+    for provider in providers::all() {
         match provider.uninstall(ctx) {
             Ok(()) => println!("removed {} hooks", provider.name()),
             Err(err) => eprintln!("failed to remove {}: {err:#}", provider.name()),

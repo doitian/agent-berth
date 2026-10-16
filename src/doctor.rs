@@ -4,8 +4,7 @@ use anyhow::Result;
 
 use crate::db;
 use crate::paths::Context;
-use crate::providers::ProviderKind;
-use crate::providers::opencode;
+use crate::providers::{self, Provider};
 use crate::service;
 use crate::tmux;
 
@@ -52,7 +51,7 @@ fn collect(ctx: &Context) -> Vec<Check> {
         tmux_check(),
         fzf_check(),
     ];
-    for provider in ProviderKind::ALL {
+    for &provider in providers::all() {
         checks.push(provider_check(ctx, provider));
     }
     checks
@@ -188,7 +187,7 @@ fn fzf_check() -> Check {
     }
 }
 
-fn provider_check(ctx: &Context, provider: ProviderKind) -> Check {
+fn provider_check(ctx: &Context, provider: &'static dyn Provider) -> Check {
     let name = provider.name();
     if !provider.is_installed(ctx) {
         return Check {
@@ -198,12 +197,7 @@ fn provider_check(ctx: &Context, provider: ProviderKind) -> Check {
         };
     }
     if !provider.hooks_installed(ctx) {
-        let mismatch = if matches!(provider, ProviderKind::Opencode) {
-            opencode::version_mismatch(ctx)
-        } else {
-            None
-        };
-        if let Some(detail) = mismatch {
+        if let Some(detail) = provider.install_problem(ctx) {
             return Check {
                 level: Level::Error,
                 name,

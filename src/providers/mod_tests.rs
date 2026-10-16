@@ -152,7 +152,7 @@ fn claude_desktop_entrypoint_and_background_stop() {
 fn install_and_uninstall_are_idempotent() {
     let root = tempdir().unwrap();
     let ctx = Context::for_test(root.path(), &root.path().join("agent-berth"));
-    for provider in ProviderKind::ALL {
+    for provider in all() {
         let path = provider.install(&ctx).unwrap();
         assert!(path.exists(), "{}", provider.name());
         let text = fs::read_to_string(&path).unwrap();
@@ -202,7 +202,7 @@ fn freshly_installed_hooks_are_never_outdated() {
     let bin = root.path().join("agent-berth");
     fs::write(&bin, []).unwrap();
     let ctx = Context::for_test(root.path(), &bin);
-    for provider in ProviderKind::ALL {
+    for provider in all() {
         provider.install(&ctx).unwrap();
         assert!(
             !provider.hooks_outdated(&ctx),
@@ -210,4 +210,88 @@ fn freshly_installed_hooks_are_never_outdated() {
             provider.name()
         );
     }
+}
+
+#[test]
+fn log_roots_cover_local_providers_only() {
+    let ctx = Context::for_test(
+        std::path::Path::new("/root"),
+        std::path::Path::new("/bin/agent-berth"),
+    );
+    let root = |name: &str| lookup(name).unwrap().log().map(|log| log.root(&ctx));
+    assert_eq!(root("claude"), Some(ctx.claude_config_dir.join("projects")));
+    assert_eq!(root("codex"), Some(ctx.codex_home.join("sessions")));
+    assert_eq!(root("pi"), Some(ctx.pi_dir.join("sessions")));
+    assert_eq!(root("opencode"), None);
+    assert_eq!(root("grok"), None);
+}
+
+/// A hub whose every action fails, optionally claiming to host the session.
+#[derive(Debug)]
+struct Failing {
+    hosts: bool,
+}
+
+impl Hub for Failing {
+    fn hosts(&self, _session: &ListedSession) -> bool {
+        self.hosts
+    }
+
+    fn focus(&self, _ctx: &Context, _session: &ListedSession) -> Result<()> {
+        anyhow::bail!("hub cannot focus")
+    }
+
+    fn send(&self, _session: &ListedSession, _message: &str) -> Result<()> {
+        anyhow::bail!("hub cannot send")
+    }
+
+    fn transcript(&self, _session: &ListedSession) -> Result<String> {
+        anyhow::bail!("hub has no transcript")
+    }
+
+    fn preview(&self, _ctx: &Context, _session: &ListedSession) -> Option<Preview> {
+        None
+    }
+}
+
+fn listed(source: &str) -> ListedSession {
+    serde_json::from_value(serde_json::json!({
+        "provider":"claude", "session_id":"s", "status":"running", "source":source,
+        "cwd":null, "cmdline":[], "pid":null, "created_ms":1,
+        "last_report_ms":2, "kind":"hook"
+    }))
+    .unwrap()
+}
+
+#[test]
+fn desktop_app_focuses_only_desktop_sessions_the_hub_does_not_host() {
+    let root = tempdir().unwrap();
+    let ctx = Context::for_test(root.path(), &root.path().join("agent-berth"));
+    let mut opened = false;
+    focus_or_desktop(&ctx, &Failing { hosts: false }, &listed("desktop"), || {
+        opened = true;
+        Ok(())
+    })
+    .unwrap();
+    assert!(opened);
+
+    let never = || -> Result<()> { panic!("the desktop app must not open") };
+    for (hub, source) in [
+        (Failing { hosts: false }, "cli"),
+        // A Paseo route wins over the app, and its failure is reported.
+        (Failing { hosts: true }, "desktop"),
+    ] {
+        let error = focus_or_desktop(&ctx, &hub, &listed(source), never).unwrap_err();
+        assert_eq!(error.to_string(), "hub cannot focus", "{source}");
+    }
+}
+
+#[test]
+fn hub_transcript_fallback_reports_both_failures() {
+    let hub = Failing { hosts: true };
+    let session = listed("cli");
+    let error = or_hub_transcript(Err(anyhow::anyhow!("log missing")), &hub, &session).unwrap_err();
+    assert_eq!(error.to_string(), "log missing; hub has no transcript");
+    let text = or_hub_transcript(Ok("log".into()), &hub, &session).unwrap();
+    assert_eq!(text, "log");
 }

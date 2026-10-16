@@ -4,7 +4,10 @@ use std::path::PathBuf;
 use anyhow::Result;
 use serde_json::{Value, json};
 
-use super::{command_handler, load_object, save_object};
+use super::{
+    Focus, HookEvents, Integration, Messaging, Provider, Transcript, command_handler, load_object,
+    save_object,
+};
 use crate::paths::Context;
 use crate::status::{
     AgentEvent, AgentEventKind, AgentSession, apply_event, string_field, u32_field,
@@ -27,7 +30,39 @@ const HOOK_EVENTS: &[&str] = &[
     "SessionEnd",
 ];
 
-pub fn apply_hook(sessions: &mut BTreeMap<String, AgentSession>, event: &Value) {
+pub struct Grok;
+
+impl Provider for Grok {
+    fn name(&self) -> &'static str {
+        "grok"
+    }
+
+    fn logo(&self) -> &'static str {
+        "𝕏"
+    }
+
+    fn resume_cmd(&self, session_id: &str) -> Vec<String> {
+        vec!["grok".into(), "--resume".into(), session_id.into()]
+    }
+
+    fn hooks(&self) -> Option<&dyn HookEvents> {
+        Some(self)
+    }
+}
+
+impl Focus for Grok {}
+
+impl Messaging for Grok {}
+
+impl Transcript for Grok {}
+
+impl HookEvents for Grok {
+    fn apply_hook(&self, sessions: &mut BTreeMap<String, AgentSession>, event: &Value) {
+        apply_hook(sessions, event);
+    }
+}
+
+fn apply_hook(sessions: &mut BTreeMap<String, AgentSession>, event: &Value) {
     if string_field(event, &["subagentType", "subagent_type"]).is_some() {
         return;
     }
@@ -97,31 +132,39 @@ fn pascal(name: &str) -> String {
     }
 }
 
-pub fn install(ctx: &Context) -> Result<PathBuf> {
-    let dest = ctx.grok_home.join("hooks").join("agent-berth.json");
-    save_object(&dest, &plan(ctx))?;
-    Ok(dest)
-}
+impl Integration for Grok {
+    fn install(&self, ctx: &Context) -> Result<PathBuf> {
+        let dest = self.hook_path(ctx);
+        save_object(&dest, &plan(ctx))?;
+        Ok(dest)
+    }
 
-pub fn outdated(ctx: &Context) -> bool {
-    let dest = ctx.grok_home.join("hooks").join("agent-berth.json");
-    load_object(&dest).is_ok_and(|current| current != plan(ctx))
+    fn uninstall(&self, ctx: &Context) -> Result<()> {
+        let dest = self.hook_path(ctx);
+        if dest.exists() {
+            std::fs::remove_file(&dest)?;
+        }
+        Ok(())
+    }
+
+    fn hook_path(&self, ctx: &Context) -> PathBuf {
+        ctx.grok_home.join("hooks").join("agent-berth.json")
+    }
+
+    fn outdated(&self, ctx: &Context) -> bool {
+        load_object(&self.hook_path(ctx)).is_ok_and(|current| current != plan(ctx))
+    }
+
+    fn config_exists(&self, ctx: &Context) -> bool {
+        ctx.grok_home.is_dir()
+    }
 }
 
 fn plan(ctx: &Context) -> Value {
-    let handler = command_handler(ctx, "grok", 5, true);
+    let handler = command_handler(ctx, Grok.name(), 5, true);
     let mut hooks = serde_json::Map::new();
     for event in HOOK_EVENTS {
         hooks.insert((*event).into(), json!([{"hooks": [handler.clone()]}]));
     }
     json!({"hooks": hooks})
-}
-
-pub fn uninstall(ctx: &Context) -> Result<()> {
-    let dest = ctx.grok_home.join("hooks").join("agent-berth.json");
-    if dest.exists() {
-        std::fs::remove_file(&dest)?;
-    }
-    let _ = load_object(&dest);
-    Ok(())
 }

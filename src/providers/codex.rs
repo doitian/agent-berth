@@ -5,12 +5,19 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 use serde_json::{Value, json};
 
-use super::{command_handler, group_is_ours, load_object, save_object};
+use super::{
+    Discovery, Focus, HookEvents, Integration, Messaging, Provider, Transcript, TranscriptLog,
+    command_handler, focus_or_desktop, group_is_ours, load_object, log_preview, log_transcript,
+    run_send_cmd, save_object,
+};
+use crate::hubs::{Hub, Preview};
 use crate::paths::Context;
 use crate::status::{
     AgentEvent, AgentEventKind, AgentSession, Source, apply_event, session_key, string_field,
     u32_field,
 };
+use crate::store::ListedSession;
+use crate::transcript::{append, content, tool_result};
 
 const HOOK_EVENTS: &[&str] = &[
     "SessionStart",
@@ -24,7 +31,170 @@ const HOOK_EVENTS: &[&str] = &[
     "SessionEnd",
 ];
 
-pub fn apply_hook(sessions: &mut BTreeMap<String, AgentSession>, event: &Value) {
+pub struct Codex;
+
+impl Provider for Codex {
+    fn name(&self) -> &'static str {
+        "codex"
+    }
+
+    fn logo(&self) -> &'static str {
+        "⌘"
+    }
+
+    fn resume_cmd(&self, session_id: &str) -> Vec<String> {
+        vec!["codex".into(), "resume".into(), session_id.into()]
+    }
+
+    fn hooks(&self) -> Option<&dyn HookEvents> {
+        Some(self)
+    }
+
+    fn discovery(&self) -> Option<&dyn Discovery> {
+        Some(self)
+    }
+
+    fn log(&self) -> Option<&dyn TranscriptLog> {
+        Some(self)
+    }
+}
+
+impl HookEvents for Codex {
+    fn apply_hook(&self, sessions: &mut BTreeMap<String, AgentSession>, event: &Value) {
+        apply_hook(sessions, event);
+    }
+
+    fn enrich(&self, payload: &mut Value) {
+        if !payload.is_object() {
+            return;
+        }
+        enrich_originator(
+            payload,
+            std::env::var("CODEX_INTERNAL_ORIGINATOR_OVERRIDE")
+                .ok()
+                .as_deref(),
+        );
+        if u32_field(payload, &["pid"])
+            .filter(|&pid| pid != 0)
+            .is_none()
+            && let Some(pid) = crate::process::ancestor_named("codex")
+        {
+            payload["pid"] = pid.into();
+        }
+    }
+}
+
+fn enrich_originator(payload: &mut Value, originator: Option<&str>) {
+    // Capture this in the hook process: the long-lived berth server has a
+    // different environment, and rollout metadata predates client switches.
+    if string_field(payload, &["originator"]).is_none() {
+        payload["originator"] = originator
+            .filter(|value| !value.is_empty())
+            .unwrap_or("codex-cli")
+            .into();
+    }
+}
+
+impl Discovery for Codex {
+    fn discover(&self, ctx: &Context, sessions: &mut BTreeMap<String, AgentSession>) -> bool {
+        discover(ctx, sessions)
+    }
+}
+
+impl Focus for Codex {
+    fn focus(&self, ctx: &Context, hub: &dyn Hub, session: &ListedSession) -> Result<()> {
+        focus_or_desktop(ctx, hub, session, || {
+            super::open_desktop_url(&desktop_url(&session.session_id)?)
+        })
+    }
+}
+
+impl Messaging for Codex {
+    // `codex queue` hands the message to the shared local app-server that the
+    // interactive session is attached to.
+    fn send(&self, _hub: &dyn Hub, session: &ListedSession, message: &str) -> Result<()> {
+        run_send_cmd(
+            session,
+            &[
+                "codex".into(),
+                "queue".into(),
+                "--thread".into(),
+                session.session_id.clone(),
+                "--message".into(),
+                message.into(),
+            ],
+        )
+    }
+}
+
+impl Transcript for Codex {
+    fn transcript(&self, ctx: &Context, hub: &dyn Hub, session: &ListedSession) -> Result<String> {
+        log_transcript(self, ctx, hub, session)
+    }
+
+    fn preview(&self, ctx: &Context, hub: &dyn Hub, session: &ListedSession) -> Option<Preview> {
+        log_preview(self, ctx, hub, session)
+    }
+}
+
+impl TranscriptLog for Codex {
+    fn root(&self, ctx: &Context) -> PathBuf {
+        ctx.codex_home.join("sessions")
+    }
+
+    fn is_session_file(&self, file_name: &str, session_id: &str) -> bool {
+        file_name.starts_with("rollout-") && file_name.ends_with(&format!("-{session_id}.jsonl"))
+    }
+
+    fn is_session_record(&self, row: &Value, session_id: &str) -> bool {
+        row["type"] == "session_meta"
+            && row["payload"]["id"]
+                .as_str()
+                .or_else(|| row["payload"]["session_id"].as_str())
+                == Some(session_id)
+    }
+
+    fn parse(&self, row: &Value, limit: usize) -> Option<String> {
+        if row["type"] != "response_item" {
+            return None;
+        }
+        let item = &row["payload"];
+        let mut output = String::new();
+        match item["type"].as_str()? {
+            "message" => {
+                let role = item["role"].as_str()?;
+                if !matches!(role, "user" | "assistant") {
+                    return None;
+                }
+                content(&mut output, role, &item["content"], limit);
+            }
+            "function_call" | "custom_tool_call" => {
+                append(
+                    &mut output,
+                    "Tool",
+                    item["name"].as_str().unwrap_or("call"),
+                    limit,
+                );
+                append(
+                    &mut output,
+                    "Input",
+                    item["arguments"]
+                        .as_str()
+                        .or_else(|| item["input"].as_str())
+                        .unwrap_or(""),
+                    limit,
+                );
+            }
+            "function_call_output" | "custom_tool_call_output" => {
+                tool_result(&mut output, &item["output"], limit);
+            }
+            _ => return None,
+        }
+        Some(output)
+    }
+}
+
+fn apply_hook(sessions: &mut BTreeMap<String, AgentSession>, event: &Value) {
     let Some(sid) = session_key(event) else {
         return;
     };
@@ -131,11 +301,7 @@ fn desktop_url(session_id: &str) -> Result<String> {
     Ok(format!("codex://threads/{session_id}"))
 }
 
-pub fn focus_desktop(session_id: &str) -> Result<()> {
-    super::open_desktop_url(&desktop_url(session_id)?)
-}
-
-pub fn discover(ctx: &Context, sessions: &mut BTreeMap<String, AgentSession>) -> bool {
+fn discover(ctx: &Context, sessions: &mut BTreeMap<String, AgentSession>) -> bool {
     let mut changed = drop_archived(ctx, sessions);
     let Ok(index) = std::fs::read_to_string(ctx.codex_home.join("session_index.jsonl")) else {
         return changed;
@@ -165,7 +331,7 @@ pub fn discover(ctx: &Context, sessions: &mut BTreeMap<String, AgentSession>) ->
     changed
 }
 
-pub fn drop_archived(ctx: &Context, sessions: &mut BTreeMap<String, AgentSession>) -> bool {
+fn drop_archived(ctx: &Context, sessions: &mut BTreeMap<String, AgentSession>) -> bool {
     let archived = session_ids_in(&ctx.codex_home.join("archived_sessions"));
     let known = {
         let mut ids = session_ids_in(&ctx.codex_home.join("sessions"));
@@ -229,21 +395,57 @@ fn session_id_from_rollout(path: &Path) -> Option<String> {
     None
 }
 
-pub fn install(ctx: &Context) -> Result<PathBuf> {
-    let dest = ctx.codex_home.join("hooks.json");
-    let mut data = load_object(&dest)?;
-    plan(ctx, &mut data);
-    save_object(&dest, &data)?;
-    Ok(dest)
-}
+impl Integration for Codex {
+    fn install(&self, ctx: &Context) -> Result<PathBuf> {
+        let dest = self.hook_path(ctx);
+        let mut data = load_object(&dest)?;
+        plan(ctx, &mut data);
+        save_object(&dest, &data)?;
+        Ok(dest)
+    }
 
-pub fn outdated(ctx: &Context) -> bool {
-    let Ok(current) = load_object(&ctx.codex_home.join("hooks.json")) else {
-        return false;
-    };
-    let mut planned = current.clone();
-    plan(ctx, &mut planned);
-    planned != current
+    fn uninstall(&self, ctx: &Context) -> Result<()> {
+        let dest = self.hook_path(ctx);
+        if !dest.exists() {
+            return Ok(());
+        }
+        let mut data = load_object(&dest)?;
+        let Some(hooks) = data.get_mut("hooks").and_then(Value::as_object_mut) else {
+            return Ok(());
+        };
+        let events: Vec<String> = hooks.keys().cloned().collect();
+        for event in events {
+            let Some(groups) = hooks.get_mut(&event).and_then(Value::as_array_mut) else {
+                continue;
+            };
+            groups.retain(|group| !group_is_ours(group, self.name()));
+            if groups.is_empty() {
+                hooks.remove(&event);
+            }
+        }
+        if hooks.is_empty() {
+            data.as_object_mut().unwrap().remove("hooks");
+        }
+        save_object(&dest, &data)?;
+        Ok(())
+    }
+
+    fn hook_path(&self, ctx: &Context) -> PathBuf {
+        ctx.codex_home.join("hooks.json")
+    }
+
+    fn outdated(&self, ctx: &Context) -> bool {
+        let Ok(current) = load_object(&self.hook_path(ctx)) else {
+            return false;
+        };
+        let mut planned = current.clone();
+        plan(ctx, &mut planned);
+        planned != current
+    }
+
+    fn config_exists(&self, ctx: &Context) -> bool {
+        ctx.codex_home.is_dir()
+    }
 }
 
 fn plan(ctx: &Context, data: &mut Value) {
@@ -259,7 +461,7 @@ fn plan(ctx: &Context, data: &mut Value) {
         *hooks = json!({});
     }
     // Codex ignores async hooks in `exec` mode, so install synchronous hooks.
-    let handler = command_handler(ctx, "codex", 3, false);
+    let handler = command_handler(ctx, Codex.name(), 3, false);
     for event in HOOK_EVENTS {
         let groups = hooks
             .as_object_mut()
@@ -271,7 +473,7 @@ fn plan(ctx: &Context, data: &mut Value) {
             kept.extend(
                 items
                     .iter()
-                    .filter(|group| !group_is_ours(group, "codex"))
+                    .filter(|group| !group_is_ours(group, Codex.name()))
                     .cloned(),
             );
         }
@@ -279,32 +481,6 @@ fn plan(ctx: &Context, data: &mut Value) {
         kept.push(group);
         *groups = Value::Array(kept);
     }
-}
-
-pub fn uninstall(ctx: &Context) -> Result<()> {
-    let dest = ctx.codex_home.join("hooks.json");
-    if !dest.exists() {
-        return Ok(());
-    }
-    let mut data = load_object(&dest)?;
-    let Some(hooks) = data.get_mut("hooks").and_then(Value::as_object_mut) else {
-        return Ok(());
-    };
-    let events: Vec<String> = hooks.keys().cloned().collect();
-    for event in events {
-        let Some(groups) = hooks.get_mut(&event).and_then(Value::as_array_mut) else {
-            continue;
-        };
-        groups.retain(|group| !group_is_ours(group, "codex"));
-        if groups.is_empty() {
-            hooks.remove(&event);
-        }
-    }
-    if hooks.is_empty() {
-        data.as_object_mut().unwrap().remove("hooks");
-    }
-    save_object(&dest, &data)?;
-    Ok(())
 }
 
 #[cfg(test)]

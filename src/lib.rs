@@ -4,6 +4,7 @@ mod db;
 mod doctor;
 mod duration;
 mod git;
+mod hubs;
 mod ipc;
 mod list;
 mod logs;

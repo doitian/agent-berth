@@ -1,5 +1,6 @@
 use super::*;
 use crate::status::AgentStatus;
+use crate::status::Source;
 use crate::store::SessionKind;
 
 fn listed(cwd: Option<&str>, title: Option<&str>) -> ListedSession {
@@ -87,13 +88,6 @@ fn missing_branch_is_dashed() {
 }
 
 #[test]
-fn pane_matches_by_pid_in_ancestor_chain() {
-    let panes = [pane("%1", 10, "/a"), pane("%2", 20, "/b")];
-    assert_eq!(pane_for_pid(&panes, &[99, 20, 5]).unwrap().id, "%2");
-    assert!(pane_for_pid(&panes, &[99, 98]).is_none());
-}
-
-#[test]
 fn direct_matches_one_candidate_by_id() {
     let mut first = listed(Some("/a"), Some("A"));
     first.session_id = "one".into();
@@ -127,37 +121,6 @@ fn only_tmux_cli_sessions_are_candidates() {
     assert_eq!(candidates[0].session.session_id, "abc");
     assert!(collect(&[paseo, desktop], &panes).is_empty());
     assert!(!fzf_args(None, true).iter().any(|arg| arg.contains("paseo")));
-}
-
-#[test]
-fn same_path_folds_separators_and_trailing_slashes() {
-    assert!(same_path("C:\\work\\proj", "C:/work/proj"));
-    assert!(same_path("/work/proj", "/work/proj/"));
-    assert!(!same_path("C:\\work\\proj", "C:\\work\\other"));
-}
-
-#[cfg(windows)]
-#[test]
-fn same_path_folds_case_on_windows() {
-    assert!(same_path("C:\\Work\\Proj", "c:/work/PROJ"));
-}
-
-#[test]
-fn client_binary_uses_the_cmdline_executable_name() {
-    let mut session = listed(None, None);
-    assert_eq!(client_binary(&session), None);
-    session.cmdline = vec!["opencode".into(), "--session".into(), "x".into()];
-    assert_eq!(client_binary(&session).as_deref(), Some("opencode"));
-    session.cmdline = vec!["/usr/local/bin/opencode".into()];
-    assert_eq!(client_binary(&session).as_deref(), Some("opencode"));
-}
-
-#[cfg(windows)]
-#[test]
-fn client_binary_strips_windows_directories() {
-    let mut session = listed(None, None);
-    session.cmdline = vec!["C:\\tools\\opencode.exe".into()];
-    assert_eq!(client_binary(&session).as_deref(), Some("opencode.exe"));
 }
 
 #[test]

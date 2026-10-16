@@ -34,18 +34,18 @@ fn follows_complete_records_and_buffers_partial_utf8() {
     std::fs::write(&path, message("1", "First")).unwrap();
     let source = source(&path, "claude");
     let mut reader = Reader::default();
-    assert!(reader.preview(&source).contains("Assistant: First"));
+    assert!(reader.preview_log(&source).contains("Assistant: First"));
     let next = message("2", "你好");
     let split = next.find('你').unwrap() + 1;
     append_file(&path, &next.as_bytes()[..split]);
-    assert!(!reader.preview(&source).contains("你好"));
+    assert!(!reader.preview_log(&source).contains("你好"));
     let old_offset = reader.offset;
     append_file(&path, &next.as_bytes()[split..]);
-    let output = reader.preview(&source);
+    let output = reader.preview_log(&source);
     assert!(output.contains("Assistant: 你好"));
     assert_eq!(output.matches("Assistant: First").count(), 1);
     assert!(reader.offset > old_offset);
-    assert_eq!(reader.preview(&source), output);
+    assert_eq!(reader.preview_log(&source), output);
 }
 
 #[test]
@@ -55,7 +55,7 @@ fn replaces_duplicate_claude_records_and_skips_malformed_and_unknown_rows() {
     std::fs::write(&path, message("1", "Draft")).unwrap();
     let mut reader = Reader::default();
     let source = source(&path, "claude");
-    reader.preview(&source);
+    reader.preview_log(&source);
     append_file(
         &path,
         format!(
@@ -65,7 +65,7 @@ fn replaces_duplicate_claude_records_and_skips_malformed_and_unknown_rows() {
         )
         .as_bytes(),
     );
-    let output = reader.preview(&source);
+    let output = reader.preview_log(&source);
     assert!(!output.contains("Draft"));
     assert_eq!(output.matches("Assistant: Final").count(), 1);
     assert!(output.contains("malformed"));
@@ -78,7 +78,7 @@ fn parses_claude_tools_images_and_omits_thinking() {
         {"type":"text","text":"Checking"},
         {"type":"tool_use","name":"Read","input":{"file_path":"src/main.rs"}}
     ]}});
-    let output = parse("claude", &row).unwrap();
+    let output = parse(log("claude").unwrap(), &row).unwrap();
     assert!(output.contains("Assistant: Checking"));
     assert!(output.contains("Tool: Read"));
     assert!(output.contains("src/main.rs"));
@@ -87,7 +87,7 @@ fn parses_claude_tools_images_and_omits_thinking() {
         {"type":"text","text":"Look"}, {"type":"image","source":{"data":"base64"}},
         {"type":"tool_result","content":[{"type":"text","text":"file contents"}]}
     ]}});
-    let output = parse("claude", &row).unwrap();
+    let output = parse(log("claude").unwrap(), &row).unwrap();
     assert!(output.contains("You: Look"));
     assert!(output.contains("You: [image]"));
     assert!(output.contains("Result: file contents"));
@@ -96,19 +96,19 @@ fn parses_claude_tools_images_and_omits_thinking() {
 
 #[test]
 fn codex_uses_response_items_without_event_mirrors_or_instructions() {
-    assert_eq!(parse("codex", &json!({"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Hello"}]}})).as_deref(), Some("You: Hello"));
-    assert_eq!(parse("codex", &json!({"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Hi"}]}})).as_deref(), Some("Assistant: Hi"));
+    assert_eq!(parse(log("codex").unwrap(), &json!({"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Hello"}]}})).as_deref(), Some("You: Hello"));
+    assert_eq!(parse(log("codex").unwrap(), &json!({"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Hi"}]}})).as_deref(), Some("Assistant: Hi"));
     assert!(
         parse(
-            "codex",
+            log("codex").unwrap(),
             &json!({"type":"event_msg","payload":{"type":"agent_message","message":"Hi"}})
         )
         .is_none()
     );
-    assert!(parse("codex", &json!({"type":"response_item","payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"instructions"}]}})).is_none());
+    assert!(parse(log("codex").unwrap(), &json!({"type":"response_item","payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"instructions"}]}})).is_none());
     for kind in ["function_call", "custom_tool_call"] {
         let text = parse(
-            "codex",
+            log("codex").unwrap(),
             &json!({"type":"response_item","payload":{"type":kind,"name":"exec","arguments":"ls"}}),
         )
         .unwrap();
@@ -118,7 +118,7 @@ fn codex_uses_response_items_without_event_mirrors_or_instructions() {
     for kind in ["function_call_output", "custom_tool_call_output"] {
         assert_eq!(
             parse(
-                "codex",
+                log("codex").unwrap(),
                 &json!({"type":"response_item","payload":{"type":kind,"output":"ok"}})
             )
             .as_deref(),
@@ -131,7 +131,7 @@ fn codex_uses_response_items_without_event_mirrors_or_instructions() {
 fn parses_pi_message_entries_and_skips_other_roles_and_entries() {
     assert_eq!(
         parse(
-            "pi",
+            log("pi").unwrap(),
             &json!({"type":"message","id":"a1","parentId":null,
                 "message":{"role":"user","content":"Hello","timestamp":1}})
         )
@@ -147,7 +147,7 @@ fn parses_pi_message_entries_and_skips_other_roles_and_entries() {
         ],
         "stopReason":"toolUse"
     }});
-    let output = parse("pi", &row).unwrap();
+    let output = parse(log("pi").unwrap(), &row).unwrap();
     assert!(output.contains("Assistant: Checking"));
     assert!(output.contains("Tool: bash"));
     assert!(output.contains("\"command\":\"ls\""));
@@ -157,12 +157,27 @@ fn parses_pi_message_entries_and_skips_other_roles_and_entries() {
         "content":[{"type":"text","text":"output"},{"type":"image","data":"base64"}],
         "isError":false
     }});
-    assert_eq!(parse("pi", &row).as_deref(), Some("Result: output"));
-    assert!(parse("pi", &json!({"type":"session","version":3,"id":"s"})).is_none());
-    assert!(parse("pi", &json!({"type":"model_change","id":"m","modelId":"m"})).is_none());
+    assert_eq!(
+        parse(log("pi").unwrap(), &row).as_deref(),
+        Some("Result: output")
+    );
     assert!(
         parse(
-            "pi",
+            log("pi").unwrap(),
+            &json!({"type":"session","version":3,"id":"s"})
+        )
+        .is_none()
+    );
+    assert!(
+        parse(
+            log("pi").unwrap(),
+            &json!({"type":"model_change","id":"m","modelId":"m"})
+        )
+        .is_none()
+    );
+    assert!(
+        parse(
+            log("pi").unwrap(),
             &json!({"type":"message","id":"a4","message":{"role":"system","content":"",
                 "sections":{"preamble":"prompt text"}}})
         )
@@ -177,17 +192,21 @@ fn resets_after_truncate_regrow_and_replacement() {
     std::fs::write(&path, message("1", "old")).unwrap();
     let source = source(&path, "claude");
     let mut reader = Reader::default();
-    reader.preview(&source);
+    reader.preview_log(&source);
     std::fs::write(&path, message("2", "replacement longer than old")).unwrap();
-    let text = reader.preview(&source);
+    let text = reader.preview_log(&source);
     assert!(text.contains("replacement longer"));
     assert!(!text.contains("Assistant: old"));
     std::fs::write(&path, "").unwrap();
-    assert!(reader.preview(&source).contains("No conversation messages"));
+    assert!(
+        reader
+            .preview_log(&source)
+            .contains("No conversation messages")
+    );
     std::fs::remove_file(&path).unwrap();
-    assert!(reader.preview(&source).contains("file is missing"));
+    assert!(reader.preview_log(&source).contains("file is missing"));
     std::fs::write(&path, message("3", "new file")).unwrap();
-    assert!(reader.preview(&source).contains("Assistant: new file"));
+    assert!(reader.preview_log(&source).contains("Assistant: new file"));
 }
 
 #[test]
@@ -204,7 +223,7 @@ fn skips_oversized_records_and_bounds_recent_history() {
     }
     let mut reader = Reader::default();
     let source = source(&path, "claude");
-    let text = reader.preview(&source);
+    let text = reader.preview_log(&source);
     assert!(text.contains("Assistant: message-99"));
     assert!(!text.contains("Assistant: message-0\n"));
     assert_eq!(reader.entries.len(), ENTRY_LIMIT);
@@ -212,15 +231,15 @@ fn skips_oversized_records_and_bounds_recent_history() {
     // An oversized record arriving over several polls is discarded through its
     // newline; the next valid record must still be consumed.
     append_file(&path, &vec![b'x'; RECORD_LIMIT]);
-    reader.preview(&source);
+    reader.preview_log(&source);
     append_file(&path, b"x");
-    reader.preview(&source);
+    reader.preview_log(&source);
     assert!(reader.pending.is_empty());
     append_file(
         &path,
         format!("\n{}", message("last", "Recovered")).as_bytes(),
     );
-    assert!(reader.preview(&source).contains("Assistant: Recovered"));
+    assert!(reader.preview_log(&source).contains("Assistant: Recovered"));
 }
 
 #[test]
@@ -229,7 +248,11 @@ fn bounds_text_and_removes_terminal_controls() {
         "\x1b]52;c;clipboard\x07\u{009b}31m\r{}",
         "界".repeat(TEXT_LIMIT * 2)
     );
-    let output = parse("claude", &json!({"type":"user","message":{"content":raw}})).unwrap();
+    let output = parse(
+        log("claude").unwrap(),
+        &json!({"type":"user","message":{"content":raw}}),
+    )
+    .unwrap();
     assert!(output.chars().count() <= TEXT_LIMIT);
     assert!(!output.chars().any(char::is_control));
     assert!(output.ends_with('…'));
@@ -272,17 +295,17 @@ fn unavailable_and_read_errors_are_distinct_and_recoverable() {
     let mut reader = Reader::default();
     assert!(
         reader
-            .preview(&source)
+            .preview_log(&source)
             .contains("Unable to read transcript")
     );
     source.path = None;
     assert!(
         reader
-            .preview(&source)
+            .preview_log(&source)
             .contains("waiting for a session hook")
     );
     source.path = Some(dir.path().join("missing").to_string_lossy().into_owned());
-    assert!(reader.preview(&source).contains("file is missing"));
+    assert!(reader.preview_log(&source).contains("file is missing"));
 }
 
 #[test]

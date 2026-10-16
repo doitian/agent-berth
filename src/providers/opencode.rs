@@ -3,9 +3,17 @@ use std::process::{Command, Stdio};
 use std::time::Duration;
 
 use anyhow::Result;
+use serde_json::json;
 
-use super::write_text;
+use super::{
+    Focus, Integration, Messaging, Provider, Transcript, or_hub_transcript, run_send_cmd,
+    write_text,
+};
+use crate::hubs::Hub;
 use crate::paths::Context;
+use crate::store::ListedSession;
+
+mod export;
 
 const V1_PLUGIN: &str = "agent-berth.js";
 const V2_PLUGIN: &str = "agent-berth-v2";
@@ -15,30 +23,88 @@ const V2_MANIFEST: &str = "package.json";
 // Earlier builds installed the v2 plugin as a single file.
 const V2_LEGACY_PLUGIN: &str = "agent-berth-v2.js";
 
-pub fn install(ctx: &Context) -> Result<PathBuf> {
-    install_for(ctx, opencode_major().unwrap_or(1))
+pub struct Opencode;
+
+impl Provider for Opencode {
+    fn name(&self) -> &'static str {
+        "opencode"
+    }
+
+    fn logo(&self) -> &'static str {
+        "⧈"
+    }
+
+    fn resume_cmd(&self, session_id: &str) -> Vec<String> {
+        vec!["opencode".into(), "--session".into(), session_id.into()]
+    }
 }
 
-pub fn outdated(ctx: &Context) -> bool {
-    let major = opencode_major().unwrap_or(1);
-    inactive_plugins(major)
-        .iter()
-        .any(|name| plugin_path(ctx, name).exists())
-        || source_differs(ctx, major)
+impl Integration for Opencode {
+    fn install(&self, ctx: &Context) -> Result<PathBuf> {
+        install_for(ctx, opencode_major().unwrap_or(1))
+    }
+
+    fn uninstall(&self, ctx: &Context) -> Result<()> {
+        remove_plugin(ctx, V1_PLUGIN)?;
+        remove_plugin(ctx, V2_PLUGIN)?;
+        remove_plugin(ctx, V2_LEGACY_PLUGIN)?;
+        Ok(())
+    }
+
+    fn hook_path(&self, ctx: &Context) -> PathBuf {
+        if opencode_major().unwrap_or(1) >= 2 {
+            plugin_path(ctx, V2_PLUGIN).join(V2_ENTRY)
+        } else {
+            plugin_path(ctx, V1_PLUGIN)
+        }
+    }
+
+    fn outdated(&self, ctx: &Context) -> bool {
+        let major = opencode_major().unwrap_or(1);
+        inactive_plugins(major)
+            .iter()
+            .any(|name| plugin_path(ctx, name).exists())
+            || source_differs(ctx, major)
+    }
+
+    fn config_exists(&self, ctx: &Context) -> bool {
+        ctx.opencode_plugin_dir()
+            .parent()
+            .is_some_and(|parent| parent.is_dir())
+    }
+
+    /// A plugin file exists for a different OpenCode major version than the
+    /// one on PATH, and no plugin for the detected version is installed.
+    fn install_problem(&self, ctx: &Context) -> Option<String> {
+        mismatch_detail(ctx, opencode_major()?)
+    }
 }
 
-pub fn uninstall(ctx: &Context) -> Result<()> {
-    remove_plugin(ctx, V1_PLUGIN)?;
-    remove_plugin(ctx, V2_PLUGIN)?;
-    remove_plugin(ctx, V2_LEGACY_PLUGIN)?;
-    Ok(())
+impl Focus for Opencode {}
+
+impl Messaging for Opencode {
+    // The OpenCode API admits the input to the session on the shared
+    // background server the TUI is attached to. `run --session` would also
+    // create a session when the ID is unknown, so prefer the API call.
+    fn send(&self, _hub: &dyn Hub, session: &ListedSession, message: &str) -> Result<()> {
+        run_send_cmd(
+            session,
+            &[
+                "opencode".into(),
+                "api".into(),
+                "session.prompt".into(),
+                "--param".into(),
+                format!("sessionID={}", session.session_id),
+                "--data".into(),
+                json!({"text": message, "delivery": "queue"}).to_string(),
+            ],
+        )
+    }
 }
 
-pub(crate) fn hook_path(ctx: &Context) -> PathBuf {
-    if opencode_major().unwrap_or(1) >= 2 {
-        plugin_path(ctx, V2_PLUGIN).join(V2_ENTRY)
-    } else {
-        plugin_path(ctx, V1_PLUGIN)
+impl Transcript for Opencode {
+    fn transcript(&self, _ctx: &Context, hub: &dyn Hub, session: &ListedSession) -> Result<String> {
+        or_hub_transcript(export::export(&session.session_id), hub, session)
     }
 }
 
@@ -127,12 +193,6 @@ fn source_file(entry: &str, ctx: &Context) -> String {
         "__AGENT_BERTH_BIN__",
         &serde_json::to_string(&ctx.berth_bin.display().to_string()).unwrap(),
     )
-}
-
-/// A plugin file exists for a different OpenCode major version than the one
-/// on PATH, and no plugin for the detected version is installed.
-pub fn version_mismatch(ctx: &Context) -> Option<String> {
-    mismatch_detail(ctx, opencode_major()?)
 }
 
 fn mismatch_detail(ctx: &Context, major: u32) -> Option<String> {

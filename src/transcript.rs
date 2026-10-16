@@ -11,6 +11,8 @@ use std::time::SystemTime;
 use anyhow::{Context, Result};
 use serde_json::Value;
 
+use crate::providers::TranscriptLog;
+
 const READ_LIMIT: u64 = 1024 * 1024;
 const RECORD_LIMIT: usize = 256 * 1024;
 const ENTRY_LIMIT: usize = 48;
@@ -24,9 +26,20 @@ pub(crate) struct Source {
     pub root: Option<PathBuf>,
 }
 
+fn log(provider: &str) -> Option<&'static dyn TranscriptLog> {
+    crate::providers::lookup(provider)?.log()
+}
+
+/// A live conversation the TUI previews.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) enum Feed {
+    Log(Source),
+    Paseo { agent_id: String, home: PathBuf },
+}
+
 /// Whether `Reader` can parse and locate this provider's conversation logs.
 pub(crate) fn supports(provider: &str) -> bool {
-    matches!(provider, "claude" | "codex" | "pi")
+    log(provider).is_some()
 }
 
 #[derive(Default)]
@@ -40,7 +53,7 @@ pub(crate) struct Reader {
     identity: Option<FileIdentity>,
     omitted: bool,
     resolved: Option<PathBuf>,
-    paseo: Option<crate::providers::paseo::Stream>,
+    paseo: Option<crate::hubs::paseo::Stream>,
 }
 
 #[derive(PartialEq, Eq)]
@@ -67,18 +80,20 @@ impl FileIdentity {
 }
 
 impl Reader {
-    pub fn preview(&mut self, source: &Source) -> String {
-        if source.provider == "paseo" {
-            let Some(home) = source.root.as_deref() else {
-                return "Paseo home is unknown".into();
-            };
-            return self
+    pub fn preview(&mut self, feed: &Feed) -> String {
+        match feed {
+            Feed::Log(source) => self.preview_log(source),
+            Feed::Paseo { agent_id, home } => self
                 .paseo
-                .get_or_insert_with(|| {
-                    crate::providers::paseo::Stream::new(&source.session_id, home)
-                })
-                .preview();
+                .get_or_insert_with(|| crate::hubs::paseo::Stream::new(agent_id, home))
+                .preview(),
         }
+    }
+
+    fn preview_log(&mut self, source: &Source) -> String {
+        let Some(log) = log(&source.provider) else {
+            return format!("{} sessions have no local transcript", source.provider);
+        };
         let path = source
             .path
             .as_ref()
@@ -88,7 +103,7 @@ impl Reader {
             return "Transcript unavailable: waiting for a session hook with a transcript path."
                 .into();
         };
-        match self.read(&path, &source.provider) {
+        match self.read(&path, log) {
             Ok(()) => {
                 self.resolved = Some(path);
                 self.render()
@@ -101,7 +116,7 @@ impl Reader {
         }
     }
 
-    fn read(&mut self, path: &Path, provider: &str) -> io::Result<()> {
+    fn read(&mut self, path: &Path, log: &dyn TranscriptLog) -> io::Result<()> {
         // Check before opening so a stale/misconfigured hook cannot point us at
         // a pipe or device that blocks a worker indefinitely.
         if !path.metadata()?.is_file() {
@@ -150,7 +165,7 @@ impl Reader {
             }
             if complete {
                 if !self.skipping {
-                    self.record(provider);
+                    self.record(log);
                 }
                 self.pending.clear();
                 self.skipping = false;
@@ -163,15 +178,15 @@ impl Reader {
         Ok(())
     }
 
-    fn record(&mut self, provider: &str) {
+    fn record(&mut self, log: &dyn TranscriptLog) {
         let Ok(row) = serde_json::from_slice::<Value>(&self.pending) else {
             self.omitted = true;
             return;
         };
-        let Some(text) = parse(provider, &row) else {
+        let Some(text) = parse(log, &row) else {
             return;
         };
-        let key = record_key(provider, &row);
+        let key = record_key(log, &row);
         if let Some((_, existing)) = self.entries.iter_mut().find(|(id, _)| *id == key) {
             *existing = text;
         } else {
@@ -201,15 +216,14 @@ impl Reader {
 }
 
 /// Stable key for a transcript record, used to replace revisions of the same
-/// message. Claude UUIDs identify records including revisions; Codex event_msg
+/// message. Records without an ID are keyed by their content: Codex event_msg
 /// mirrors are ignored by the parser, and timestamped response rows identify
 /// distinct messages even when their text happens to be identical.
-fn record_key(provider: &str, row: &Value) -> u64 {
+fn record_key(log: &dyn TranscriptLog, row: &Value) -> u64 {
     let mut hash = DefaultHasher::new();
-    if provider == "claude" && row["uuid"].is_string() {
-        row["uuid"].as_str().hash(&mut hash);
-    } else {
-        row.to_string().hash(&mut hash);
+    match log.record_id(row) {
+        Some(id) => id.hash(&mut hash),
+        None => row.to_string().hash(&mut hash),
     }
     hash.finish()
 }
@@ -218,11 +232,8 @@ fn record_key(provider: &str, row: &Value) -> u64 {
 /// output. Unlike `Reader`, it reads the entire file, keeps every entry, and
 /// does not truncate message text.
 pub(crate) fn full(source: &Source) -> Result<String> {
-    anyhow::ensure!(
-        supports(&source.provider),
-        "{} sessions have no local transcript",
-        source.provider
-    );
+    let log = log(&source.provider)
+        .with_context(|| format!("{} sessions have no local transcript", source.provider))?;
     let path = match source.path.as_ref().map(PathBuf::from) {
         Some(path) => path,
         None => locate(source).with_context(|| {
@@ -240,10 +251,10 @@ pub(crate) fn full(source: &Source) -> Result<String> {
         let Ok(row) = serde_json::from_str::<Value>(&line) else {
             continue;
         };
-        let Some(text) = parse_with_limit(&source.provider, &row, usize::MAX) else {
+        let Some(text) = parse_with_limit(log, &row, usize::MAX) else {
             continue;
         };
-        let key = record_key(&source.provider, &row);
+        let key = record_key(log, &row);
         if texts.insert(key, text).is_none() {
             order.push(key);
         }
@@ -258,6 +269,7 @@ pub(crate) fn full(source: &Source) -> Result<String> {
 /// Recover paths for already-running sessions. Search only the configured local
 /// transcript root, never symlinked directories or guessed parent transcripts.
 fn locate(source: &Source) -> Option<PathBuf> {
+    let log = log(&source.provider)?;
     let id = &source.session_id;
     if id.is_empty() || !id.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-') {
         return None;
@@ -281,15 +293,7 @@ fn locate(source: &Source) -> Option<PathBuf> {
             } else if kind.is_file() {
                 let name = entry.file_name();
                 let name = name.to_string_lossy();
-                let matches = match source.provider.as_str() {
-                    "claude" => name == format!("{id}.jsonl"),
-                    "codex" => {
-                        name.starts_with("rollout-") && name.ends_with(&format!("-{id}.jsonl"))
-                    }
-                    "pi" => name.ends_with(&format!("_{id}.jsonl")),
-                    _ => false,
-                };
-                if matches && belongs_to(&entry.path(), source) {
+                if log.is_session_file(&name, id) && belongs_to(log, &entry.path(), id) {
                     return Some(entry.path());
                 }
             }
@@ -298,7 +302,7 @@ fn locate(source: &Source) -> Option<PathBuf> {
     None
 }
 
-fn belongs_to(path: &Path, source: &Source) -> bool {
+fn belongs_to(log: &dyn TranscriptLog, path: &Path, session_id: &str) -> bool {
     let Ok(file) = File::open(path) else {
         return false;
     };
@@ -313,81 +317,18 @@ fn belongs_to(path: &Path, source: &Source) -> bool {
     bytes
         .split(|c| *c == b'\n')
         .filter_map(|line| serde_json::from_slice::<Value>(line).ok())
-        .any(|row| match source.provider.as_str() {
-            "claude" => row["sessionId"].as_str() == Some(source.session_id.as_str()),
-            "codex" => {
-                row["type"] == "session_meta"
-                    && row["payload"]["id"]
-                        .as_str()
-                        .or_else(|| row["payload"]["session_id"].as_str())
-                        == Some(source.session_id.as_str())
-            }
-            "pi" => {
-                row["type"] == "session" && row["id"].as_str() == Some(source.session_id.as_str())
-            }
-            _ => false,
-        })
+        .any(|row| log.is_session_record(&row, session_id))
 }
 
-fn parse(provider: &str, row: &Value) -> Option<String> {
-    parse_with_limit(provider, row, TEXT_LIMIT)
+fn parse(log: &dyn TranscriptLog, row: &Value) -> Option<String> {
+    parse_with_limit(log, row, TEXT_LIMIT)
 }
 
-fn parse_with_limit(provider: &str, row: &Value, limit: usize) -> Option<String> {
-    let mut output = String::new();
-    match provider {
-        "claude" if matches!(row["type"].as_str(), Some("user" | "assistant")) => {
-            let role = row["type"].as_str()?;
-            content(&mut output, role, &row["message"]["content"], limit);
-        }
-        "codex" if row["type"] == "response_item" => {
-            let item = &row["payload"];
-            match item["type"].as_str()? {
-                "message" => {
-                    let role = item["role"].as_str()?;
-                    if !matches!(role, "user" | "assistant") {
-                        return None;
-                    }
-                    content(&mut output, role, &item["content"], limit);
-                }
-                "function_call" | "custom_tool_call" => {
-                    append(
-                        &mut output,
-                        "Tool",
-                        item["name"].as_str().unwrap_or("call"),
-                        limit,
-                    );
-                    append(
-                        &mut output,
-                        "Input",
-                        item["arguments"]
-                            .as_str()
-                            .or_else(|| item["input"].as_str())
-                            .unwrap_or(""),
-                        limit,
-                    );
-                }
-                "function_call_output" | "custom_tool_call_output" => {
-                    tool_result(&mut output, &item["output"], limit);
-                }
-                _ => return None,
-            }
-        }
-        "pi" if row["type"] == "message" => {
-            let message = &row["message"];
-            let role = message["role"].as_str()?;
-            match role {
-                "user" | "assistant" => content(&mut output, role, &message["content"], limit),
-                "toolResult" => tool_result(&mut output, &message["content"], limit),
-                _ => return None,
-            }
-        }
-        _ => return None,
-    }
-    (!output.is_empty()).then_some(output)
+fn parse_with_limit(log: &dyn TranscriptLog, row: &Value, limit: usize) -> Option<String> {
+    log.parse(row, limit).filter(|output| !output.is_empty())
 }
 
-fn content(output: &mut String, role: &str, value: &Value, limit: usize) {
+pub(crate) fn content(output: &mut String, role: &str, value: &Value, limit: usize) {
     let label = if role == "user" { "You" } else { "Assistant" };
     if let Some(text) = value.as_str() {
         append(output, label, text, limit);
@@ -423,7 +364,7 @@ fn content(output: &mut String, role: &str, value: &Value, limit: usize) {
     }
 }
 
-fn tool_result(output: &mut String, value: &Value, limit: usize) {
+pub(crate) fn tool_result(output: &mut String, value: &Value, limit: usize) {
     if let Some(text) = value.as_str() {
         append(output, "Result", text, limit);
     } else if let Some(blocks) = value.as_array() {
@@ -435,7 +376,7 @@ fn tool_result(output: &mut String, value: &Value, limit: usize) {
     }
 }
 
-fn append(output: &mut String, label: &str, text: &str, limit: usize) {
+pub(crate) fn append(output: &mut String, label: &str, text: &str, limit: usize) {
     // Plain text only: no transcript-controlled terminal escapes or C1 controls.
     let remaining = limit.saturating_sub(output.chars().count());
     if remaining <= label.len() + 4 || text.is_empty() {

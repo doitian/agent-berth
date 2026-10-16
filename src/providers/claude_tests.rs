@@ -395,7 +395,7 @@ fn stale_agents_row_does_not_end_a_run_it_predates() {
 fn turn_terminal_hooks_are_installed_synchronously() {
     let root = tempfile::tempdir().unwrap();
     let ctx = Context::for_test(root.path(), &root.path().join("agent-berth"));
-    let dest = install(&ctx).unwrap();
+    let dest = Claude.install(&ctx).unwrap();
     let data: Value = serde_json::from_slice(&std::fs::read(&dest).unwrap()).unwrap();
     for event in HOOK_EVENTS {
         let handler = data["hooks"][event]

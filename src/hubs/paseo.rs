@@ -5,16 +5,61 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, SystemTime};
 
-use anyhow::{Result, ensure};
+use anyhow::{Result, bail, ensure};
 use serde_json::Value;
 
+use super::{Hub, Preview};
 use crate::paths::Context;
 use crate::status::string_field;
 use crate::store::ListedSession;
+use crate::transcript::Feed;
 
 mod api;
 mod desktop;
 mod timeline;
+
+/// A session Paseo runs, reached through its daemon API and Desktop app.
+#[derive(Debug, Clone)]
+pub struct Paseo {
+    agent_id: String,
+}
+
+impl Paseo {
+    pub fn new(agent_id: &str) -> Self {
+        Self {
+            agent_id: agent_id.to_string(),
+        }
+    }
+}
+
+impl Hub for Paseo {
+    fn hosts(&self, _session: &ListedSession) -> bool {
+        true
+    }
+
+    fn focus(&self, ctx: &Context, _session: &ListedSession) -> Result<()> {
+        desktop::open(ctx, &focus_url(ctx, &self.agent_id)?)
+    }
+
+    fn send(&self, session: &ListedSession, _message: &str) -> Result<()> {
+        bail!(
+            "{} {} runs in Paseo, which cannot deliver messages",
+            session.provider,
+            session.session_id
+        )
+    }
+
+    fn transcript(&self, _session: &ListedSession) -> Result<String> {
+        bail!("Paseo sessions have no transcript to export")
+    }
+
+    fn preview(&self, ctx: &Context, _session: &ListedSession) -> Option<Preview> {
+        Some(Preview::Feed(Feed::Paseo {
+            agent_id: self.agent_id.clone(),
+            home: ctx.paseo_home.clone(),
+        }))
+    }
+}
 
 // The records only provide routing identity; monitoring and resume stay with
 // the existing provider hooks and snapshots.
@@ -140,10 +185,6 @@ pub(crate) fn valid_id(id: &str) -> bool {
         && id
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
-}
-
-pub fn focus(ctx: &Context, agent_id: &str) -> Result<()> {
-    desktop::open(ctx, &focus_url(ctx, agent_id)?)
 }
 
 fn focus_url(ctx: &Context, agent_id: &str) -> Result<String> {

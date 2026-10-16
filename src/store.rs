@@ -345,11 +345,14 @@ impl Store {
     }
 
     pub fn discover(&mut self, ctx: &crate::paths::Context) -> bool {
-        let claude =
-            crate::providers::discover_claude(ctx, self.hooks.entry("claude".into()).or_default());
-        let codex =
-            crate::providers::discover_codex(ctx, self.hooks.entry("codex".into()).or_default());
-        claude || codex
+        let mut changed = false;
+        for provider in providers::all() {
+            if let Some(discovery) = provider.discovery() {
+                let bucket = self.hooks.entry(provider.name().into()).or_default();
+                changed |= discovery.discover(ctx, bucket);
+            }
+        }
+        changed
     }
 
     pub fn stored(&self) -> Vec<ListedSession> {
@@ -744,7 +747,7 @@ fn touch_session(
     } else {
         &["transcript_path"]
     };
-    if matches!(provider, "claude" | "codex")
+    if crate::transcript::supports(provider)
         && let Some(path) = string_field(payload, keys).filter(|path| !path.is_empty())
     {
         session.transcript_path = Some(path.to_string());
