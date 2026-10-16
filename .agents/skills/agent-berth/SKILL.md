@@ -80,9 +80,9 @@ front, so one of those processes can match with every session it has opened.
 | `status` | Meaning | What to do |
 | --- | --- | --- |
 | `running` | Working on the task | Wait and poll again |
-| `waiting` | Blocked on a permission prompt or a question | Read the logs and tell the user, who can answer it with `agent-berth attach "$id"` |
-| `done` | Finished its turn (Claude Code, Codex, Grok) | Read the logs |
-| `idle` | Finished its turn (OpenCode, Pi), or has not started one yet | Read the logs |
+| `waiting` | Blocked on a permission prompt or a question | Run `agent-berth logs "$id" --final` and tell the user what it is blocked on; they can answer it with `agent-berth attach "$id"` |
+| `done` | Finished its turn (Claude Code, Codex, Grok) | Read the reply with `logs --final` |
+| `idle` | Finished its turn (OpenCode, Pi), or has not started one yet | Read the reply with `logs --final` |
 
 `send` cannot answer a `waiting` agent: it types or queues a new message, and
 cannot pick an option in a permission dialog.
@@ -115,17 +115,33 @@ before reporting back.
 
 ## 4. Read output and send messages
 
+Transcripts are long, and most of their size is tool calls and results.
+Read only what you need, starting with the reply:
+
 ```sh
-agent-berth logs "$id"              # whole conversation, oldest first
-agent-berth logs "$id" --tail 40    # only the last 40 lines
+agent-berth logs "$id" --final                  # the agent's latest reply only
+agent-berth logs "$id" --turns 1 --tools brief  # the latest turn, one line per tool call
+agent-berth logs "$id" --turns 3 --tools none   # the last three requests and replies
+agent-berth logs "$id"                          # everything, oldest first
 
 agent-berth send "$id" "Also update the changelog, then stop."
 printf 'Line one\nLine two\n' | agent-berth send "$id"   # message from stdin
 ```
 
-- `logs` prints the transcript from the agent's own session file or export,
-  falling back to the tmux pane's scrollback. Prefer `--tail` for a quick
-  check of the latest answer.
+- `--final` prints the agent's last text in its newest turn. Each `send`
+  starts a new turn, so it always answers the latest message. If the agent
+  has not replied yet, stdout is empty and a note on stderr says so.
+- For a `waiting` agent, `--final` ends with `Pending: <tool> <input>` lines
+  naming the command it needs permission for or the question it asks
+  (verified for Claude Code).
+- To check how the agent got there (did it run the tests, which files did it
+  change), use `--turns 1 --tools brief`. Raise the count for more history.
+- `--json` prints the selected turns; `jq -r '.turns[-1].final'` extracts the
+  reply, and `"structured": false` marks a transcript without turns.
+- `logs` reads the agent's own session file or export. Grok sessions, and
+  sessions whose log cannot be read, fall back to the tmux pane's scrollback,
+  which has no turns: `--final` and `--turns` then print its last 40 lines
+  (or `--tail N`) and say so on stderr.
 - `send` delivers through the agent's own CLI when it has one (Codex,
   OpenCode), otherwise it types the message into the agent's pane. Typing
   needs the agent to be the active session in its pane, and the pane must not
@@ -156,7 +172,7 @@ while [ -n "$id" ]; do
   sleep 15
 done
 
-[ -n "$id" ] && agent-berth logs "$id" --tail 60
+[ -n "$id" ] && agent-berth logs "$id" --final
 ```
 
 ## Troubleshooting
