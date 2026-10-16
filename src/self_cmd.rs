@@ -82,7 +82,7 @@ fn in_pane(sessions: &[ListedSession], panes: &[Pane], pane_id: &str) -> Vec<Sel
         .iter()
         .filter(|session| showing_pane(session, panes, me).is_some_and(|pane| pane.id == pane_id))
         .collect();
-    showing.sort_by(|a, b| b.created_ms.cmp(&a.created_ms));
+    showing.sort_by_key(|a| std::cmp::Reverse(a.created_ms));
     showing
         .into_iter()
         .map(|session| SelfSession {
