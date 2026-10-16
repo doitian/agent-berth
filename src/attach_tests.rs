@@ -23,6 +23,7 @@ fn listed(cwd: Option<&str>, title: Option<&str>) -> ListedSession {
         title: title.map(str::to_string),
         pane_pid: None,
         front: false,
+        tabbed: false,
     }
 }
 

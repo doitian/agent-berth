@@ -22,6 +22,7 @@ fn listed() -> ListedSession {
         title: None,
         pane_pid: None,
         front: false,
+        tabbed: false,
     }
 }
 
@@ -72,4 +73,45 @@ fn client_binary_strips_windows_directories() {
     let mut session = listed();
     session.cmdline = vec!["C:\\tools\\opencode.exe".into()];
     assert_eq!(client_binary(&session).as_deref(), Some("opencode.exe"));
+}
+
+fn plugin(pid: u32, cmdline: Vec<String>) -> ListedSession {
+    let mut session = listed();
+    session.provider = "opencode".into();
+    session.kind = SessionKind::Plugin;
+    session.pid = Some(pid);
+    session.cwd = Some("/work".into());
+    session.cmdline = cmdline;
+    session
+}
+
+#[test]
+fn closed_tab_is_never_located_through_the_shared_server() {
+    let me = std::process::id();
+    let panes = [pane("%1", me, "/work")];
+    // The server descends from the pane of the TUI that started it.
+    let mut session = plugin(me, Vec::new());
+    assert!(resolve_session_pane(&panes, &session, 0).is_some());
+    session.tabbed = true;
+    assert!(resolve_session_pane(&panes, &session, 0).is_none());
+    assert!(running_pane(&session, &panes, 0).is_none());
+
+    session.pane_pid = Some(me);
+    session.front = true;
+    let resolved = resolve_session_pane(&panes, &session, 0).unwrap();
+    assert_eq!(resolved.pane.id, "%1");
+    assert!(resolved.own_content);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn ended_plugin_session_has_no_pane() {
+    let me = std::process::id();
+    let comm = std::fs::read_to_string("/proc/self/comm").unwrap();
+    let panes = [pane("%1", me, "/work")];
+    // The pane runs the agent's binary in the session's directory, so only
+    // the ended process keeps the pane from being attributed to it.
+    let ended = plugin(u32::MAX, vec![comm.trim().into()]);
+    assert!(resolve_session_pane(&panes, &ended, 0).is_some());
+    assert!(running_pane(&ended, &panes, 0).is_none());
 }

@@ -22,6 +22,7 @@ fn session(provider: &str, title: &str, cwd: &str) -> ListedSession {
         title: Some(title.into()),
         pane_pid: None,
         front: false,
+        tabbed: false,
     }
 }
 

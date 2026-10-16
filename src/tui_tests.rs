@@ -22,6 +22,7 @@ fn listed(provider: &str, session_id: &str, title: Option<&str>) -> ListedSessio
         title: title.map(str::to_string),
         pane_pid: None,
         front: false,
+        tabbed: false,
     }
 }
 

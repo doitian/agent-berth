@@ -220,8 +220,10 @@ process has ended.
 
 `search --tmux-pane <pane-id>` finds the agent a pane shows right now, such as
 the pane id printed by `new` or `"$TMUX_PANE"` inside a pane. It matches only
-the session the pane displays: an agent hosting several sessions in one pane
-matches its front tab. A freshly started agent appears once its first hook or
+the session the pane displays: an OpenCode 2 TUI hosting several sessions
+matches its front tab. OpenCode 1 and Pi do not report which of their
+sessions is in front, so the pane matches every session that process has
+opened, newest first. A freshly started agent appears once its first hook or
 plugin report arrives.
 
 ```sh

@@ -8,7 +8,7 @@ use super::{Hub, Preview};
 use crate::paths::Context as AppContext;
 use crate::process;
 use crate::status::Source;
-use crate::store::{ListedSession, SessionKind};
+use crate::store::ListedSession;
 use crate::tmux::{self, Pane};
 
 #[derive(Debug)]
@@ -135,8 +135,8 @@ impl Hub for Tmux {
 }
 
 /// Pane a live session runs in. Paseo and desktop sessions are not in tmux,
-/// and a hook session whose process ended no longer runs in any pane, even
-/// one where another session of the same agent now runs.
+/// and a session whose process ended no longer runs in any pane, even one
+/// where another session of the same agent now runs.
 pub(crate) fn running_pane(session: &ListedSession, panes: &[Pane], me: u32) -> Option<Pane> {
     live_session_pane(session, panes, me).map(|resolved| resolved.pane.clone())
 }
@@ -158,7 +158,8 @@ fn live_session_pane<'a>(
     panes: &'a [Pane],
     me: u32,
 ) -> Option<SessionPane<'a>> {
-    if session.kind == SessionKind::Hook && !session.pid.is_some_and(process::pid_alive) {
+    let alive = |pid: Option<u32>| pid.is_some_and(process::pid_alive);
+    if !alive(session.pid) && !alive(session.pane_pid) {
         return None;
     }
     resolve_session_pane(panes, session, me)
@@ -198,6 +199,11 @@ pub(crate) fn resolve_session_pane<'a>(
                 own_content: session.front,
             });
         }
+    }
+    // A closed tab keeps the shared server's pid, which may descend from
+    // another TUI's pane, and the server runs the same binary as every pane.
+    if session.tabbed {
+        return None;
     }
     if let Some(pid) = session.pid.filter(|pid| process::pid_alive(*pid)) {
         let chain = process::ancestors(pid);

@@ -659,6 +659,7 @@ fn closed_tabs_leave_the_list_once_hosts_report() {
         .unwrap();
     // Without a host reporting tabs (a headless run), every session stays.
     assert_eq!(store.listed().len(), 3);
+    assert!(store.listed().iter().all(|session| !session.tabbed));
 
     store
         .update(
@@ -691,6 +692,10 @@ fn closed_tabs_leave_the_list_once_hosts_report() {
     let listed = store.listed();
     let ids: Vec<&str> = listed.iter().map(|s| s.session_id.as_str()).collect();
     assert_eq!(ids, ["a", "b", "c"]);
+    // The busy session outside every tab still belongs to a tabbing TUI, so
+    // the shared server's pid must not locate a pane for it.
+    let closed = &listed[2];
+    assert!(closed.tabbed && closed.pane_pid.is_none());
 }
 
 #[test]
@@ -905,6 +910,7 @@ fn plugin_session(sid: &str) -> ListedSession {
         title: None,
         pane_pid: None,
         front: false,
+        tabbed: false,
     }
 }
 

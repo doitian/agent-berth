@@ -147,6 +147,10 @@ pub struct ListedSession {
     /// previewed for it is the session's own output.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub front: bool,
+    /// The agent hosts sessions as tabs of a shared server, so `pid` is that
+    /// server and only a live hosting tab (`pane_pid`) locates the session.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub tabbed: bool,
 }
 
 impl Store {
@@ -391,6 +395,7 @@ impl Store {
                     paseo_host_changed_ms: session.paseo_host_changed_ms,
                     pane_pid: None,
                     front: false,
+                    tabbed: false,
                 });
             }
         }
@@ -429,6 +434,7 @@ impl Store {
                         paseo_host_changed_ms: snapshot.paseo_host_changed_ms.get(sid).copied(),
                         pane_pid: None,
                         front: false,
+                        tabbed: false,
                     });
                 }
             }
@@ -443,6 +449,7 @@ impl Store {
             );
             if session.kind == SessionKind::Plugin {
                 attribute_host(&mut session, &hosts);
+                session.tabbed = session.pane_pid.is_some() || self.tabs_host(&session, &hosts);
             }
             match best.get(&key) {
                 Some(existing) if existing.last_report_ms >= session.last_report_ms => {}
@@ -469,15 +476,20 @@ impl Store {
             {
                 return true;
             }
-            let hosted_ever = self
-                .hosted
-                .get(&session.provider)
-                .is_some_and(|set| set.contains(&session.session_id));
-            let hosts_report = hosts.iter().any(|host| host.provider == session.provider);
-            !(hosted_ever || hosts_report)
+            !session.tabbed
         });
         out.sort_by(|a, b| (&a.provider, &a.session_id).cmp(&(&b.provider, &b.session_id)));
         out
+    }
+
+    /// The session belongs to a TUI that hosts sessions as tabs: it has been
+    /// hosted as one, or a live host reports tabs for its provider.
+    fn tabs_host(&self, session: &ListedSession, hosts: &[SessionHost]) -> bool {
+        let hosted_ever = self
+            .hosted
+            .get(&session.provider)
+            .is_some_and(|set| set.contains(&session.session_id));
+        hosted_ever || hosts.iter().any(|host| host.provider == session.provider)
     }
 
     pub fn active(&self) -> Vec<ListedSession> {
