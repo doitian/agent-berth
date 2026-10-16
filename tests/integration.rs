@@ -306,6 +306,76 @@ fn logs_prints_the_full_transcript_and_a_tail() {
 }
 
 #[test]
+fn logs_selects_the_final_reply_and_latest_turns() {
+    let mut sandbox = Sandbox::new();
+    sandbox.start();
+    let path = sandbox.root.path().join("claude-turns.jsonl");
+    let rows = [
+        json!({"sessionId":"t","type":"user","message":{"content":"first task"}}),
+        json!({"sessionId":"t","type":"assistant","message":{"stop_reason":"end_turn",
+            "content":[{"type":"text","text":"First done."}]}}),
+        json!({"sessionId":"t","type":"system","subtype":"turn_duration"}),
+        json!({"sessionId":"t","type":"user","message":{"content":"second task"}}),
+        json!({"sessionId":"t","type":"user","isMeta":true,"message":{"content":"skill body"}}),
+        json!({"sessionId":"t","type":"assistant","message":{"stop_reason":"tool_use",
+            "content":[{"type":"tool_use","name":"Bash","input":{"command":"cargo test"}}]}}),
+        json!({"sessionId":"t","type":"user","message":{"content":[
+            {"type":"tool_result","content":"test result: ok"}]}}),
+        json!({"sessionId":"t","type":"assistant","message":{"stop_reason":"end_turn",
+            "content":[{"type":"text","text":"Second done."}]}}),
+        json!({"sessionId":"t","type":"system","subtype":"turn_duration"}),
+    ];
+    let body: String = rows.iter().map(|row| format!("{row}\n")).collect();
+    fs::write(&path, body).unwrap();
+    sandbox.notify(
+        "claude",
+        json!({
+            "session_id":"t", "hook_event_name":"UserPromptSubmit",
+            "pid": std::process::id(), "cwd":sandbox.project(), "transcript_path":path,
+        }),
+    );
+    sandbox.notify(
+        "claude",
+        json!({"session_id":"t", "hook_event_name":"Stop", "pid": std::process::id()}),
+    );
+    let id = stable_id(&sandbox, "claude", "t");
+
+    let output = success(sandbox.berth().args(["logs", &id, "--final"]));
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "Second done.\n");
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let output = success(
+        sandbox
+            .berth()
+            .args(["logs", &id, "--turns", "1", "--tools", "brief"]),
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "You: second task\n\nTool: Bash cargo test\n\nResult: test result: ok\n\nAssistant: Second done.\n"
+    );
+
+    let output = success(sandbox.berth().args(["logs", &id, "--final", "--json"]));
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["turns"][0]["final"], "Second done.");
+    assert_eq!(value["turns"][0]["index"], 1);
+
+    for args in [["--final", "--tools", "none"], ["--json", "--tail", "3"]] {
+        let output = sandbox
+            .berth()
+            .arg("logs")
+            .arg(&id)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(!output.status.success(), "{args:?} should be rejected");
+    }
+}
+
+#[test]
 fn logs_falls_back_to_tmux_capture_without_a_local_transcript() {
     let mut sandbox = Sandbox::new();
     sandbox.start();

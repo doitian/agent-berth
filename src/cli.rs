@@ -3,6 +3,7 @@ use clap::{Parser, Subcommand};
 
 use crate::duration::{parse_duration, parse_idle};
 use crate::paths::Context;
+use crate::transcript::Tools;
 use crate::{
     attach, doctor, list, logs, new, notify, resume, rm, search, send, server, service, setup,
     stats, tui,
@@ -141,9 +142,23 @@ enum Command {
     Logs {
         /// Session ID or pattern
         selector: String,
+        /// Print only the agent's latest reply, and any tool call it is
+        /// waiting on
+        #[arg(long = "final", conflicts_with_all = ["turns", "tools"])]
+        last_reply: bool,
+        /// Print the last N turns, each starting with its prompt, without the
+        /// context the agent's harness injected
+        #[arg(long, value_name = "N", value_parser = clap::value_parser!(u64).range(1..))]
+        turns: Option<u64>,
+        /// How much of each tool call and result to show
+        #[arg(long, value_enum, value_name = "MODE")]
+        tools: Option<Tools>,
         /// Only print the last N lines
-        #[arg(long, value_name = "LINES")]
+        #[arg(long, value_name = "LINES", conflicts_with = "json")]
         tail: Option<usize>,
+        /// Print the selected turns as JSON
+        #[arg(long)]
+        json: bool,
     },
     /// Remove sessions so they are hidden and never resumed
     #[command(alias = "remove")]
@@ -227,6 +242,26 @@ pub fn run() -> Result<()> {
             dry_run,
         } => resume::run(&ctx, parse_idle(idle.as_deref())?, pattern, here, dry_run),
         Command::Rm { patterns } => rm::run(&ctx, patterns),
-        Command::Logs { selector, tail } => logs::run(&ctx, &selector, tail),
+        Command::Logs {
+            selector,
+            last_reply,
+            turns,
+            tools,
+            tail,
+            json,
+        } => {
+            let select = match (last_reply, turns) {
+                (true, _) => logs::Select::Final,
+                (false, Some(count)) => logs::Select::Turns(count as usize),
+                (false, None) => logs::Select::All,
+            };
+            let options = logs::Options {
+                select,
+                tools: tools.unwrap_or_default(),
+                tail,
+                json,
+            };
+            logs::run(&ctx, &selector, options)
+        }
     }
 }

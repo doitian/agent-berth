@@ -1,3 +1,4 @@
+use super::tests_support::rendered;
 use super::*;
 use serde_json::json;
 use std::io::Write;
@@ -330,7 +331,7 @@ fn full_reads_every_entry_without_truncating_text() {
     body.push_str(&message("long", &long));
     std::fs::write(&path, body).unwrap();
 
-    let text = full(&source(&path, "claude")).unwrap().render();
+    let text = rendered(&full(&source(&path, "claude")).unwrap());
     assert!(text.contains("Assistant: message-0"));
     assert!(text.contains(&format!("Assistant: message-{}", ENTRY_LIMIT + 4)));
     assert!(text.contains(&long));
@@ -347,7 +348,7 @@ fn full_keeps_the_last_revision_of_a_claude_message() {
     )
     .unwrap();
     assert_eq!(
-        full(&source(&path, "claude")).unwrap().render(),
+        rendered(&full(&source(&path, "claude")).unwrap()),
         "Assistant: Final"
     );
 }
@@ -456,4 +457,21 @@ fn a_task_notification_starts_a_turn_as_injected_context() {
         turns[1].entries().next(),
         Some(Entry::Context { .. })
     ));
+}
+
+#[test]
+fn a_start_after_a_finished_turn_opens_a_new_one_even_without_output() {
+    let marker = |starts_turn, ends_turn| Record {
+        entries: Vec::new(),
+        starts_turn,
+        ends_turn,
+    };
+    let turns = turns([
+        marker(true, false),
+        marker(false, true),
+        marker(true, false),
+        marker(false, true),
+    ]);
+    assert_eq!(turns.len(), 2);
+    assert!(turns.iter().all(|turn| turn.complete));
 }

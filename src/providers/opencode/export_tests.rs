@@ -1,4 +1,5 @@
 use super::*;
+use crate::transcript::tests_support::rendered;
 use serde_json::json;
 
 #[test]
@@ -19,7 +20,7 @@ fn renders_opencode_messages_and_skips_reasoning() {
             ]}
         ]
     });
-    let text = conversation(&export).render();
+    let text = rendered(&conversation(&export));
     assert!(text.contains("You: Hello"), "{text}");
     assert!(text.contains("Assistant: Hi there"), "{text}");
     assert!(text.contains("Tool: bash"), "{text}");
@@ -38,13 +39,13 @@ fn renders_opencode_tool_output_fallback_and_strips_controls() {
             ]}
         ]
     });
-    let text = conversation(&export).render();
+    let text = rendered(&conversation(&export));
     assert!(text.contains("Result: ok"), "{text}");
     assert!(!text.contains('\x1b'), "{text:?}");
 }
 
 #[test]
 fn renders_no_messages_as_empty() {
-    assert_eq!(conversation(&json!({"messages": []})).render(), "");
-    assert_eq!(conversation(&json!({})).render(), "");
+    assert_eq!(rendered(&conversation(&json!({"messages": []}))), "");
+    assert_eq!(rendered(&conversation(&json!({}))), "");
 }

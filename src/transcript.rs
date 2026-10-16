@@ -87,6 +87,154 @@ impl Turn {
     pub fn entries(&self) -> impl Iterator<Item = &Entry> {
         self.records.iter().flat_map(|record| &record.entries)
     }
+
+    pub fn prompts(&self) -> impl Iterator<Item = &str> {
+        self.entries().filter_map(|entry| match entry {
+            Entry::Prompt { text } => Some(text.as_str()),
+            _ => None,
+        })
+    }
+
+    /// The agent's latest reply: the last run of its text in this turn, even
+    /// when tool calls followed it.
+    pub fn reply(&self) -> Option<String> {
+        let entries: Vec<&Entry> = self.entries().collect();
+        let end = entries
+            .iter()
+            .rposition(|entry| matches!(entry, Entry::Text { .. }))?;
+        let start = entries[..end]
+            .iter()
+            .rposition(|entry| !matches!(entry, Entry::Text { .. }))
+            .map_or(0, |index| index + 1);
+        let texts: Vec<&str> = entries[start..=end]
+            .iter()
+            .filter_map(|entry| match entry {
+                Entry::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .filter(|text| !text.is_empty())
+            .collect();
+        Some(texts.join("\n\n")).filter(|text| !text.is_empty())
+    }
+
+    /// Tool calls at the end of the turn that have no result yet, such as a
+    /// command waiting for permission.
+    pub fn pending(&self) -> Vec<&Entry> {
+        let entries: Vec<&Entry> = self.entries().collect();
+        let start = entries
+            .iter()
+            .rposition(|entry| !matches!(entry, Entry::ToolCall { .. } | Entry::Context { .. }))
+            .map_or(0, |index| index + 1);
+        entries[start..]
+            .iter()
+            .copied()
+            .filter(|entry| matches!(entry, Entry::ToolCall { .. }))
+            .collect()
+    }
+}
+
+/// The newest `count` turns that have output, oldest first. The newest turn is
+/// always included, so a prompt the agent has not answered yet shows up.
+pub(crate) fn latest(turns: &[Turn], count: usize) -> Vec<(usize, &Turn)> {
+    let mut picked: Vec<(usize, &Turn)> = Vec::new();
+    for (index, turn) in turns.iter().enumerate().rev() {
+        if picked.len() >= count {
+            break;
+        }
+        if picked.is_empty() || turn.has_output() {
+            picked.push((index, turn));
+        }
+    }
+    picked.reverse();
+    picked
+}
+
+/// How much of each tool call and result to show.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum)]
+pub(crate) enum Tools {
+    /// Every call's input and result in full
+    #[default]
+    Full,
+    /// One line per call and per result
+    Brief,
+    /// No tool calls or results, except calls still waiting for a result
+    None,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Style {
+    pub tools: Tools,
+    /// Show text the harness injected on the user's side.
+    pub context: bool,
+}
+
+impl Style {
+    pub const FULL: Self = Self {
+        tools: Tools::Full,
+        context: true,
+    };
+}
+
+const BRIEF_LIMIT: usize = 120;
+
+pub(crate) fn shown_tools(tools: Tools, entry: &Entry, pending: &[&Entry]) -> Tools {
+    if tools == Tools::None && pending.iter().any(|call| std::ptr::eq(*call, entry)) {
+        Tools::Brief
+    } else {
+        tools
+    }
+}
+
+/// The input of a tool call on one line: its command, path, or pattern when
+/// the input names one, otherwise the whole input.
+pub(crate) fn brief_input(input: &str) -> String {
+    const KEYS: &[&str] = &[
+        "command",
+        "cmd",
+        "file_path",
+        "path",
+        "pattern",
+        "query",
+        "url",
+        "description",
+        "prompt",
+    ];
+    let value: Option<Value> = serde_json::from_str(input).ok();
+    let named = value.as_ref().and_then(|value| {
+        KEYS.iter().find_map(|key| match &value[*key] {
+            Value::String(text) => Some(text.clone()),
+            Value::Array(parts) => Some(
+                parts
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .collect::<Vec<_>>()
+                    .join(" "),
+            ),
+            _ => None,
+        })
+    });
+    one_line(&named.unwrap_or_else(|| input.to_string()))
+}
+
+/// A tool result as its first line, noting how many lines follow.
+pub(crate) fn brief_result(text: &str) -> String {
+    let mut lines = text.lines().filter(|line| !line.trim().is_empty());
+    let first = lines.next().map(one_line).unwrap_or_default();
+    match lines.count() {
+        0 => first,
+        1 => format!("{first} (+1 line)"),
+        more => format!("{first} (+{more} lines)"),
+    }
+}
+
+fn one_line(text: &str) -> String {
+    let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut chars = flat.chars();
+    let mut line: String = chars.by_ref().take(BRIEF_LIMIT).collect();
+    if chars.next().is_some() {
+        line.push('…');
+    }
+    line
 }
 
 /// A session's whole conversation, structured when the agent keeps a log it
@@ -97,29 +245,19 @@ pub(crate) enum Conversation {
     Text { text: String, origin: String },
 }
 
-impl Conversation {
-    /// Every record, oldest first, separated by blank lines.
-    pub fn render(&self) -> String {
-        match self {
-            Self::Turns(turns) => turns
-                .iter()
-                .flat_map(|turn| &turn.records)
-                .map(|record| render(&record.entries, usize::MAX))
-                .filter(|text| !text.is_empty())
-                .collect::<Vec<_>>()
-                .join("\n\n"),
-            Self::Text { text, .. } => text.clone(),
-        }
-    }
-}
-
 /// Groups records into turns. A record that starts a turn joins the current
-/// one while it has no output yet, so a turn marker and its prompt, or a local
-/// command that got no reply and the next prompt, stay together.
+/// one while it has neither output nor an end yet, so a turn marker and its
+/// prompt, or a local command that got no reply and the next prompt, stay
+/// together.
 pub(crate) fn turns(records: impl IntoIterator<Item = Record>) -> Vec<Turn> {
     let mut turns: Vec<Turn> = Vec::new();
     for record in records {
-        if turns.is_empty() || record.starts_turn && turns.last().is_some_and(Turn::has_output) {
+        if turns.is_empty()
+            || record.starts_turn
+                && turns
+                    .last()
+                    .is_some_and(|turn| turn.complete || turn.has_output())
+        {
             turns.push(Turn::default());
         }
         let turn = turns.last_mut().expect("a turn exists");
@@ -132,18 +270,42 @@ pub(crate) fn turns(records: impl IntoIterator<Item = Record>) -> Vec<Turn> {
 /// Renders entries with the labels `You`, `Assistant`, `Tool`, `Input`, and
 /// `Result`, cutting the text at `limit` characters in total.
 pub(crate) fn render(entries: &[Entry], limit: usize) -> String {
+    render_styled(entries.iter(), limit, Style::FULL, &[])
+}
+
+/// Like [`render`], showing tools and context as `style` asks. Calls in
+/// `pending` are shown on one line even when tools are hidden, since they are
+/// what a waiting agent is blocked on.
+pub(crate) fn render_styled<'a>(
+    entries: impl IntoIterator<Item = &'a Entry>,
+    limit: usize,
+    style: Style,
+    pending: &[&Entry],
+) -> String {
     let mut output = String::new();
     for entry in entries {
+        let tools = shown_tools(style.tools, entry, pending);
         match entry {
-            Entry::Prompt { text } | Entry::Context { text } => {
-                append(&mut output, "You", text, limit)
-            }
+            Entry::Prompt { text } => append(&mut output, "You", text, limit),
+            Entry::Context { text } if style.context => append(&mut output, "You", text, limit),
+            Entry::Context { .. } => {}
             Entry::Text { text } => append(&mut output, "Assistant", text, limit),
-            Entry::ToolCall { name, input } => {
-                append(&mut output, "Tool", name, limit);
-                append(&mut output, "Input", input, limit);
-            }
-            Entry::ToolResult { text } => append(&mut output, "Result", text, limit),
+            Entry::ToolCall { name, input } => match tools {
+                Tools::Full => {
+                    append(&mut output, "Tool", name, limit);
+                    append(&mut output, "Input", input, limit);
+                }
+                Tools::Brief => {
+                    let call = format!("{name} {}", brief_input(input));
+                    append(&mut output, "Tool", call.trim_end(), limit);
+                }
+                Tools::None => {}
+            },
+            Entry::ToolResult { text } => match tools {
+                Tools::Full => append(&mut output, "Result", text, limit),
+                Tools::Brief => append(&mut output, "Result", &brief_result(text), limit),
+                Tools::None => {}
+            },
         }
     }
     output
@@ -537,6 +699,25 @@ fn append(output: &mut String, label: &str, text: &str, limit: usize) {
     output.extend(chars.by_ref().take(remaining - label.len() - 4));
     if chars.next().is_some() {
         output.push('…');
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod tests_support {
+    use super::*;
+
+    /// A conversation as plain `logs` prints it.
+    pub(crate) fn rendered(conversation: &Conversation) -> String {
+        match conversation {
+            Conversation::Turns(turns) => turns
+                .iter()
+                .flat_map(|turn| &turn.records)
+                .map(|record| render(&record.entries, usize::MAX))
+                .filter(|text| !text.is_empty())
+                .collect::<Vec<_>>()
+                .join("\n\n"),
+            Conversation::Text { text, .. } => text.clone(),
+        }
     }
 }
 

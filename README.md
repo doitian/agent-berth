@@ -75,7 +75,7 @@ uses [fzf](https://github.com/junegunn/fzf).
 | `agent-berth server` | Run the server in the foreground |
 | `agent-berth list [--json] [--resumable [--idle 20m] [--here]]` | List sessions |
 | `agent-berth search [patterns...] [--created-in DURATION] [--tmux-pane PANE_ID] [--json]` | Search stored sessions across all providers, newest first; `--tmux-pane` keeps only the agent a tmux pane shows now |
-| `agent-berth logs <id> [--tail N]` | Print a session's full transcript; `--tail` limits it to the last N lines |
+| `agent-berth logs <id> [--final \| --turns N] [--tools full\|brief\|none] [--tail N] [--json]` | Print a session's transcript, its latest reply, or its latest turns |
 | `agent-berth stats [--json]` | Aggregate active session counts by status and provider |
 | `agent-berth new <command> [args...]` | Start an agent in a new window of the current directory's tmux session, the one `resume` uses, creating it when missing, and print the new pane id; for example `agent-berth new claude --model opus` |
 | `agent-berth resume [pattern] [--idle 20m] [--here] [--dry-run]` | Resume sessions in tmux |
@@ -237,6 +237,34 @@ agent-berth search --tmux-pane "$pane" --json
 It renders the same way as the TUI preview but without the preview's
 recent-history or message-length limits, and `--tail N` prints only the last N
 lines.
+
+Transcripts are long, and most of their size is tool calls and results, so
+`logs` can also print just part of one. It groups the conversation into
+turns, each starting with a prompt and holding the agent's work on it:
+
+- `--final` prints only the agent's latest reply: its last text in the newest
+  turn, followed by `Pending:` lines for tool calls still waiting on a result,
+  such as a command waiting for permission. When the agent has not replied to
+  its newest prompt, or is still working, a note on stderr says so and stdout
+  holds only the reply.
+- `--turns N` prints the newest N turns that have output, each from its
+  prompt, leaving out text the agent's harness injected (skill bodies,
+  environment details, command output).
+- `--tools brief` shortens each tool call and result to one line, and
+  `--tools none` drops them except calls still waiting on a result.
+- `--json` prints the selected turns, with each turn's `index`, `prompt`,
+  `final` reply, `complete` flag, and entries. A transcript read from a tmux
+  pane has no turns and prints `"structured": false` with its text.
+
+Claude, Codex, Pi, and OpenCode transcripts have turns. A tmux pane capture
+does not, so there `--final` and `--turns` print its last 40 lines, or the
+last `--tail` lines, and say so on stderr.
+
+```sh
+agent-berth logs 4wqecx --final
+agent-berth logs 4wqecx --turns 1 --tools brief
+agent-berth logs 4wqecx --final --json | jq -r '.turns[0].final'
+```
 
 Claude, Codex, and Pi transcripts come from their local JSONL session files.
 OpenCode keeps sessions in a service-owned database with no log file, so `logs`
