@@ -169,6 +169,12 @@ fn search_finds_inactive_sessions_across_providers_online_and_offline() {
                 .all(|pair| { pair[0]["created_ms"].as_u64() >= pair[1]["created_ms"].as_u64() })
         );
         assert!(sessions.iter().any(|s| s["session_id"] == "closed-tab"));
+        assert!(
+            sessions.iter().all(|s| s["id"]
+                .as_str()
+                .is_some_and(|id| id.len() == 6 && id.chars().all(|c| c.is_ascii_alphanumeric()))),
+            "{sessions:?}"
+        );
         let output = success(
             sandbox
                 .berth()
@@ -185,6 +191,7 @@ fn search_finds_inactive_sessions_across_providers_online_and_offline() {
         let output = success(sandbox.berth().args(["search", "claude"]));
         let table = String::from_utf8(output.stdout).unwrap();
         assert!(table.contains("PROVIDER") && table.contains("CREATED"));
+        assert!(table.contains("ID"));
         assert!(table.contains("claude-session"));
     }
 }
@@ -748,7 +755,8 @@ fn codex_hook_without_pid_detects_agent_and_tmux_pane() {
         );
         let output = success(sandbox.berth().args(["attach", "--dry-run"]));
         let text = String::from_utf8_lossy(&output.stdout);
-        assert!(text.starts_with("%7\tcodex\trunning\t"), "{text}");
+        assert!(text.starts_with("%7\t"), "{text}");
+        assert!(text.contains("\tcodex\trunning\t"), "{text}");
         assert!(text.contains("codex-no-pid"), "{text}");
     }));
     let _ = agent.kill();

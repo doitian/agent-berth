@@ -53,10 +53,12 @@ fn line_exposes_title_folder_and_branch() {
     let root = repo("project", "main");
     let project = root.path().join("project");
     let cwd = project.display().to_string();
-    let candidate = Candidate::new(pane("%1", 1, &cwd), listed(Some(&cwd), Some("Fix attach")));
+    let session = listed(Some(&cwd), Some("Fix attach"));
+    let id = session.id();
+    let candidate = Candidate::new(pane("%1", 1, &cwd), session);
     assert_eq!(
         candidate.line(),
-        "%1\tclaude\trunning\tFix attach\tproject\tmain\tabc"
+        format!("%1\t{id}\tclaude\trunning\tFix attach\tproject\tmain\tabc")
     );
 }
 
@@ -65,10 +67,12 @@ fn line_falls_back_to_pane_path_and_dashes() {
     let root = repo("project", "topic");
     let project = root.path().join("project");
     let cwd = project.display().to_string();
-    let candidate = Candidate::new(pane("%2", 1, &cwd), listed(None, None));
+    let session = listed(None, None);
+    let id = session.id();
+    let candidate = Candidate::new(pane("%2", 1, &cwd), session);
     assert_eq!(
         candidate.line(),
-        "%2\tclaude\trunning\t-\tproject\ttopic\tabc"
+        format!("%2\t{id}\tclaude\trunning\t-\tproject\ttopic\tabc")
     );
 }
 
@@ -79,7 +83,7 @@ fn missing_branch_is_dashed() {
     let candidate = Candidate::new(pane("%3", 1, &cwd), listed(Some(&cwd), Some("Task")));
     let line = candidate.line();
     let fields: Vec<_> = line.split('\t').collect();
-    assert_eq!(fields[5], "-");
+    assert_eq!(fields[6], "-");
 }
 
 #[test]
@@ -87,6 +91,22 @@ fn pane_matches_by_pid_in_ancestor_chain() {
     let panes = [pane("%1", 10, "/a"), pane("%2", 20, "/b")];
     assert_eq!(pane_for_pid(&panes, &[99, 20, 5]).unwrap().id, "%2");
     assert!(pane_for_pid(&panes, &[99, 98]).is_none());
+}
+
+#[test]
+fn direct_matches_one_candidate_by_id() {
+    let mut first = listed(Some("/a"), Some("A"));
+    first.session_id = "one".into();
+    let second = listed(Some("/b"), Some("B"));
+    let first_id = first.id();
+    let candidates = vec![
+        Candidate::new(pane("%1", 1, "/a"), first),
+        Candidate::new(pane("%2", 2, "/b"), second),
+    ];
+    assert_eq!(direct(&candidates, Some(&first_id)).unwrap().pane.id, "%1");
+    assert!(direct(&candidates, Some(&first_id.to_uppercase())).is_some());
+    assert!(direct(&candidates, Some("missing")).is_none());
+    assert!(direct(&candidates, None).is_none());
 }
 
 #[test]

@@ -622,7 +622,39 @@ fn attribute_host(session: &mut ListedSession, hosts: &[SessionHost]) {
     }
 }
 
+/// Stable short identifier for a session, derived only from its provider and
+/// native session ID. It survives restarts and database rebuilds, so a session
+/// keeps the same ID across `list`, `search`, and the TUI.
+pub fn display_id(provider: &str, session_id: &str) -> String {
+    // FNV-1a over the provider and session ID, so IDs do not depend on the
+    // standard library's unspecified hasher.
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in provider
+        .bytes()
+        .chain(std::iter::once(0))
+        .chain(session_id.bytes())
+    {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    // Crockford-style alphabet without look-alike letters (i, l, o, u).
+    const ALPHABET: &[u8; 32] = b"0123456789abcdefghjkmnpqrstvwxyz";
+    (0..6)
+        .map(|_| {
+            let digit = ALPHABET[(hash & 0x1f) as usize];
+            hash >>= 5;
+            digit as char
+        })
+        .collect()
+}
+
 impl ListedSession {
+    /// Stable short ID shown in listings and accepted as a pattern by
+    /// commands such as `attach`, `resume`, and `rm`.
+    pub fn id(&self) -> String {
+        display_id(&self.provider, &self.session_id)
+    }
+
     pub fn is_active(&self, now_ms: u64) -> bool {
         if self.exited || self.parent_id.is_some() {
             return false;

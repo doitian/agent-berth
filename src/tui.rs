@@ -1336,6 +1336,7 @@ fn render_details(frame: &mut Frame, app: &App, area: Rect) {
         session.cmdline.join(" ")
     };
     let mut rows = vec![
+        ("id", session.id()),
         ("provider", session.provider.clone()),
         ("session", session.session_id.clone()),
         ("status", session.status.as_str().to_string()),

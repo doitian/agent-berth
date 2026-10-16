@@ -14,7 +14,7 @@ pub fn run(
 ) -> Result<()> {
     let sessions = filter(db::query_stored(ctx)?, patterns, created_in, now_ms());
     if json {
-        println!("{}", serde_json::to_string_pretty(&sessions)?);
+        println!("{}", list::to_json(&sessions)?);
     } else if sessions.is_empty() {
         println!("No matching sessions.");
     } else {

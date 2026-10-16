@@ -203,6 +203,12 @@ or every agent's historical archive; ended or pruned sessions may no longer
 be stored. The server prunes sessions after seven days without reports unless
 their process is still alive.
 
+Every session has a stable short ID, shown in the `ID` column and included as
+`id` in `list --json` and `search --json`. The ID is derived from the provider
+and native session ID, so it survives restarts and database rebuilds. Commands
+that take patterns (`attach`, `resume`, `rm`, `search`) also match the ID; for
+example, `agent-berth attach <id>` focuses a pane without opening the picker.
+
 ### Resume behavior
 
 `resume` selects sessions that are still busy (`running`/`waiting`) with no

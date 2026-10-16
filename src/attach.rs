@@ -33,12 +33,20 @@ pub fn run(
         }
         return Ok(());
     }
-    if !crate::paths::on_path("fzf") {
-        bail!("fzf is required to select a session");
-    }
-    let lines: Vec<String> = candidates.iter().map(Candidate::line).collect();
-    let Some(selected) = select(&lines, query.as_deref(), preview)? else {
-        return Ok(());
+    // A query that names exactly one candidate by its stable ID skips the
+    // picker, so `attach <id>` works without a selection step.
+    let selected = match direct(&candidates, query.as_deref()) {
+        Some(candidate) => candidate.line(),
+        None => {
+            if !crate::paths::on_path("fzf") {
+                bail!("fzf is required to select a session");
+            }
+            let lines: Vec<String> = candidates.iter().map(Candidate::line).collect();
+            match select(&lines, query.as_deref(), preview)? {
+                Some(selected) => selected,
+                None => return Ok(()),
+            }
+        }
     };
     let target_id = selected.split('\t').next().unwrap_or("");
     let candidate = candidates
@@ -86,6 +94,21 @@ fn collect(sessions: &[ListedSession], panes: &[Pane]) -> Vec<Candidate> {
     }
     candidates.sort_by(|left, right| left.id().cmp(right.id()));
     candidates
+}
+
+/// Candidate named by the exact stable session ID in `query`, when exactly one
+/// matches. Any other query (including multi-word fzf queries) returns `None`
+/// so the picker handles it.
+fn direct<'a>(candidates: &'a [Candidate], query: Option<&str>) -> Option<&'a Candidate> {
+    let query = query?.trim();
+    if query.is_empty() {
+        return None;
+    }
+    let mut matches = candidates
+        .iter()
+        .filter(|candidate| candidate.session.id().eq_ignore_ascii_case(query));
+    let only = matches.next()?;
+    matches.next().is_none().then_some(only)
 }
 
 fn pane_for_pid<'a>(panes: &'a [Pane], chain: &[u32]) -> Option<&'a Pane> {
@@ -235,8 +258,9 @@ impl Candidate {
 
     fn line(&self) -> String {
         format!(
-            "{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
             self.id(),
+            self.session.id(),
             self.session.provider,
             self.session.status.as_str(),
             self.session.title.as_deref().unwrap_or("-"),

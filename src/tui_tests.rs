@@ -64,10 +64,10 @@ fn details_color_status_and_branch() {
             .draw(|frame| render_details(frame, &app, frame.area()))
             .unwrap();
         let buffer = terminal.backend().buffer();
-        assert_eq!(buffer[(10, 3)].symbol(), &status.as_str()[..1]);
-        assert_eq!(buffer[(10, 3)].fg, status_style(status).fg.unwrap());
-        assert_eq!(buffer[(10, 7)].symbol(), "m");
-        assert_eq!(buffer[(10, 7)].fg, latte::GREEN);
+        assert_eq!(buffer[(10, 4)].symbol(), &status.as_str()[..1]);
+        assert_eq!(buffer[(10, 4)].fg, status_style(status).fg.unwrap());
+        assert_eq!(buffer[(10, 8)].symbol(), "m");
+        assert_eq!(buffer[(10, 8)].fg, latte::GREEN);
     }
 }
 
@@ -106,7 +106,7 @@ fn details_color_git_status_symbols_independently() {
         (13, "↕", latte::RED, true),
         (14, "]", latte::SURFACE2, true),
     ] {
-        let cell = &buffer[(10 + offset, 7)];
+        let cell = &buffer[(10 + offset, 8)];
         assert_eq!(cell.symbol(), symbol);
         assert_eq!(cell.fg, color, "{symbol}");
         assert_eq!(cell.modifier.contains(Modifier::BOLD), bold, "{symbol}");

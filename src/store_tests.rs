@@ -996,3 +996,13 @@ fn hook_reports_mark_the_session_as_hook_tracked() {
         .unwrap();
     assert!(store.hooks["claude"]["abc"].hooked);
 }
+
+#[test]
+fn display_id_is_stable_short_and_provider_scoped() {
+    let first = display_id("claude", "abc");
+    assert_eq!(first.len(), 6);
+    assert_eq!(first, display_id("claude", "abc"));
+    assert_ne!(first, display_id("claude", "xyz"));
+    assert_ne!(first, display_id("codex", "abc"));
+    assert!(first.chars().all(|c| c.is_ascii_alphanumeric()));
+}

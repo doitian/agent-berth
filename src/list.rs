@@ -18,7 +18,7 @@ pub fn run(
         sessions.retain(|session| session.cwd.as_deref().is_some_and(paths::is_current_dir));
     }
     if json {
-        println!("{}", serde_json::to_string_pretty(&sessions)?);
+        println!("{}", to_json(&sessions)?);
         return Ok(());
     }
     if sessions.is_empty() {
@@ -33,8 +33,25 @@ pub fn run(
     Ok(())
 }
 
+/// Serialize sessions with their stable IDs, which are computed rather than
+/// stored and so are not part of `ListedSession` itself.
+pub(crate) fn to_json(sessions: &[ListedSession]) -> Result<String> {
+    let values: Vec<serde_json::Value> = sessions
+        .iter()
+        .map(|session| {
+            let mut value = serde_json::to_value(session)?;
+            if let Some(map) = value.as_object_mut() {
+                map.insert("id".into(), session.id().into());
+            }
+            Ok(value)
+        })
+        .collect::<Result<_>>()?;
+    Ok(serde_json::to_string_pretty(&values)?)
+}
+
 pub(crate) fn print_table(sessions: &[ListedSession], created: bool) -> Result<()> {
     let headers = [
+        "ID",
         "PROVIDER",
         "STATUS",
         "SOURCE",
@@ -44,10 +61,11 @@ pub(crate) fn print_table(sessions: &[ListedSession], created: bool) -> Result<(
         "PID",
         if created { "CREATED" } else { "AGO" },
     ];
-    let rows: Vec<[String; 8]> = sessions
+    let rows: Vec<[String; 9]> = sessions
         .iter()
         .map(|session| {
             [
+                session.id(),
                 session.provider.clone(),
                 session.status.as_str().to_string(),
                 session.source.as_str().to_string(),
