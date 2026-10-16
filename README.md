@@ -75,6 +75,7 @@ uses [fzf](https://github.com/junegunn/fzf).
 | `agent-berth server` | Run the server in the foreground |
 | `agent-berth list [--json] [--resumable [--idle 20m] [--here]]` | List sessions |
 | `agent-berth search [patterns...] [--created-in DURATION] [--json]` | Search stored sessions across all providers, newest first |
+| `agent-berth logs <id> [--tail N]` | Print a session's full transcript; `--tail` limits it to the last N lines |
 | `agent-berth stats [--json]` | Aggregate active session counts by status and provider |
 | `agent-berth resume [pattern] [--idle 20m] [--here] [--dry-run]` | Resume sessions in tmux |
 | `agent-berth attach [query] [--preview] [--session] [--dry-run]` | Select an agent running in a tmux pane with fzf and attach to it; Paseo and desktop sessions are only reachable from the TUI |
@@ -206,8 +207,23 @@ their process is still alive.
 Every session has a stable short ID, shown in the `ID` column and included as
 `id` in `list --json` and `search --json`. The ID is derived from the provider
 and native session ID, so it survives restarts and database rebuilds. Commands
-that take patterns (`attach`, `resume`, `rm`, `search`) also match the ID; for
+that take patterns (`attach`, `resume`, `rm`, `search`, `logs`) also match the ID; for
 example, `agent-berth attach <id>` focuses a pane without opening the picker.
+
+### Transcripts
+
+`agent-berth logs <id>` prints a session's transcript, oldest message first.
+It renders the same way as the TUI preview but without the preview's
+recent-history or message-length limits, and `--tail N` prints only the last N
+lines.
+
+Claude, Codex, and Pi transcripts come from their local JSONL session files.
+OpenCode keeps sessions in a service-owned database with no log file, so `logs`
+runs `opencode session export <id>` and renders its messages. When no local or
+exported transcript is available — an unsupported provider such as Grok or
+Paseo, a missing file, or an OpenCode server that is not running — and the
+session resolves to a tmux pane, `logs` falls back to capturing that pane's
+scrollback as plain text.
 
 ### Resume behavior
 

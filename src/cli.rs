@@ -3,7 +3,9 @@ use clap::{Parser, Subcommand};
 
 use crate::duration::{parse_duration, parse_idle};
 use crate::paths::Context;
-use crate::{attach, doctor, list, notify, resume, rm, search, server, service, setup, stats, tui};
+use crate::{
+    attach, doctor, list, logs, notify, resume, rm, search, server, service, setup, stats, tui,
+};
 
 /// Monitor coding agents and resume their sessions.
 #[derive(Debug, Parser)]
@@ -115,6 +117,14 @@ enum Command {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Print a session's full transcript
+    Logs {
+        /// Session ID or pattern
+        selector: String,
+        /// Only print the last N lines
+        #[arg(long, value_name = "LINES")]
+        tail: Option<usize>,
+    },
     /// Remove sessions so they are hidden and never resumed
     #[command(alias = "remove")]
     Rm {
@@ -194,5 +204,6 @@ pub fn run() -> Result<()> {
             dry_run,
         } => resume::run(&ctx, parse_idle(idle.as_deref())?, pattern, here, dry_run),
         Command::Rm { patterns } => rm::run(&ctx, patterns),
+        Command::Logs { selector, tail } => logs::run(&ctx, &selector, tail),
     }
 }

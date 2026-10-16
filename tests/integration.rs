@@ -262,6 +262,138 @@ fn transcript_paths_roundtrip_through_notify_ipc_and_database() {
 }
 
 #[test]
+fn logs_prints_the_full_transcript_and_a_tail() {
+    let mut sandbox = Sandbox::new();
+    sandbox.start();
+    let path = sandbox.root.path().join("claude-logs.jsonl");
+    fs::write(
+        &path,
+        format!(
+            "{}\n{}\n{}\n",
+            json!({"sessionId":"s","type":"user","message":{"content":"Hello"}}),
+            json!({"sessionId":"s","type":"assistant",
+                "message":{"content":[{"type":"text","text":"First"}]}}),
+            json!({"sessionId":"s","type":"assistant",
+                "message":{"content":[{"type":"text","text":"Second"}]}}),
+        ),
+    )
+    .unwrap();
+    sandbox.notify(
+        "claude",
+        json!({
+            "session_id":"s", "hook_event_name":"UserPromptSubmit",
+            "pid": std::process::id(), "cwd":sandbox.project(), "transcript_path":path,
+        }),
+    );
+    let output = success(sandbox.berth().args(["list", "--json"]));
+    let sessions: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap();
+    let id = sessions
+        .iter()
+        .find(|session| session["session_id"] == "s")
+        .and_then(|session| session["id"].as_str())
+        .expect("listed session exposes its stable ID")
+        .to_string();
+
+    let output = success(sandbox.berth().args(["logs", &id]));
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(text.contains("You: Hello"), "{text}");
+    assert!(text.contains("Assistant: First"), "{text}");
+    assert!(text.contains("Assistant: Second"), "{text}");
+
+    let output = success(sandbox.berth().args(["logs", &id, "--tail", "1"]));
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(text.trim_end(), "Assistant: Second");
+}
+
+#[test]
+fn logs_falls_back_to_tmux_capture_without_a_local_transcript() {
+    let mut sandbox = Sandbox::new();
+    sandbox.start();
+    let project = sandbox.project();
+    let mut agent = sandbox.command(sandbox.fixture_agent()).spawn().unwrap();
+    let pid = agent.id();
+    // OpenCode has no file-based transcript, so the pane is the only source.
+    sandbox.notify(
+        "opencode",
+        json!({
+            "id": pid.to_string(),
+            "cwd": project,
+            "status": {"s1": "busy"},
+            "titles": {"s1": "Fix logs"},
+        }),
+    );
+    sandbox.env.insert(
+        "FIXTURE_TMUX_PANES".into(),
+        format!("%7\t{pid}\tproject\t0\tshell\t{}", project.display()).into(),
+    );
+    sandbox.env.insert(
+        "FIXTURE_TMUX_CAPTURE".into(),
+        "You: hi\nAssistant: captured from tmux\n".into(),
+    );
+
+    let output = success(sandbox.berth().args(["logs", "s1"]));
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(text.contains("captured from tmux"), "{text}");
+
+    let output = success(sandbox.berth().args(["logs", "s1", "--tail", "1"]));
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(text.trim_end(), "Assistant: captured from tmux");
+
+    let _ = agent.kill();
+    let _ = agent.wait();
+}
+
+#[test]
+fn logs_prefers_opencode_session_export_over_the_pane() {
+    let mut sandbox = Sandbox::new();
+    sandbox.start();
+    sandbox.notify(
+        "opencode",
+        json!({
+            "id": std::process::id().to_string(),
+            "cwd": sandbox.project(),
+            "status": {"s1": "busy"},
+            "titles": {"s1": "Fix logs"},
+        }),
+    );
+    sandbox.env.insert(
+        "FIXTURE_OPENCODE_EXPORT".into(),
+        json!({
+            "info": {"id": "s1"},
+            "messages": [
+                {"type": "user", "text": "Hello"},
+                {"type": "assistant", "content": [
+                    {"type": "reasoning", "text": "private"},
+                    {"type": "text", "text": "Hi there"},
+                ]},
+            ]
+        })
+        .to_string()
+        .into(),
+    );
+    // A pane exists, but the export must win.
+    sandbox.env.insert(
+        "FIXTURE_TMUX_PANES".into(),
+        format!(
+            "%7\t{}\tproject\t0\tshell\t{}",
+            std::process::id(),
+            sandbox.project().display()
+        )
+        .into(),
+    );
+    sandbox
+        .env
+        .insert("FIXTURE_TMUX_CAPTURE".into(), "pane content".into());
+
+    let output = success(sandbox.berth().args(["logs", "s1"]));
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(text.contains("You: Hello"), "{text}");
+    assert!(text.contains("Assistant: Hi there"), "{text}");
+    assert!(!text.contains("pane content"), "{text}");
+    assert!(!text.contains("private"), "{text}");
+}
+
+#[test]
 fn codex_source_tracks_current_client_when_resuming_across_cli_and_desktop() {
     let mut sandbox = Sandbox::new();
     sandbox.start();

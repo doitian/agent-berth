@@ -6,6 +6,7 @@ mod duration;
 mod git;
 mod ipc;
 mod list;
+mod logs;
 mod notify;
 mod paths;
 mod pick;

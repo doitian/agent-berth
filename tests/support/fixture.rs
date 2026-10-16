@@ -53,6 +53,10 @@ fn main() {
         }
     } else if name == "claude" && args == ["agents", "--json"] {
         println!("[]");
+    } else if name == "opencode" && args.first().map(String::as_str) == Some("session") {
+        if let Ok(export) = env::var("FIXTURE_OPENCODE_EXPORT") {
+            print!("{export}");
+        }
     } else if name == "fzf" {
         let mut input = String::new();
         io::stdin().read_to_string(&mut input).unwrap();
@@ -77,6 +81,11 @@ fn main() {
         if args.iter().any(|arg| arg == "list-clients") {
             if let Ok(clients) = env::var("FIXTURE_TMUX_CLIENTS") {
                 print!("{clients}");
+            }
+        }
+        if args.iter().any(|arg| arg == "capture-pane") {
+            if let Ok(text) = env::var("FIXTURE_TMUX_CAPTURE") {
+                print!("{text}");
             }
         }
         if args.iter().any(|arg| arg == "new-window") && args.iter().any(|arg| arg == "-P") {

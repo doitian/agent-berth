@@ -294,3 +294,62 @@ fn supports_covers_exactly_the_parseable_providers() {
         assert!(!supports(provider), "{provider}");
     }
 }
+
+#[test]
+fn full_reads_every_entry_without_truncating_text() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("session.jsonl");
+    let mut body = String::new();
+    for i in 0..ENTRY_LIMIT + 5 {
+        body.push_str(&message(&i.to_string(), &format!("message-{i}")));
+    }
+    let long = "界".repeat(TEXT_LIMIT * 2);
+    body.push_str(&message("long", &long));
+    std::fs::write(&path, body).unwrap();
+
+    let text = full(&source(&path, "claude")).unwrap();
+    assert!(text.contains("Assistant: message-0"));
+    assert!(text.contains(&format!("Assistant: message-{}", ENTRY_LIMIT + 4)));
+    assert!(text.contains(&long));
+    assert!(!text.contains('…'));
+}
+
+#[test]
+fn full_keeps_the_last_revision_of_a_claude_message() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("session.jsonl");
+    std::fs::write(
+        &path,
+        format!("{}{}", message("1", "Draft"), message("1", "Final")),
+    )
+    .unwrap();
+    assert_eq!(full(&source(&path, "claude")).unwrap(), "Assistant: Final");
+}
+
+#[test]
+fn full_errors_without_a_readable_transcript() {
+    let dir = tempfile::tempdir().unwrap();
+    assert!(
+        full(&source(dir.path(), "opencode"))
+            .unwrap_err()
+            .to_string()
+            .contains("no local transcript")
+    );
+    let mut missing = source(dir.path(), "claude");
+    missing.path = Some(
+        dir.path()
+            .join("missing.jsonl")
+            .to_string_lossy()
+            .into_owned(),
+    );
+    assert!(full(&missing).is_err());
+    let mut unlocated = source(dir.path(), "claude");
+    unlocated.path = None;
+    unlocated.root = None;
+    assert!(
+        full(&unlocated)
+            .unwrap_err()
+            .to_string()
+            .contains("no transcript file found")
+    );
+}

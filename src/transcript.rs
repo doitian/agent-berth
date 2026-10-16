@@ -1,11 +1,14 @@
-//! Bounded, incremental readers for local agent conversation logs.
-use std::collections::VecDeque;
+//! Readers for local agent conversation logs: a bounded incremental reader for
+//! live previews and a one-shot reader that renders a whole transcript for CLI
+//! output.
+use std::collections::{HashMap, VecDeque};
 use std::fs::{File, Metadata};
 use std::hash::{DefaultHasher, Hash, Hasher};
-use std::io::{self, Read, Seek, SeekFrom};
+use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+use anyhow::{Context, Result};
 use serde_json::Value;
 
 const READ_LIMIT: u64 = 1024 * 1024;
@@ -168,16 +171,7 @@ impl Reader {
         let Some(text) = parse(provider, &row) else {
             return;
         };
-        let mut hash = DefaultHasher::new();
-        // Claude UUIDs identify records, including revisions. Codex event_msg
-        // mirrors are ignored by the parser; timestamped response rows identify
-        // distinct messages even when their text happens to be identical.
-        if provider == "claude" && row["uuid"].is_string() {
-            row["uuid"].as_str().hash(&mut hash);
-        } else {
-            row.to_string().hash(&mut hash);
-        }
-        let key = hash.finish();
+        let key = record_key(provider, &row);
         if let Some((_, existing)) = self.entries.iter_mut().find(|(id, _)| *id == key) {
             *existing = text;
         } else {
@@ -204,6 +198,61 @@ impl Reader {
         }
         text
     }
+}
+
+/// Stable key for a transcript record, used to replace revisions of the same
+/// message. Claude UUIDs identify records including revisions; Codex event_msg
+/// mirrors are ignored by the parser, and timestamped response rows identify
+/// distinct messages even when their text happens to be identical.
+fn record_key(provider: &str, row: &Value) -> u64 {
+    let mut hash = DefaultHasher::new();
+    if provider == "claude" && row["uuid"].is_string() {
+        row["uuid"].as_str().hash(&mut hash);
+    } else {
+        row.to_string().hash(&mut hash);
+    }
+    hash.finish()
+}
+
+/// Render a whole local transcript, oldest entry first, for one-shot CLI
+/// output. Unlike `Reader`, it reads the entire file, keeps every entry, and
+/// does not truncate message text.
+pub(crate) fn full(source: &Source) -> Result<String> {
+    anyhow::ensure!(
+        supports(&source.provider),
+        "{} sessions have no local transcript",
+        source.provider
+    );
+    let path = match source.path.as_ref().map(PathBuf::from) {
+        Some(path) => path,
+        None => locate(source).with_context(|| {
+            format!(
+                "no transcript file found for {} {}",
+                source.provider, source.session_id
+            )
+        })?,
+    };
+    let file = File::open(&path).with_context(|| format!("open {}", path.display()))?;
+    let mut order: Vec<u64> = Vec::new();
+    let mut texts: HashMap<u64, String> = HashMap::new();
+    for line in BufReader::new(file).lines() {
+        let line = line.with_context(|| format!("read {}", path.display()))?;
+        let Ok(row) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        let Some(text) = parse_with_limit(&source.provider, &row, usize::MAX) else {
+            continue;
+        };
+        let key = record_key(&source.provider, &row);
+        if texts.insert(key, text).is_none() {
+            order.push(key);
+        }
+    }
+    let entries: Vec<&str> = order
+        .iter()
+        .filter_map(|key| texts.get(key).map(String::as_str))
+        .collect();
+    Ok(entries.join("\n\n"))
 }
 
 /// Recover paths for already-running sessions. Search only the configured local
@@ -281,11 +330,15 @@ fn belongs_to(path: &Path, source: &Source) -> bool {
 }
 
 fn parse(provider: &str, row: &Value) -> Option<String> {
+    parse_with_limit(provider, row, TEXT_LIMIT)
+}
+
+fn parse_with_limit(provider: &str, row: &Value, limit: usize) -> Option<String> {
     let mut output = String::new();
     match provider {
         "claude" if matches!(row["type"].as_str(), Some("user" | "assistant")) => {
             let role = row["type"].as_str()?;
-            content(&mut output, role, &row["message"]["content"]);
+            content(&mut output, role, &row["message"]["content"], limit);
         }
         "codex" if row["type"] == "response_item" => {
             let item = &row["payload"];
@@ -295,10 +348,15 @@ fn parse(provider: &str, row: &Value) -> Option<String> {
                     if !matches!(role, "user" | "assistant") {
                         return None;
                     }
-                    content(&mut output, role, &item["content"]);
+                    content(&mut output, role, &item["content"], limit);
                 }
                 "function_call" | "custom_tool_call" => {
-                    append(&mut output, "Tool", item["name"].as_str().unwrap_or("call"));
+                    append(
+                        &mut output,
+                        "Tool",
+                        item["name"].as_str().unwrap_or("call"),
+                        limit,
+                    );
                     append(
                         &mut output,
                         "Input",
@@ -306,10 +364,11 @@ fn parse(provider: &str, row: &Value) -> Option<String> {
                             .as_str()
                             .or_else(|| item["input"].as_str())
                             .unwrap_or(""),
+                        limit,
                     );
                 }
                 "function_call_output" | "custom_tool_call_output" => {
-                    tool_result(&mut output, &item["output"]);
+                    tool_result(&mut output, &item["output"], limit);
                 }
                 _ => return None,
             }
@@ -318,8 +377,8 @@ fn parse(provider: &str, row: &Value) -> Option<String> {
             let message = &row["message"];
             let role = message["role"].as_str()?;
             match role {
-                "user" | "assistant" => content(&mut output, role, &message["content"]),
-                "toolResult" => tool_result(&mut output, &message["content"]),
+                "user" | "assistant" => content(&mut output, role, &message["content"], limit),
+                "toolResult" => tool_result(&mut output, &message["content"], limit),
                 _ => return None,
             }
         }
@@ -328,47 +387,57 @@ fn parse(provider: &str, row: &Value) -> Option<String> {
     (!output.is_empty()).then_some(output)
 }
 
-fn content(output: &mut String, role: &str, value: &Value) {
+fn content(output: &mut String, role: &str, value: &Value, limit: usize) {
     let label = if role == "user" { "You" } else { "Assistant" };
     if let Some(text) = value.as_str() {
-        append(output, label, text);
+        append(output, label, text, limit);
     } else if let Some(blocks) = value.as_array() {
         for block in blocks {
             match block["type"].as_str() {
                 Some("text" | "input_text" | "output_text") => {
-                    append(output, label, block["text"].as_str().unwrap_or(""));
+                    append(output, label, block["text"].as_str().unwrap_or(""), limit);
                 }
                 Some("tool_use") => {
-                    append(output, "Tool", block["name"].as_str().unwrap_or("call"));
-                    append(output, "Input", &block["input"].to_string());
+                    append(
+                        output,
+                        "Tool",
+                        block["name"].as_str().unwrap_or("call"),
+                        limit,
+                    );
+                    append(output, "Input", &block["input"].to_string(), limit);
                 }
                 Some("toolCall") => {
-                    append(output, "Tool", block["name"].as_str().unwrap_or("call"));
-                    append(output, "Input", &block["arguments"].to_string());
+                    append(
+                        output,
+                        "Tool",
+                        block["name"].as_str().unwrap_or("call"),
+                        limit,
+                    );
+                    append(output, "Input", &block["arguments"].to_string(), limit);
                 }
-                Some("tool_result") => tool_result(output, &block["content"]),
-                Some("image" | "input_image") => append(output, label, "[image]"),
+                Some("tool_result") => tool_result(output, &block["content"], limit),
+                Some("image" | "input_image") => append(output, label, "[image]", limit),
                 _ => {}
             }
         }
     }
 }
 
-fn tool_result(output: &mut String, value: &Value) {
+fn tool_result(output: &mut String, value: &Value, limit: usize) {
     if let Some(text) = value.as_str() {
-        append(output, "Result", text);
+        append(output, "Result", text, limit);
     } else if let Some(blocks) = value.as_array() {
         for block in blocks {
             if let Some(text) = block["text"].as_str() {
-                append(output, "Result", text);
+                append(output, "Result", text, limit);
             }
         }
     }
 }
 
-fn append(output: &mut String, label: &str, text: &str) {
+fn append(output: &mut String, label: &str, text: &str, limit: usize) {
     // Plain text only: no transcript-controlled terminal escapes or C1 controls.
-    let remaining = TEXT_LIMIT.saturating_sub(output.chars().count());
+    let remaining = limit.saturating_sub(output.chars().count());
     if remaining <= label.len() + 4 || text.is_empty() {
         return;
     }

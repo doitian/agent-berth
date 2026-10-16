@@ -246,6 +246,20 @@ pub fn capture_pane(id: &str) -> Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
+/// Plain-text content of a pane including its scrollback, for a best-effort
+/// transcript when the provider keeps no local log. Without `-e` tmux strips
+/// colors and attributes, so the result is safe to print directly.
+pub fn capture_pane_transcript(id: &str) -> Result<String> {
+    let output = command()
+        .args(["capture-pane", "-p", "-S", "-", "-t", id])
+        .output()
+        .context("tmux is not available")?;
+    if !output.status.success() {
+        bail!("tmux capture-pane failed for {id}");
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
 pub fn attach_pane(pane: &Pane) -> Result<()> {
     let session = format!("={}", pane.session);
     let window = format!("{session}:{}", pane.window);
