@@ -4,8 +4,8 @@ use clap::{Parser, Subcommand};
 use crate::duration::{parse_duration, parse_idle};
 use crate::paths::Context;
 use crate::{
-    attach, doctor, list, logs, notify, resume, rm, search, send, server, service, setup, stats,
-    tui,
+    attach, doctor, list, logs, new, notify, resume, rm, search, send, server, service, setup,
+    stats, tui,
 };
 
 /// Monitor coding agents and resume their sessions.
@@ -108,6 +108,12 @@ enum Command {
         #[arg(allow_hyphen_values = true)]
         message: Vec<String>,
     },
+    /// Start an agent in a new window of the current directory's tmux session
+    New {
+        /// Agent command and its arguments, e.g. `claude --model opus`
+        #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true)]
+        command: Vec<String>,
+    },
     /// Resume sessions after the server or host restarts
     Resume {
         /// Select the session matching this pattern with fzf
@@ -208,6 +214,7 @@ pub fn run() -> Result<()> {
         } => attach::run(&ctx, query, preview, session, dry_run),
         Command::Doctor => doctor::run(&ctx),
         Command::Send { id, message } => send::run(&ctx, &id, &message),
+        Command::New { command } => new::run(&command),
         Command::Resume {
             pattern,
             idle,

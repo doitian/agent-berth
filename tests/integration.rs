@@ -775,6 +775,43 @@ fn resume_passes_namespace_and_config_to_every_tmux_command() {
 }
 
 #[test]
+fn new_starts_the_command_in_a_window_of_the_directory_session() {
+    let sandbox = Sandbox::new();
+    let output = success(
+        sandbox
+            .berth()
+            .args(["new", "claude", "--model", "opus", "--help"]),
+    );
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        text.contains("started claude --model opus --help in tmux project window claude"),
+        "{text}"
+    );
+    let logs = recorded(&sandbox.root.path().join("tmux-log"), "txt");
+    let project = sandbox.project().display().to_string();
+    assert!(
+        logs.iter()
+            .any(|log| log.ends_with(&format!("\nnew\n-d\n-c\n{project}\n-s\nproject"))),
+        "{logs:?}"
+    );
+    assert!(
+        logs.iter().any(|log| log.contains("new-window")
+            && log.ends_with(&format!(
+                "\n-t\n=project\n-n\nclaude\n-c\n{project}\n--\nclaude\n--model\nopus\n--help"
+            ))),
+        "{logs:?}"
+    );
+}
+
+#[test]
+fn new_requires_a_command() {
+    let sandbox = Sandbox::new();
+    let output = sandbox.berth().arg("new").output().unwrap();
+    assert!(!output.status.success());
+    assert!(recorded(&sandbox.root.path().join("tmux-log"), "txt").is_empty());
+}
+
+#[test]
 fn resume_pattern_matches_single_session() {
     let mut sandbox = Sandbox::new();
     sandbox.start();

@@ -87,11 +87,17 @@ pub fn run(
         }
     }
 
-    if !dry_run
-        && let Some(name) = first_tmux
-        && std::io::IsTerminal::is_terminal(&std::io::stdout())
-    {
-        tmux::attach_or_switch(&name)?;
+    match first_tmux {
+        Some(name) if !dry_run => attach_if_interactive(&name),
+        _ => Ok(()),
+    }
+}
+
+/// Brings `session` up in this terminal, or switches to it inside tmux, when
+/// a person is watching; scripts only start the windows.
+pub(crate) fn attach_if_interactive(session: &str) -> Result<()> {
+    if std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+        tmux::attach_or_switch(session)?;
     }
     Ok(())
 }
