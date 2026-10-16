@@ -1,3 +1,6 @@
+[tools]
+git-cliff = "2.14.2"
+
 [tasks.changelog]
 description = "Regenerate CHANGELOG.md from git history with git-cliff"
 run = "git-cliff -o CHANGELOG.md"
