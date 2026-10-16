@@ -213,6 +213,38 @@ pub fn resume_cmd(provider: &str, session_id: &str) -> Vec<String> {
     }
 }
 
+/// Command that delivers `message` to an existing session through the
+/// provider's own CLI, when it has one that reaches the running session.
+/// Providers without such a command return `None`; the caller types into the
+/// session's tmux pane instead.
+pub fn send_cmd(provider: &str, session_id: &str, message: &str) -> Option<Vec<String>> {
+    match provider {
+        // `codex queue` hands the message to the shared local app-server that
+        // the interactive session is attached to.
+        "codex" => Some(vec![
+            "codex".into(),
+            "queue".into(),
+            "--thread".into(),
+            session_id.into(),
+            "--message".into(),
+            message.into(),
+        ]),
+        // The OpenCode API admits the input to the session on the shared
+        // background server the TUI is attached to. `run --session` would also
+        // create a session when the ID is unknown, so prefer the API call.
+        "opencode" => Some(vec![
+            "opencode".into(),
+            "api".into(),
+            "session.prompt".into(),
+            "--param".into(),
+            format!("sessionID={session_id}"),
+            "--data".into(),
+            json!({"text": message, "delivery": "queue"}).to_string(),
+        ]),
+        _ => None,
+    }
+}
+
 pub fn load_object(path: &Path) -> Result<Value> {
     match fs::read_to_string(path) {
         Ok(text) if text.trim().is_empty() => Ok(json!({})),

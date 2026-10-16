@@ -989,6 +989,216 @@ fn attach_session_scopes_panes_to_current_session() {
     let _ = agent.wait();
 }
 
+fn stable_id(sandbox: &Sandbox, provider: &str, session_id: &str) -> String {
+    let output = success(sandbox.berth().args(["list", "--json"]));
+    let sessions: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap();
+    sessions
+        .iter()
+        .find(|session| session["provider"] == provider && session["session_id"] == session_id)
+        .unwrap_or_else(|| panic!("no {provider} session {session_id} in {sessions:?}"))["id"]
+        .as_str()
+        .unwrap()
+        .to_string()
+}
+
+/// Message logs written by the fixture with the given extension. tmux records
+/// `<pid>.txt` per invocation; provider CLI calls record `<pid>.send`.
+fn recorded(dir: &Path, extension: &str) -> Vec<String> {
+    fs::read_dir(dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == extension))
+        .map(|path| fs::read_to_string(path).unwrap())
+        .collect()
+}
+
+#[test]
+fn send_uses_codex_queue_for_a_codex_session() {
+    let mut sandbox = Sandbox::new();
+    sandbox.start();
+    sandbox.hook("codex", "queue-target", "UserPromptSubmit", None);
+    let id = stable_id(&sandbox, "codex", "queue-target");
+    success(sandbox.berth().args(["send", &id, "ship it"]));
+    let logs = recorded(&sandbox.root.path().join("tmux-log"), "send");
+    assert_eq!(
+        logs,
+        vec!["codex\nqueue\n--thread\nqueue-target\n--message\nship it".to_string()]
+    );
+}
+
+#[test]
+fn send_joins_positional_arguments_into_one_message() {
+    let mut sandbox = Sandbox::new();
+    sandbox.start();
+    sandbox.hook("codex", "join-target", "UserPromptSubmit", None);
+    let id = stable_id(&sandbox, "codex", "join-target");
+    success(sandbox.berth().args(["send", &id, "hello", "world"]));
+    let logs = recorded(&sandbox.root.path().join("tmux-log"), "send");
+    assert_eq!(
+        logs,
+        vec!["codex\nqueue\n--thread\njoin-target\n--message\nhello world".to_string()]
+    );
+}
+
+#[test]
+fn send_reads_the_message_from_stdin_when_omitted() {
+    use std::io::Write;
+
+    let mut sandbox = Sandbox::new();
+    sandbox.start();
+    sandbox.hook("codex", "stdin-target", "UserPromptSubmit", None);
+    let id = stable_id(&sandbox, "codex", "stdin-target");
+    let mut child = sandbox
+        .berth()
+        .args(["send", &id])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"line one\nline two\n")
+        .unwrap();
+    let output = support::finish(child);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let logs = recorded(&sandbox.root.path().join("tmux-log"), "send");
+    assert_eq!(
+        logs,
+        vec!["codex\nqueue\n--thread\nstdin-target\n--message\nline one\nline two".to_string()]
+    );
+}
+
+#[test]
+fn send_uses_opencode_prompt_api_for_an_opencode_session() {
+    let mut sandbox = Sandbox::new();
+    sandbox.start();
+    sandbox.notify(
+        "opencode",
+        json!({"id": "server", "status": {"run-target": "busy"}}),
+    );
+    let id = stable_id(&sandbox, "opencode", "run-target");
+    success(sandbox.berth().args(["send", &id, "keep going"]));
+    let logs = recorded(&sandbox.root.path().join("tmux-log"), "send");
+    assert_eq!(logs.len(), 1, "{logs:?}");
+    let log = &logs[0];
+    assert!(
+        log.starts_with("opencode\napi\nsession.prompt\n--param\nsessionID=run-target\n--data\n"),
+        "{log}"
+    );
+    assert!(log.contains("\"text\":\"keep going\""), "{log}");
+    assert!(log.contains("\"delivery\":\"queue\""), "{log}");
+}
+
+/// Start a live agent process and report it as a Claude session in pane `%7`.
+fn claude_pane_session(sandbox: &mut Sandbox) -> (std::process::Child, String) {
+    let agent = sandbox.command(sandbox.fixture_agent()).spawn().unwrap();
+    let pid = agent.id();
+    sandbox.env.insert(
+        "FIXTURE_TMUX_PANES".into(),
+        format!(
+            "%7\t{pid}\tproject\t0\tshell\t{}",
+            sandbox.project().display()
+        )
+        .into(),
+    );
+    sandbox.notify(
+        "claude",
+        json!({
+            "session_id": "pane-target", "hook_event_name": "UserPromptSubmit",
+            "pid": pid, "cwd": sandbox.project(),
+        }),
+    );
+    let id = stable_id(sandbox, "claude", "pane-target");
+    (agent, id)
+}
+
+#[test]
+fn send_types_into_the_agent_tmux_pane() {
+    let mut sandbox = Sandbox::new();
+    sandbox.start();
+    let (mut agent, id) = claude_pane_session(&mut sandbox);
+    success(
+        sandbox
+            .berth()
+            .args(["send", &id, "first line\nsecond line"]),
+    );
+    let joined = recorded(&sandbox.root.path().join("tmux-log"), "txt").join("\n===\n");
+    assert!(
+        joined.contains("send-keys\n-l\n-t\n%7\n--\nfirst line"),
+        "{joined}"
+    );
+    assert!(joined.contains("send-keys\n-t\n%7\nC-j"), "{joined}");
+    assert!(
+        joined.contains("send-keys\n-l\n-t\n%7\n--\nsecond line"),
+        "{joined}"
+    );
+    assert!(joined.contains("send-keys\n-t\n%7\nEnter"), "{joined}");
+    let _ = agent.kill();
+    let _ = agent.wait();
+}
+
+#[test]
+fn send_types_hyphen_text_literally_and_drops_trailing_newlines() {
+    let mut sandbox = Sandbox::new();
+    sandbox.start();
+    let (mut agent, id) = claude_pane_session(&mut sandbox);
+    success(sandbox.berth().args(["send", &id, "--not-a-flag;\n\n"]));
+    let joined = recorded(&sandbox.root.path().join("tmux-log"), "txt").join("\n===\n");
+    assert!(
+        joined.contains("send-keys\n-l\n-t\n%7\n--\n--not-a-flag\\;"),
+        "{joined}"
+    );
+    assert!(!joined.contains("send-keys\n-t\n%7\nC-j"), "{joined}");
+    assert_eq!(
+        joined.matches("send-keys\n-t\n%7\nEnter").count(),
+        1,
+        "{joined}"
+    );
+    let _ = agent.kill();
+    let _ = agent.wait();
+}
+
+#[test]
+fn send_rejects_a_session_without_a_command_or_pane() {
+    let mut sandbox = Sandbox::new();
+    sandbox.start();
+    sandbox.hook("claude", "nowhere", "UserPromptSubmit", None);
+    let id = stable_id(&sandbox, "claude", "nowhere");
+    let output = sandbox
+        .berth()
+        .args(["send", &id, "hello"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(error.contains("not running in a tmux pane"), "{error}");
+    assert!(recorded(&sandbox.root.path().join("tmux-log"), "txt").is_empty());
+}
+
+#[test]
+fn send_rejects_an_unknown_session_id() {
+    let mut sandbox = Sandbox::new();
+    sandbox.start();
+    let output = sandbox
+        .berth()
+        .args(["send", "zzzzzz", "hello"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("no session with ID"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 fn extend_path(sandbox: &mut Sandbox) {
     let mut paths = vec![sandbox.root.path().join("bin")];
     paths.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));

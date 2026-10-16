@@ -108,6 +108,15 @@ fn main() {
         if args.iter().any(|arg| arg == "has-session") {
             std::process::exit(1);
         }
+    } else if (name == "codex" && args.first().map(String::as_str) == Some("queue"))
+        || (name == "opencode" && args.first().map(String::as_str) == Some("api"))
+    {
+        let dir = PathBuf::from(env::var_os("FIXTURE_LOG_DIR").unwrap());
+        fs::write(
+            dir.join(format!("{}.send", std::process::id())),
+            format!("{name}\n{}", args.join("\n")),
+        )
+        .unwrap();
     } else if name == "test-agent" {
         let report = format!(
             "{}\n{}\n{}\n{}",

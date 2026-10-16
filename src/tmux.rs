@@ -1,6 +1,8 @@
 use std::io::{IsTerminal, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::thread;
+use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 
@@ -258,6 +260,89 @@ pub fn capture_pane_transcript(id: &str) -> Result<String> {
         bail!("tmux capture-pane failed for {id}");
     }
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// Type `message` into a pane as literal text. `-l` keeps tmux from reading
+/// the text as key names, `C-j` inserts each newline without submitting, and a
+/// final `Enter` submits the whole message.
+pub fn send_message(pane_id: &str, message: &str) -> Result<()> {
+    // `-l` sends the bytes literally, but the client still reads them as
+    // keystrokes: an ESC can interrupt the agent and a tab can trigger
+    // completion. Tabs become spaces; any other control character is refused.
+    if let Some(ch) = message
+        .chars()
+        .find(|ch| ch.is_control() && !matches!(ch, '\n' | '\r' | '\t'))
+    {
+        bail!("message contains control character {ch:?}; it would be typed as a key");
+    }
+    let keys = message_keys(pane_id, message);
+    let (submit, typed) = keys.split_last().context("send keys is never empty")?;
+    for keys in typed {
+        run(keys).context("message partially typed into the pane")?;
+    }
+    // Let the client process the typed text before Enter arrives: a same-instant
+    // Enter can be folded into a paste and leave the message typed but unsent.
+    thread::sleep(Duration::from_millis(100));
+    run(submit).context("message typed but not submitted")
+}
+
+/// Whether the pane is in copy mode, where `send-keys` would drive copy mode
+/// instead of the program in the pane.
+pub fn pane_in_mode(pane_id: &str) -> Result<bool> {
+    let output = command()
+        .args(["display-message", "-p", "-t", pane_id, "#{pane_in_mode}"])
+        .output()
+        .context("tmux is not available")?;
+    if !output.status.success() {
+        bail!("tmux display-message failed for {pane_id}");
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim() == "1")
+}
+
+/// The `send-keys` invocations that type `message` into `pane_id`, in order:
+/// each line literally, a `C-j` between lines, and a final `Enter` to submit.
+/// `-l` and a trailing `--` keep `-` text literal rather than a tmux option.
+fn message_keys(pane_id: &str, message: &str) -> Vec<Vec<String>> {
+    let literal = |text: &str| {
+        // A tab would be read as a completion key, so send a space instead.
+        let text = text.replace('\t', " ");
+        // tmux reads a trailing unescaped `;` as a command separator and drops
+        // it, even with `-l` and `--`, so escape it.
+        let text = match text.strip_suffix(';') {
+            Some(head) => format!("{head}\\;"),
+            None => text,
+        };
+        vec![
+            "send-keys".to_string(),
+            "-l".to_string(),
+            "-t".to_string(),
+            pane_id.to_string(),
+            "--".to_string(),
+            text,
+        ]
+    };
+    let key = |name: &str| {
+        vec![
+            "send-keys".to_string(),
+            "-t".to_string(),
+            pane_id.to_string(),
+            name.to_string(),
+        ]
+    };
+    let message = message.replace("\r\n", "\n").replace('\r', "\n");
+    let mut keys = Vec::new();
+    let mut lines = message.split('\n');
+    if let Some(first) = lines.next().filter(|first| !first.is_empty()) {
+        keys.push(literal(first));
+    }
+    for line in lines {
+        keys.push(key("C-j"));
+        if !line.is_empty() {
+            keys.push(literal(line));
+        }
+    }
+    keys.push(key("Enter"));
+    keys
 }
 
 pub fn attach_pane(pane: &Pane) -> Result<()> {

@@ -26,6 +26,75 @@ fn ignores_malformed_panes() {
 }
 
 #[test]
+fn send_message_keys_type_lines_and_submit() {
+    assert_eq!(
+        message_keys("%7", "first line\nsecond line"),
+        vec![
+            vec!["send-keys", "-l", "-t", "%7", "--", "first line"],
+            vec!["send-keys", "-t", "%7", "C-j"],
+            vec!["send-keys", "-l", "-t", "%7", "--", "second line"],
+            vec!["send-keys", "-t", "%7", "Enter"],
+        ]
+        .into_iter()
+        .map(|row| row.into_iter().map(str::to_string).collect::<Vec<_>>())
+        .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn send_message_keys_keep_hyphens_and_normalize_newlines() {
+    assert_eq!(
+        message_keys("%1", "a\r\n\r\n-b"),
+        vec![
+            vec!["send-keys", "-l", "-t", "%1", "--", "a"],
+            vec!["send-keys", "-t", "%1", "C-j"],
+            vec!["send-keys", "-t", "%1", "C-j"],
+            vec!["send-keys", "-l", "-t", "%1", "--", "-b"],
+            vec!["send-keys", "-t", "%1", "Enter"],
+        ]
+        .into_iter()
+        .map(|row| row.into_iter().map(str::to_string).collect::<Vec<_>>())
+        .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn send_message_keys_escape_a_trailing_semicolon() {
+    assert_eq!(
+        message_keys("%2", "fix;\n;"),
+        vec![
+            vec!["send-keys", "-l", "-t", "%2", "--", "fix\\;"],
+            vec!["send-keys", "-t", "%2", "C-j"],
+            vec!["send-keys", "-l", "-t", "%2", "--", "\\;"],
+            vec!["send-keys", "-t", "%2", "Enter"],
+        ]
+        .into_iter()
+        .map(|row| row.into_iter().map(str::to_string).collect::<Vec<_>>())
+        .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn send_message_rejects_control_characters() {
+    let error = send_message("%3", "a\x1bb").unwrap_err().to_string();
+    assert!(error.contains("control character"), "{error}");
+}
+
+#[test]
+fn send_message_keys_send_tabs_as_spaces() {
+    assert_eq!(
+        message_keys("%3", "a\tb"),
+        vec![
+            vec!["send-keys", "-l", "-t", "%3", "--", "a b"],
+            vec!["send-keys", "-t", "%3", "Enter"],
+        ]
+        .into_iter()
+        .map(|row| row.into_iter().map(str::to_string).collect::<Vec<_>>())
+        .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 #[cfg(not(windows))]
 fn preview_command_quotes_arguments() {
     assert_eq!(quote_arg("tmux"), "tmux");

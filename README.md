@@ -79,6 +79,7 @@ uses [fzf](https://github.com/junegunn/fzf).
 | `agent-berth stats [--json]` | Aggregate active session counts by status and provider |
 | `agent-berth resume [pattern] [--idle 20m] [--here] [--dry-run]` | Resume sessions in tmux |
 | `agent-berth attach [query] [--preview] [--session] [--dry-run]` | Select an agent running in a tmux pane with fzf and attach to it; Paseo and desktop sessions are only reachable from the TUI |
+| `agent-berth send <id> "message"` | Send a message to a session through the agent's CLI, or into its tmux pane |
 | `agent-berth rm [patterns...]` | Hide sessions so they are never resumed |
 | `agent-berth doctor` | Check server, service, and hook installation |
 | `agent-berth notify --provider <name>` | Report agent status (used by hooks) |
@@ -224,6 +225,23 @@ exported transcript is available — an unsupported provider such as Grok or
 Paseo, a missing file, or an OpenCode server that is not running — and the
 session resolves to a tmux pane, `logs` falls back to capturing that pane's
 scrollback as plain text.
+
+### Send
+
+`agent-berth send <id> "message"` delivers a message to a session, where
+`<id>` is the stable short ID shown by `list`. The remaining arguments are
+joined with spaces, or read from stdin when none are given. It uses the agent's
+own CLI when
+that CLI can hand a message to the running session: Codex goes through
+`codex queue --thread <id> --message`, which targets the shared app-server the
+session is attached to, and OpenCode goes through its prompt API on the shared
+background server. Claude, Grok, and Pi have no command that reaches an
+already-running session, so the message is typed into the tmux pane running it
+with `tmux send-keys`: `-l` keeps the text literal, each newline is inserted
+with `C-j`, and a final Enter submits it. The session must be the active
+program in the pane; a session that is only a background tab is rejected.
+Codex desktop sessions are reached like CLI ones when they share the local
+app-server; Claude desktop sessions have no send path.
 
 ### Resume behavior
 

@@ -4,7 +4,8 @@ use clap::{Parser, Subcommand};
 use crate::duration::{parse_duration, parse_idle};
 use crate::paths::Context;
 use crate::{
-    attach, doctor, list, logs, notify, resume, rm, search, server, service, setup, stats, tui,
+    attach, doctor, list, logs, notify, resume, rm, search, send, server, service, setup, stats,
+    tui,
 };
 
 /// Monitor coding agents and resume their sessions.
@@ -98,6 +99,15 @@ enum Command {
     },
     /// Check server, service, and agent hooks
     Doctor,
+    /// Send a message to a session
+    Send {
+        /// Stable session ID shown in `list` and `search`
+        id: String,
+        /// Message to send; remaining arguments are joined with spaces. Read
+        /// from stdin when omitted.
+        #[arg(allow_hyphen_values = true)]
+        message: Vec<String>,
+    },
     /// Resume sessions after the server or host restarts
     Resume {
         /// Select the session matching this pattern with fzf
@@ -197,6 +207,7 @@ pub fn run() -> Result<()> {
             dry_run,
         } => attach::run(&ctx, query, preview, session, dry_run),
         Command::Doctor => doctor::run(&ctx),
+        Command::Send { id, message } => send::run(&ctx, &id, &message),
         Command::Resume {
             pattern,
             idle,
