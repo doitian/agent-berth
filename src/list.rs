@@ -57,6 +57,12 @@ pub(crate) fn to_json_with_panes(sessions: &[ListedSession], panes: &[Pane]) -> 
     )?)?)
 }
 
+/// Like [`to_json`], for a single session printed as a bare object.
+pub(crate) fn to_json_object(session: &ListedSession, panes: &[Pane]) -> Result<String> {
+    let mut values = json_values(std::slice::from_ref(session), panes, std::process::id())?;
+    Ok(serde_json::to_string_pretty(&values.remove(0))?)
+}
+
 fn json_values(
     sessions: &[ListedSession],
     panes: &[Pane],

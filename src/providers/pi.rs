@@ -31,6 +31,10 @@ impl Provider for Pi {
         normalize_title(title)
     }
 
+    fn session_env(&self) -> Option<&'static str> {
+        Some("PI_SESSION_ID")
+    }
+
     fn log(&self) -> Option<&dyn TranscriptLog> {
         Some(self)
     }

@@ -18,6 +18,7 @@ mod providers;
 mod resume;
 mod rm;
 mod search;
+mod self_cmd;
 mod send;
 mod server;
 mod service;

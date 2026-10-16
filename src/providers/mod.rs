@@ -52,6 +52,12 @@ pub trait Provider: Integration + Focus + Messaging + Transcript + Sync {
         title.to_string()
     }
 
+    /// Environment variable that exposes the native session id to the
+    /// agent's shell tool, when the provider sets one.
+    fn session_env(&self) -> Option<&'static str> {
+        None
+    }
+
     fn hooks(&self) -> Option<&dyn HookEvents> {
         None
     }

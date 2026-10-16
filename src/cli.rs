@@ -5,8 +5,8 @@ use crate::duration::{parse_duration, parse_idle};
 use crate::paths::Context;
 use crate::transcript::Tools;
 use crate::{
-    attach, doctor, list, logs, new, notify, resume, rm, search, send, server, service, setup,
-    stats, tui,
+    attach, doctor, list, logs, new, notify, resume, rm, search, self_cmd, send, server, service,
+    setup, stats, tui,
 };
 
 /// Monitor coding agents and resume their sessions.
@@ -74,6 +74,13 @@ enum Command {
         #[arg(long, value_name = "PANE_ID")]
         tmux_pane: Option<String>,
         /// Print JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Print the stable id of the current agent session
+    #[command(name = "self")]
+    Self_ {
+        /// Print the session as JSON instead of the bare id
         #[arg(long)]
         json: bool,
     },
@@ -224,6 +231,7 @@ pub fn run() -> Result<()> {
             tmux_pane,
             json,
         } => search::run(&ctx, &patterns, created_in, tmux_pane.as_deref(), json),
+        Command::Self_ { json } => self_cmd::run(&ctx, json),
         Command::Stats { json } => stats::run(&ctx, json),
         Command::Notify { provider } => notify::run(&ctx, provider),
         Command::Attach {

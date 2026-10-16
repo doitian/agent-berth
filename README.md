@@ -75,6 +75,7 @@ uses [fzf](https://github.com/junegunn/fzf).
 | `agent-berth server` | Run the server in the foreground |
 | `agent-berth list [--json] [--resumable [--idle 20m] [--here]]` | List sessions |
 | `agent-berth search [patterns...] [--created-in DURATION] [--tmux-pane PANE_ID] [--json]` | Search stored sessions across all providers, newest first; `--tmux-pane` keeps only the agent a tmux pane shows now |
+| `agent-berth self [--json]` | Print the stable id of the agent session running the command, from the provider's shell-tool environment when it exposes one, otherwise from the enclosing tmux pane |
 | `agent-berth logs <id> [--final \| --turns N] [--tools full\|brief\|none] [--tail N] [--json]` | Print a session's transcript, its latest reply, or its latest turns |
 | `agent-berth stats [--json]` | Aggregate active session counts by status and provider |
 | `agent-berth new <command> [args...]` | Start an agent in a new window of the current directory's tmux session, the one `resume` uses, creating it when missing, and print the new pane id; for example `agent-berth new claude --model opus` |
@@ -211,6 +212,9 @@ Every session has a stable short ID, shown in the `ID` column and included as
 and native session ID, so it survives restarts and database rebuilds. Commands
 that take patterns (`attach`, `resume`, `rm`, `search`, `logs`) also match the ID; for
 example, `agent-berth attach <id>` focuses a pane without opening the picker.
+An agent prints its own ID with `agent-berth self` (the session's JSON with
+`--json`), derived from the provider's shell-tool environment — such as Pi's
+`PI_SESSION_ID` — or from the session shown in `$TMUX_PANE`.
 
 Sessions running in a tmux pane also carry `tmux_pane` in `list --json` and
 `search --json`: the pane `id` (such as `%7`), its tmux `session`, `window`
