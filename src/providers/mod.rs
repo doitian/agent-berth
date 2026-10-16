@@ -10,7 +10,7 @@ use crate::hubs::{Hub, Preview};
 use crate::paths::{self, Context as AppContext};
 use crate::status::{AgentSession, Source};
 use crate::store::ListedSession;
-use crate::transcript::{self, Feed};
+use crate::transcript::{self, Conversation, Feed, Record};
 
 mod claude;
 mod codex;
@@ -108,7 +108,7 @@ pub trait Transcript {
         _ctx: &AppContext,
         hub: &dyn Hub,
         session: &ListedSession,
-    ) -> Result<String> {
+    ) -> Result<Conversation> {
         hub.transcript(session)
     }
 
@@ -143,9 +143,9 @@ pub trait TranscriptLog {
     /// sibling with a similar name.
     fn is_session_record(&self, row: &Value, session_id: &str) -> bool;
 
-    /// Renders one record, truncating text to `limit` characters, or `None`
-    /// for records that are not part of the conversation.
-    fn parse(&self, row: &Value, limit: usize) -> Option<String>;
+    /// The conversation entries and turn markers in one log row, or `None` for
+    /// rows that are neither.
+    fn parse(&self, row: &Value) -> Option<Record>;
 
     /// Identifies revisions of the same record. Without one, the whole record
     /// is its identity.
@@ -209,7 +209,11 @@ pub fn send(hub: &dyn Hub, session: &ListedSession, message: &str) -> Result<()>
     }
 }
 
-pub fn transcript(ctx: &AppContext, hub: &dyn Hub, session: &ListedSession) -> Result<String> {
+pub fn transcript(
+    ctx: &AppContext,
+    hub: &dyn Hub,
+    session: &ListedSession,
+) -> Result<Conversation> {
     match lookup(&session.provider) {
         Some(provider) => provider.transcript(ctx, hub, session),
         None => hub.transcript(session),
@@ -273,7 +277,7 @@ fn log_transcript(
     ctx: &AppContext,
     hub: &dyn Hub,
     session: &ListedSession,
-) -> Result<String> {
+) -> Result<Conversation> {
     or_hub_transcript(
         transcript::full(&log_source(log, ctx, session)),
         hub,
@@ -296,10 +300,10 @@ fn log_preview(
 /// Falls back to the hub's transcript, reporting both failures when it also
 /// has none.
 fn or_hub_transcript(
-    result: Result<String>,
+    result: Result<Conversation>,
     hub: &dyn Hub,
     session: &ListedSession,
-) -> Result<String> {
+) -> Result<Conversation> {
     result.or_else(|error| {
         hub.transcript(session)
             .map_err(|hub_error| anyhow::anyhow!("{error:#}; {hub_error:#}"))

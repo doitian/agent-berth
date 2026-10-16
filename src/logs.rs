@@ -6,13 +6,14 @@ use crate::paths::Context as AppContext;
 use crate::pick;
 use crate::providers;
 use crate::store::ListedSession;
+use crate::transcript::Conversation;
 
 pub fn run(ctx: &AppContext, selector: &str, tail: Option<usize>) -> Result<()> {
     let sessions = db::query_stored(ctx)?;
     let Some(session) = pick::single(&sessions, selector)? else {
         return Ok(());
     };
-    let full = transcript_for(ctx, &session)?;
+    let full = transcript_for(ctx, &session)?.render();
     let text = match tail {
         Some(lines) => tail_lines(&full, lines),
         None => full,
@@ -25,7 +26,7 @@ pub fn run(ctx: &AppContext, selector: &str, tail: Option<usize>) -> Result<()> 
 
 /// Best available transcript: the provider's own source when it has one,
 /// otherwise the session's hub, such as its tmux pane.
-fn transcript_for(ctx: &AppContext, session: &ListedSession) -> Result<String> {
+fn transcript_for(ctx: &AppContext, session: &ListedSession) -> Result<Conversation> {
     let hub = hubs::resolve(session, Tmux::lookup);
     providers::transcript(ctx, hub.as_ref(), session).map_err(|error| {
         anyhow!(

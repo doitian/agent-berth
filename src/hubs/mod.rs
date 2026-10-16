@@ -9,7 +9,7 @@ use crate::paths::Context as AppContext;
 use crate::status::Source;
 use crate::store::ListedSession;
 use crate::tmux::Pane;
-use crate::transcript::Feed;
+use crate::transcript::{Conversation, Feed};
 
 pub(crate) mod paseo;
 pub(crate) mod tmux;
@@ -31,8 +31,8 @@ pub trait Hub: Debug + Send + Sync {
 
     fn send(&self, session: &ListedSession, message: &str) -> Result<()>;
 
-    /// The whole conversation as plain text.
-    fn transcript(&self, session: &ListedSession) -> Result<String>;
+    /// The whole conversation, as the hub can read it.
+    fn transcript(&self, session: &ListedSession) -> Result<Conversation>;
 
     /// Live view of the conversation, or `None` when the hub cannot show it.
     fn preview(&self, ctx: &AppContext, session: &ListedSession) -> Option<Preview>;

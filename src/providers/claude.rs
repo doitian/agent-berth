@@ -20,7 +20,7 @@ use crate::status::{
     string_field, u32_field,
 };
 use crate::store::ListedSession;
-use crate::transcript::content;
+use crate::transcript::{Conversation, Entry, Record, content, context, first_text, prompt, said};
 
 const HOOK_EVENTS: &[&str] = &[
     "SessionStart",
@@ -39,6 +39,15 @@ const HOOK_EVENTS: &[&str] = &[
 // within milliseconds of Stop, and a backgrounded hook process dies with it.
 // Run these synchronously so the report lands before the client goes away.
 const SYNC_HOOK_EVENTS: &[&str] = &["Stop", "StopFailure", "SessionEnd"];
+
+/// User rows that Claude Code writes itself, such as a local command's output
+/// or the marker an interrupt leaves.
+const INJECTED_PREFIXES: &[&str] = &[
+    "<local-command-caveat>",
+    "<local-command-stdout>",
+    "<local-command-stderr>",
+    "[Request interrupted by user",
+];
 
 const ASK_NOTIFICATIONS: &[&str] = &[
     "permission_prompt",
@@ -107,7 +116,12 @@ impl Focus for Claude {
 impl Messaging for Claude {}
 
 impl Transcript for Claude {
-    fn transcript(&self, ctx: &Context, hub: &dyn Hub, session: &ListedSession) -> Result<String> {
+    fn transcript(
+        &self,
+        ctx: &Context,
+        hub: &dyn Hub,
+        session: &ListedSession,
+    ) -> Result<Conversation> {
         log_transcript(self, ctx, hub, session)
     }
 
@@ -129,13 +143,42 @@ impl TranscriptLog for Claude {
         row["sessionId"].as_str() == Some(session_id)
     }
 
-    fn parse(&self, row: &Value, limit: usize) -> Option<String> {
-        let role = row["type"]
-            .as_str()
-            .filter(|role| matches!(*role, "user" | "assistant"))?;
-        let mut output = String::new();
-        content(&mut output, role, &row["message"]["content"], limit);
-        Some(output)
+    fn parse(&self, row: &Value) -> Option<Record> {
+        let message = &row["message"];
+        match row["type"].as_str()? {
+            "assistant" => Some(Record {
+                entries: content(&message["content"], said),
+                ends_turn: message["stop_reason"] == "end_turn",
+                ..Record::default()
+            }),
+            "user" => {
+                let text = first_text(&message["content"]);
+                // A finished background task asks the agent to react, but the
+                // notification itself comes from the harness, not the user.
+                let notification = text.starts_with("<task-notification>");
+                let injected = notification
+                    || row["isMeta"] == true
+                    || row["isCompactSummary"] == true
+                    || INJECTED_PREFIXES
+                        .iter()
+                        .any(|prefix| text.starts_with(prefix));
+                let entries = content(&message["content"], if injected { context } else { prompt });
+                let starts_turn = notification
+                    || entries
+                        .iter()
+                        .any(|entry| matches!(entry, Entry::Prompt { .. }));
+                Some(Record {
+                    entries,
+                    starts_turn,
+                    ends_turn: false,
+                })
+            }
+            "system" => (row["subtype"] == "turn_duration").then(|| Record {
+                ends_turn: true,
+                ..Record::default()
+            }),
+            _ => None,
+        }
     }
 
     // UUIDs identify records including their revisions.

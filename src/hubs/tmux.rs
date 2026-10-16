@@ -10,6 +10,7 @@ use crate::process;
 use crate::status::Source;
 use crate::store::ListedSession;
 use crate::tmux::{self, Pane};
+use crate::transcript::Conversation;
 
 #[derive(Debug)]
 pub struct Tmux {
@@ -121,12 +122,16 @@ impl Hub for Tmux {
     }
 
     /// Best-effort transcript from the pane, including scrollback.
-    fn transcript(&self, session: &ListedSession) -> Result<String> {
+    fn transcript(&self, session: &ListedSession) -> Result<Conversation> {
         let pane = self
             .pane(session)
             .context("tmux capture")?
             .context("no tmux pane found")?;
-        tmux::capture_pane_transcript(&pane.id).context("tmux capture")
+        let text = tmux::capture_pane_transcript(&pane.id).context("tmux capture")?;
+        Ok(Conversation::Text {
+            text,
+            origin: format!("tmux pane {}", pane.id),
+        })
     }
 
     fn preview(&self, _ctx: &AppContext, session: &ListedSession) -> Option<Preview> {

@@ -330,7 +330,7 @@ fn full_reads_every_entry_without_truncating_text() {
     body.push_str(&message("long", &long));
     std::fs::write(&path, body).unwrap();
 
-    let text = full(&source(&path, "claude")).unwrap();
+    let text = full(&source(&path, "claude")).unwrap().render();
     assert!(text.contains("Assistant: message-0"));
     assert!(text.contains(&format!("Assistant: message-{}", ENTRY_LIMIT + 4)));
     assert!(text.contains(&long));
@@ -346,7 +346,10 @@ fn full_keeps_the_last_revision_of_a_claude_message() {
         format!("{}{}", message("1", "Draft"), message("1", "Final")),
     )
     .unwrap();
-    assert_eq!(full(&source(&path, "claude")).unwrap(), "Assistant: Final");
+    assert_eq!(
+        full(&source(&path, "claude")).unwrap().render(),
+        "Assistant: Final"
+    );
 }
 
 #[test]
@@ -375,4 +378,82 @@ fn full_errors_without_a_readable_transcript() {
             .to_string()
             .contains("no transcript file found")
     );
+}
+
+fn claude_turns(rows: &[Value]) -> Vec<Turn> {
+    let log = log("claude").unwrap();
+    turns(rows.iter().filter_map(|row| log.parse(row)))
+}
+
+fn user(content: Value) -> Value {
+    json!({"type":"user","message":{"role":"user","content":content}})
+}
+
+fn assistant(content: Value, stop: &str) -> Value {
+    json!({"type":"assistant","message":{"content":content,"stop_reason":stop}})
+}
+
+#[test]
+fn claude_groups_a_prompt_and_its_work_into_one_complete_turn() {
+    let turns = claude_turns(&[
+        user(json!("<command-message>review</command-message>")),
+        json!({"type":"user","isMeta":true,"message":{"content":[{"type":"text","text":"Skill body"}]}}),
+        assistant(
+            json!([{"type":"tool_use","name":"Bash","input":{"command":"ls"}}]),
+            "tool_use",
+        ),
+        user(json!([{"type":"tool_result","content":"src"}])),
+        assistant(json!([{"type":"text","text":"All good."}]), "end_turn"),
+        json!({"type":"system","subtype":"turn_duration"}),
+        user(json!("next request")),
+    ]);
+    assert_eq!(turns.len(), 2);
+    assert!(turns[0].complete);
+    assert!(!turns[1].complete);
+    let kinds: Vec<&str> = turns[0]
+        .entries()
+        .map(|entry| match entry {
+            Entry::Prompt { .. } => "prompt",
+            Entry::Context { .. } => "context",
+            Entry::Text { .. } => "text",
+            Entry::ToolCall { .. } => "call",
+            Entry::ToolResult { .. } => "result",
+        })
+        .collect();
+    assert_eq!(kinds, ["prompt", "context", "call", "result", "text"]);
+}
+
+#[test]
+fn a_prompt_without_a_reply_joins_the_next_turn() {
+    let turns = claude_turns(&[
+        user(json!("<command-name>/model</command-name>")),
+        json!({"type":"user","isMeta":true,"message":{"content":"<local-command-caveat>Caveat"}}),
+        user(json!(
+            "<local-command-stdout>Set model</local-command-stdout>"
+        )),
+        user(json!("real task")),
+        assistant(json!([{"type":"text","text":"Done."}]), "end_turn"),
+        user(json!("[Request interrupted by user]")),
+    ]);
+    assert_eq!(turns.len(), 1);
+    let prompts = turns[0]
+        .entries()
+        .filter(|entry| matches!(entry, Entry::Prompt { .. }))
+        .count();
+    assert_eq!(prompts, 2);
+}
+
+#[test]
+fn a_task_notification_starts_a_turn_as_injected_context() {
+    let turns = claude_turns(&[
+        user(json!("task")),
+        assistant(json!([{"type":"text","text":"Started it."}]), "end_turn"),
+        user(json!("<task-notification>finished</task-notification>")),
+        assistant(json!([{"type":"text","text":"It finished."}]), "end_turn"),
+    ]);
+    assert_eq!(turns.len(), 2);
+    assert!(matches!(
+        turns[1].entries().next(),
+        Some(Entry::Context { .. })
+    ));
 }

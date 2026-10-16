@@ -287,3 +287,29 @@ fn codex_originator_comes_from_the_hook_environment_unless_explicit() {
         assert_eq!(payload["originator"], "explicit");
     }
 }
+
+#[test]
+fn transcript_turns_follow_task_markers_and_hide_injected_context() {
+    let rows = [
+        json!({"type":"session_meta","payload":{"id":"s"}}),
+        json!({"type":"event_msg","payload":{"type":"task_started","turn_id":"t1"}}),
+        json!({"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<environment_context>cwd</environment_context>"}]}}),
+        json!({"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"$ship-it"}]}}),
+        json!({"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<skill><name>ship-it</name></skill>"}]}}),
+        json!({"type":"response_item","payload":{"type":"function_call","name":"exec","arguments":"{\"cmd\":\"ls\"}"}}),
+        json!({"type":"event_msg","payload":{"type":"token_count"}}),
+        json!({"type":"response_item","payload":{"type":"function_call_output","output":"src"}}),
+        json!({"type":"response_item","payload":{"type":"message","role":"assistant","phase":"final_answer","content":[{"type":"output_text","text":"Shipped."}]}}),
+        json!({"type":"event_msg","payload":{"type":"task_complete","turn_id":"t1","last_agent_message":"Shipped."}}),
+        json!({"type":"event_msg","payload":{"type":"task_started","turn_id":"t2"}}),
+        json!({"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"again"}]}}),
+    ];
+    let turns = crate::transcript::turns(rows.iter().filter_map(|row| Codex.parse(row)));
+    assert_eq!(turns.len(), 2);
+    assert!(turns[0].complete && !turns[1].complete);
+    let first: Vec<_> = turns[0].entries().collect();
+    assert!(matches!(first[0], Entry::Context { .. }));
+    assert!(matches!(first[1], Entry::Prompt { text } if text == "$ship-it"));
+    assert!(matches!(first[2], Entry::Context { .. }));
+    assert!(matches!(first.last(), Some(Entry::Text { text }) if text == "Shipped."));
+}

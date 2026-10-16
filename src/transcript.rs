@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use anyhow::{Context, Result};
+use serde::Serialize;
 use serde_json::Value;
 
 use crate::providers::TranscriptLog;
@@ -24,6 +25,128 @@ pub(crate) struct Source {
     pub session_id: String,
     pub path: Option<String>,
     pub root: Option<PathBuf>,
+}
+
+/// One piece of a transcript record, in the order the agent produced it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(crate) enum Entry {
+    /// A message asking the agent for work: the user's, or an orchestrator's.
+    Prompt {
+        text: String,
+    },
+    /// Text the agent's harness adds on the user's side, such as skill bodies,
+    /// environment details, or command output.
+    Context {
+        text: String,
+    },
+    Text {
+        text: String,
+    },
+    ToolCall {
+        name: String,
+        input: String,
+    },
+    ToolResult {
+        text: String,
+    },
+}
+
+impl Entry {
+    fn is_output(&self) -> bool {
+        matches!(
+            self,
+            Self::Text { .. } | Self::ToolCall { .. } | Self::ToolResult { .. }
+        )
+    }
+}
+
+/// One parsed log row or exported message.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct Record {
+    pub entries: Vec<Entry>,
+    /// The record asks the agent for new work, so it opens a turn unless the
+    /// current turn has no output yet.
+    pub starts_turn: bool,
+    /// The agent finished the turn this record belongs to.
+    pub ends_turn: bool,
+}
+
+/// The work the agent did for one request: its prompts, then its output.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct Turn {
+    pub records: Vec<Record>,
+    pub complete: bool,
+}
+
+impl Turn {
+    fn has_output(&self) -> bool {
+        self.entries().any(Entry::is_output)
+    }
+
+    pub fn entries(&self) -> impl Iterator<Item = &Entry> {
+        self.records.iter().flat_map(|record| &record.entries)
+    }
+}
+
+/// A session's whole conversation, structured when the agent keeps a log it
+/// can parse, otherwise plain text from wherever it was read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Conversation {
+    Turns(Vec<Turn>),
+    Text { text: String, origin: String },
+}
+
+impl Conversation {
+    /// Every record, oldest first, separated by blank lines.
+    pub fn render(&self) -> String {
+        match self {
+            Self::Turns(turns) => turns
+                .iter()
+                .flat_map(|turn| &turn.records)
+                .map(|record| render(&record.entries, usize::MAX))
+                .filter(|text| !text.is_empty())
+                .collect::<Vec<_>>()
+                .join("\n\n"),
+            Self::Text { text, .. } => text.clone(),
+        }
+    }
+}
+
+/// Groups records into turns. A record that starts a turn joins the current
+/// one while it has no output yet, so a turn marker and its prompt, or a local
+/// command that got no reply and the next prompt, stay together.
+pub(crate) fn turns(records: impl IntoIterator<Item = Record>) -> Vec<Turn> {
+    let mut turns: Vec<Turn> = Vec::new();
+    for record in records {
+        if turns.is_empty() || record.starts_turn && turns.last().is_some_and(Turn::has_output) {
+            turns.push(Turn::default());
+        }
+        let turn = turns.last_mut().expect("a turn exists");
+        turn.complete |= record.ends_turn;
+        turn.records.push(record);
+    }
+    turns
+}
+
+/// Renders entries with the labels `You`, `Assistant`, `Tool`, `Input`, and
+/// `Result`, cutting the text at `limit` characters in total.
+pub(crate) fn render(entries: &[Entry], limit: usize) -> String {
+    let mut output = String::new();
+    for entry in entries {
+        match entry {
+            Entry::Prompt { text } | Entry::Context { text } => {
+                append(&mut output, "You", text, limit)
+            }
+            Entry::Text { text } => append(&mut output, "Assistant", text, limit),
+            Entry::ToolCall { name, input } => {
+                append(&mut output, "Tool", name, limit);
+                append(&mut output, "Input", input, limit);
+            }
+            Entry::ToolResult { text } => append(&mut output, "Result", text, limit),
+        }
+    }
+    output
 }
 
 fn log(provider: &str) -> Option<&'static dyn TranscriptLog> {
@@ -183,6 +306,7 @@ impl Reader {
             self.omitted = true;
             return;
         };
+        // Turn markers render to nothing and must not use up the entry budget.
         let Some(text) = parse(log, &row) else {
             return;
         };
@@ -228,10 +352,10 @@ fn record_key(log: &dyn TranscriptLog, row: &Value) -> u64 {
     hash.finish()
 }
 
-/// Render a whole local transcript, oldest entry first, for one-shot CLI
-/// output. Unlike `Reader`, it reads the entire file, keeps every entry, and
+/// Read a whole local transcript into turns, oldest first, for one-shot CLI
+/// output. Unlike `Reader`, it reads the entire file, keeps every record, and
 /// does not truncate message text.
-pub(crate) fn full(source: &Source) -> Result<String> {
+pub(crate) fn full(source: &Source) -> Result<Conversation> {
     let log = log(&source.provider)
         .with_context(|| format!("{} sessions have no local transcript", source.provider))?;
     let path = match source.path.as_ref().map(PathBuf::from) {
@@ -245,25 +369,23 @@ pub(crate) fn full(source: &Source) -> Result<String> {
     };
     let file = File::open(&path).with_context(|| format!("open {}", path.display()))?;
     let mut order: Vec<u64> = Vec::new();
-    let mut texts: HashMap<u64, String> = HashMap::new();
+    let mut records: HashMap<u64, Record> = HashMap::new();
     for line in BufReader::new(file).lines() {
         let line = line.with_context(|| format!("read {}", path.display()))?;
         let Ok(row) = serde_json::from_str::<Value>(&line) else {
             continue;
         };
-        let Some(text) = parse_with_limit(log, &row, usize::MAX) else {
+        let Some(record) = log.parse(&row) else {
             continue;
         };
         let key = record_key(log, &row);
-        if texts.insert(key, text).is_none() {
+        if records.insert(key, record).is_none() {
             order.push(key);
         }
     }
-    let entries: Vec<&str> = order
-        .iter()
-        .filter_map(|key| texts.get(key).map(String::as_str))
-        .collect();
-    Ok(entries.join("\n\n"))
+    Ok(Conversation::Turns(turns(
+        order.iter().filter_map(|key| records.remove(key)),
+    )))
 }
 
 /// Recover paths for already-running sessions. Search only the configured local
@@ -321,62 +443,84 @@ fn belongs_to(log: &dyn TranscriptLog, path: &Path, session_id: &str) -> bool {
 }
 
 fn parse(log: &dyn TranscriptLog, row: &Value) -> Option<String> {
-    parse_with_limit(log, row, TEXT_LIMIT)
+    let record = log.parse(row)?;
+    Some(render(&record.entries, TEXT_LIMIT)).filter(|output| !output.is_empty())
 }
 
-fn parse_with_limit(log: &dyn TranscriptLog, row: &Value, limit: usize) -> Option<String> {
-    log.parse(row, limit).filter(|output| !output.is_empty())
-}
-
-pub(crate) fn content(output: &mut String, role: &str, value: &Value, limit: usize) {
-    let label = if role == "user" { "You" } else { "Assistant" };
+/// Entries for a message's content: a plain string, or blocks of text, tool
+/// calls, tool results, and images. `said` wraps the speaker's text, such as
+/// `Entry::Prompt` for a user or `Entry::Text` for the agent.
+pub(crate) fn content(value: &Value, said: fn(String) -> Entry) -> Vec<Entry> {
+    let mut entries = Vec::new();
     if let Some(text) = value.as_str() {
-        append(output, label, text, limit);
+        entries.push(said(text.to_string()));
     } else if let Some(blocks) = value.as_array() {
         for block in blocks {
             match block["type"].as_str() {
                 Some("text" | "input_text" | "output_text") => {
-                    append(output, label, block["text"].as_str().unwrap_or(""), limit);
+                    entries.push(said(block["text"].as_str().unwrap_or("").to_string()));
                 }
-                Some("tool_use") => {
-                    append(
-                        output,
-                        "Tool",
-                        block["name"].as_str().unwrap_or("call"),
-                        limit,
-                    );
-                    append(output, "Input", &block["input"].to_string(), limit);
-                }
-                Some("toolCall") => {
-                    append(
-                        output,
-                        "Tool",
-                        block["name"].as_str().unwrap_or("call"),
-                        limit,
-                    );
-                    append(output, "Input", &block["arguments"].to_string(), limit);
-                }
-                Some("tool_result") => tool_result(output, &block["content"], limit),
-                Some("image" | "input_image") => append(output, label, "[image]", limit),
+                Some("tool_use") => entries.push(Entry::ToolCall {
+                    name: block["name"].as_str().unwrap_or("call").to_string(),
+                    input: block["input"].to_string(),
+                }),
+                Some("toolCall") => entries.push(Entry::ToolCall {
+                    name: block["name"].as_str().unwrap_or("call").to_string(),
+                    input: block["arguments"].to_string(),
+                }),
+                Some("tool_result") => entries.extend(tool_result(&block["content"])),
+                Some("image" | "input_image") => entries.push(said("[image]".into())),
                 _ => {}
             }
         }
     }
+    entries
 }
 
-pub(crate) fn tool_result(output: &mut String, value: &Value, limit: usize) {
+pub(crate) fn tool_result(value: &Value) -> Vec<Entry> {
+    let result = |text: &str| Entry::ToolResult {
+        text: text.to_string(),
+    };
     if let Some(text) = value.as_str() {
-        append(output, "Result", text, limit);
+        vec![result(text)]
     } else if let Some(blocks) = value.as_array() {
-        for block in blocks {
-            if let Some(text) = block["text"].as_str() {
-                append(output, "Result", text, limit);
-            }
-        }
+        blocks
+            .iter()
+            .filter_map(|block| block["text"].as_str())
+            .map(result)
+            .collect()
+    } else {
+        Vec::new()
     }
 }
 
-pub(crate) fn append(output: &mut String, label: &str, text: &str, limit: usize) {
+/// The first text of a message's content, which tells a harness-written row
+/// from the user's own words.
+pub(crate) fn first_text(value: &Value) -> &str {
+    value
+        .as_str()
+        .or_else(|| {
+            value
+                .as_array()?
+                .iter()
+                .find_map(|block| block["text"].as_str())
+        })
+        .unwrap_or("")
+}
+
+pub(crate) fn prompt(text: String) -> Entry {
+    Entry::Prompt { text }
+}
+
+pub(crate) fn context(text: String) -> Entry {
+    Entry::Context { text }
+}
+
+pub(crate) fn said(text: String) -> Entry {
+    Entry::Text { text }
+}
+
+fn append(output: &mut String, label: &str, text: &str, limit: usize) {
     // Plain text only: no transcript-controlled terminal escapes or C1 controls.
     let remaining = limit.saturating_sub(output.chars().count());
     if remaining <= label.len() + 4 || text.is_empty() {

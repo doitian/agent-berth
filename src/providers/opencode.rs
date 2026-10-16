@@ -12,6 +12,7 @@ use super::{
 use crate::hubs::Hub;
 use crate::paths::Context;
 use crate::store::ListedSession;
+use crate::transcript::Conversation;
 
 mod export;
 
@@ -103,7 +104,12 @@ impl Messaging for Opencode {
 }
 
 impl Transcript for Opencode {
-    fn transcript(&self, _ctx: &Context, hub: &dyn Hub, session: &ListedSession) -> Result<String> {
+    fn transcript(
+        &self,
+        _ctx: &Context,
+        hub: &dyn Hub,
+        session: &ListedSession,
+    ) -> Result<Conversation> {
         or_hub_transcript(export::export(&session.session_id), hub, session)
     }
 }

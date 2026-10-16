@@ -10,7 +10,7 @@ use super::{
 use crate::hubs::{Hub, Preview};
 use crate::paths::Context;
 use crate::store::ListedSession;
-use crate::transcript::{content, tool_result};
+use crate::transcript::{Conversation, Record, content, prompt, said, tool_result};
 
 pub struct Pi;
 
@@ -69,7 +69,12 @@ impl Focus for Pi {}
 impl Messaging for Pi {}
 
 impl Transcript for Pi {
-    fn transcript(&self, ctx: &Context, hub: &dyn Hub, session: &ListedSession) -> Result<String> {
+    fn transcript(
+        &self,
+        ctx: &Context,
+        hub: &dyn Hub,
+        session: &ListedSession,
+    ) -> Result<Conversation> {
         log_transcript(self, ctx, hub, session)
     }
 
@@ -91,18 +96,29 @@ impl TranscriptLog for Pi {
         row["type"] == "session" && row["id"].as_str() == Some(session_id)
     }
 
-    fn parse(&self, row: &Value, limit: usize) -> Option<String> {
+    fn parse(&self, row: &Value) -> Option<Record> {
         if row["type"] != "message" {
             return None;
         }
         let message = &row["message"];
-        let mut output = String::new();
-        match message["role"].as_str()? {
-            role @ ("user" | "assistant") => content(&mut output, role, &message["content"], limit),
-            "toolResult" => tool_result(&mut output, &message["content"], limit),
+        let record = match message["role"].as_str()? {
+            "user" => Record {
+                entries: content(&message["content"], prompt),
+                starts_turn: true,
+                ends_turn: false,
+            },
+            "assistant" => Record {
+                entries: content(&message["content"], said),
+                starts_turn: false,
+                ends_turn: message["stopReason"] == "stop",
+            },
+            "toolResult" => Record {
+                entries: tool_result(&message["content"]),
+                ..Record::default()
+            },
             _ => return None,
-        }
-        Some(output)
+        };
+        Some(record)
     }
 }
 

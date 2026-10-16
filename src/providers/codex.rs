@@ -17,7 +17,19 @@ use crate::status::{
     u32_field,
 };
 use crate::store::ListedSession;
-use crate::transcript::{append, content, tool_result};
+use crate::transcript::{
+    Conversation, Entry, Record, content, context, first_text, prompt, said, tool_result,
+};
+
+/// User messages that Codex adds itself: the environment, instruction files,
+/// skill bodies, and the history it hands a reviewer.
+const INJECTED_PREFIXES: &[&str] = &[
+    "<environment_context>",
+    "<user_instructions>",
+    "<skill>",
+    "# AGENTS.md instructions",
+    "The following is the Codex agent history",
+];
 
 const HOOK_EVENTS: &[&str] = &[
     "SessionStart",
@@ -128,7 +140,12 @@ impl Messaging for Codex {
 }
 
 impl Transcript for Codex {
-    fn transcript(&self, ctx: &Context, hub: &dyn Hub, session: &ListedSession) -> Result<String> {
+    fn transcript(
+        &self,
+        ctx: &Context,
+        hub: &dyn Hub,
+        session: &ListedSession,
+    ) -> Result<Conversation> {
         log_transcript(self, ctx, hub, session)
     }
 
@@ -154,43 +171,56 @@ impl TranscriptLog for Codex {
                 == Some(session_id)
     }
 
-    fn parse(&self, row: &Value, limit: usize) -> Option<String> {
-        if row["type"] != "response_item" {
-            return None;
-        }
+    fn parse(&self, row: &Value) -> Option<Record> {
         let item = &row["payload"];
-        let mut output = String::new();
-        match item["type"].as_str()? {
-            "message" => {
-                let role = item["role"].as_str()?;
-                if !matches!(role, "user" | "assistant") {
-                    return None;
-                }
-                content(&mut output, role, &item["content"], limit);
+        let marker = |starts_turn, ends_turn| Record {
+            entries: Vec::new(),
+            starts_turn,
+            ends_turn,
+        };
+        match row["type"].as_str()? {
+            "event_msg" => match item["type"].as_str()? {
+                "task_started" => Some(marker(true, false)),
+                "task_complete" | "turn_aborted" => Some(marker(false, true)),
+                _ => None,
+            },
+            "response_item" => {
+                let entries = match item["type"].as_str()? {
+                    "message" => match item["role"].as_str()? {
+                        "user" => {
+                            let text = first_text(&item["content"]);
+                            let injected = INJECTED_PREFIXES
+                                .iter()
+                                .any(|prefix| text.starts_with(prefix));
+                            content(&item["content"], if injected { context } else { prompt })
+                        }
+                        "assistant" => content(&item["content"], said),
+                        _ => return None,
+                    },
+                    "function_call" | "custom_tool_call" => vec![Entry::ToolCall {
+                        name: item["name"].as_str().unwrap_or("call").to_string(),
+                        input: item["arguments"]
+                            .as_str()
+                            .or_else(|| item["input"].as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                    }],
+                    "function_call_output" | "custom_tool_call_output" => {
+                        tool_result(&item["output"])
+                    }
+                    _ => return None,
+                };
+                let starts_turn = entries
+                    .iter()
+                    .any(|entry| matches!(entry, Entry::Prompt { .. }));
+                Some(Record {
+                    entries,
+                    starts_turn,
+                    ends_turn: false,
+                })
             }
-            "function_call" | "custom_tool_call" => {
-                append(
-                    &mut output,
-                    "Tool",
-                    item["name"].as_str().unwrap_or("call"),
-                    limit,
-                );
-                append(
-                    &mut output,
-                    "Input",
-                    item["arguments"]
-                        .as_str()
-                        .or_else(|| item["input"].as_str())
-                        .unwrap_or(""),
-                    limit,
-                );
-            }
-            "function_call_output" | "custom_tool_call_output" => {
-                tool_result(&mut output, &item["output"], limit);
-            }
-            _ => return None,
+            _ => None,
         }
-        Some(output)
     }
 }
 

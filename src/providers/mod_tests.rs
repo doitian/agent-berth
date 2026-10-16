@@ -245,7 +245,7 @@ impl Hub for Failing {
         anyhow::bail!("hub cannot send")
     }
 
-    fn transcript(&self, _session: &ListedSession) -> Result<String> {
+    fn transcript(&self, _session: &ListedSession) -> Result<Conversation> {
         anyhow::bail!("hub has no transcript")
     }
 
@@ -292,6 +292,12 @@ fn hub_transcript_fallback_reports_both_failures() {
     let session = listed("cli");
     let error = or_hub_transcript(Err(anyhow::anyhow!("log missing")), &hub, &session).unwrap_err();
     assert_eq!(error.to_string(), "log missing; hub has no transcript");
-    let text = or_hub_transcript(Ok("log".into()), &hub, &session).unwrap();
-    assert_eq!(text, "log");
+    let log = Conversation::Text {
+        text: "log".into(),
+        origin: "test".into(),
+    };
+    assert_eq!(
+        or_hub_transcript(Ok(log.clone()), &hub, &session).unwrap(),
+        log
+    );
 }

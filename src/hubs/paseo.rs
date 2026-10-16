@@ -12,7 +12,7 @@ use super::{Hub, Preview};
 use crate::paths::Context;
 use crate::status::string_field;
 use crate::store::ListedSession;
-use crate::transcript::Feed;
+use crate::transcript::{Conversation, Feed};
 
 mod api;
 mod desktop;
@@ -49,7 +49,7 @@ impl Hub for Paseo {
         )
     }
 
-    fn transcript(&self, _session: &ListedSession) -> Result<String> {
+    fn transcript(&self, _session: &ListedSession) -> Result<Conversation> {
         bail!("Paseo sessions have no transcript to export")
     }
 

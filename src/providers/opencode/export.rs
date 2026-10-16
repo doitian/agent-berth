@@ -6,6 +6,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use anyhow::{Context, Result, bail};
 use serde_json::Value;
 
+use crate::transcript::{Conversation, Entry, Record, turns};
+
 /// Full session JSON from OpenCode's own CLI. OpenCode keeps sessions in a
 /// service-owned database rather than a log file, so `session export` is its
 /// only stable, plain-text transcript source.
@@ -13,7 +15,7 @@ use serde_json::Value;
 /// The export is captured through a file, not a pipe: OpenCode's CLI exits
 /// before its stdout pipe drains, which truncates large sessions, while a file
 /// redirect is complete.
-pub(super) fn export(session_id: &str) -> Result<String> {
+pub(super) fn export(session_id: &str) -> Result<Conversation> {
     let binary =
         crate::paths::find_executable("opencode").unwrap_or_else(|| PathBuf::from("opencode"));
     let path = export_path();
@@ -21,7 +23,7 @@ pub(super) fn export(session_id: &str) -> Result<String> {
         let bytes = std::fs::read(&path).with_context(|| format!("read {}", path.display()))?;
         let export: Value =
             serde_json::from_slice(&bytes).context("parse opencode session export")?;
-        Ok(render(&export))
+        Ok(conversation(&export))
     });
     let _ = std::fs::remove_file(&path);
     result
@@ -63,53 +65,70 @@ fn export_path() -> PathBuf {
     ))
 }
 
-/// Render OpenCode's exported messages with the same labels as the file
-/// transcripts, skipping reasoning and system records.
-fn render(export: &Value) -> String {
+/// OpenCode's exported messages as transcript records, skipping reasoning and
+/// system records. Each user message opens a turn, and `idle` closes it.
+fn records(export: &Value) -> Vec<Record> {
     let Some(messages) = export["messages"].as_array() else {
-        return String::new();
+        return Vec::new();
     };
-    let mut entries: Vec<String> = Vec::new();
+    let mut records = Vec::new();
     for message in messages {
-        let mut entry = String::new();
         match message["type"].as_str() {
-            Some("user") => {
-                if let Some(text) = message["text"].as_str() {
-                    push_line(&mut entry, "You", text);
-                }
-            }
+            Some("user") => records.push(Record {
+                entries: message["text"]
+                    .as_str()
+                    .map(|text| Entry::Prompt { text: text.into() })
+                    .into_iter()
+                    .collect(),
+                starts_turn: true,
+                ends_turn: false,
+            }),
             Some("assistant") => {
                 let Some(parts) = message["content"].as_array() else {
                     continue;
                 };
+                let mut entries = Vec::new();
                 for part in parts {
                     match part["type"].as_str() {
                         Some("text") => {
                             if let Some(text) = part["text"].as_str() {
-                                push_line(&mut entry, "Assistant", text);
+                                entries.push(Entry::Text { text: text.into() });
                             }
                         }
                         Some("tool") => {
-                            push_line(&mut entry, "Tool", part["name"].as_str().unwrap_or("call"));
                             let state = &part["state"];
-                            if !state["input"].is_null() {
-                                push_line(&mut entry, "Input", &state["input"].to_string());
-                            }
-                            if let Some(result) = tool_result(state) {
-                                push_line(&mut entry, "Result", &result);
+                            entries.push(Entry::ToolCall {
+                                name: part["name"].as_str().unwrap_or("call").into(),
+                                input: if state["input"].is_null() {
+                                    String::new()
+                                } else {
+                                    state["input"].to_string()
+                                },
+                            });
+                            if let Some(text) = tool_result(state) {
+                                entries.push(Entry::ToolResult { text });
                             }
                         }
                         _ => {}
                     }
                 }
+                records.push(Record {
+                    entries,
+                    ..Record::default()
+                });
             }
-            _ => continue,
-        }
-        if !entry.is_empty() {
-            entries.push(entry);
+            Some("idle") => records.push(Record {
+                ends_turn: true,
+                ..Record::default()
+            }),
+            _ => {}
         }
     }
-    entries.join("\n\n")
+    records
+}
+
+fn conversation(export: &Value) -> Conversation {
+    Conversation::Turns(turns(records(export)))
 }
 
 fn tool_result(state: &Value) -> Option<String> {
@@ -123,21 +142,6 @@ fn tool_result(state: &Value) -> Option<String> {
         .collect::<Vec<_>>()
         .join("\n");
     (!text.is_empty()).then_some(text)
-}
-
-fn push_line(entry: &mut String, label: &str, text: &str) {
-    if text.is_empty() {
-        return;
-    }
-    if !entry.is_empty() {
-        entry.push('\n');
-    }
-    entry.push_str(label);
-    entry.push_str(": ");
-    entry.extend(
-        text.chars()
-            .filter(|c| !c.is_control() || matches!(c, '\n' | '\t')),
-    );
 }
 
 #[cfg(test)]
