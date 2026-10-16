@@ -2,6 +2,32 @@
 
 All notable changes to this project are documented in this file.
 
+## [3.2.0](https://github.com/doitian/agent-berth/releases/tag/v3.2.0) - 2026-10-16
+
+### Added
+
+- Add stable session IDs for attach, resume, and rm ([1181199](https://github.com/doitian/agent-berth/commit/11811991466f025ad962377d8db5e87e82193095))
+- Add logs command to print full session transcripts ([2fcdbbd](https://github.com/doitian/agent-berth/commit/2fcdbbdc46f90bec1009b508fb46832952ceb1bd))
+- Add send command to message a session ([5c1da2a](https://github.com/doitian/agent-berth/commit/5c1da2a52c28437b1ecd64e4f85277cb91da9b5d))
+- Add tmux pane to session JSON output ([fa0c17f](https://github.com/doitian/agent-berth/commit/fa0c17f1d90b2bb2eba1aff220525e84618f8d99))
+- Add new command to start an agent in tmux ([55c0570](https://github.com/doitian/agent-berth/commit/55c057083846859396b35c4895d00a9eb793c1c5))
+- Add tmux pane filter to search ([644f3a3](https://github.com/doitian/agent-berth/commit/644f3a321dc65fce27a2ba310757fad80d5802aa))
+- Add agent-berth skill to delegate work to agents ([46e2bae](https://github.com/doitian/agent-berth/commit/46e2bae0aec93860b75642b752930f6af9984eed))
+- Add --final, --turns and --tools to logs ([c9a1ca6](https://github.com/doitian/agent-berth/commit/c9a1ca62710726c0d6a21584997e435d66ba003f))
+- Add self command to print the current session id ([bc500c9](https://github.com/doitian/agent-berth/commit/bc500c991c60eb7f3040cd5975322e7f65eb3a7c))
+
+### Changed
+
+- Refactor providers and hubs into feature traits ([df0b1c8](https://github.com/doitian/agent-berth/commit/df0b1c860bbdbf3df8a1f981e3dc439b12e0a754))
+- Make new print the tmux pane id ([d22dc98](https://github.com/doitian/agent-berth/commit/d22dc988ced7ffa388e68b5d5876a410e21e0cc1))
+- Refactor transcripts into structured turns ([f7e4ab1](https://github.com/doitian/agent-berth/commit/f7e4ab1fe13cf72eb0b72f0e70a44561becbef62))
+
+### Fixed
+
+- Fix include closed CLI sessions in resumable idle windows ([0bb883e](https://github.com/doitian/agent-berth/commit/0bb883e8a8bdad333f1a1e2e97e9e7bd2c5dc6bb))
+- Fix pane matching for closed tabs and ended sessions ([bab10f8](https://github.com/doitian/agent-berth/commit/bab10f825890131c29eaebab499abb883a5d96a3))
+- Fix new and resume to forward agent-berth overrides ([31fe9f7](https://github.com/doitian/agent-berth/commit/31fe9f78d1b9c77e49ae04f71948e5fc7e06dbc0))
+
 ## [3.1.1](https://github.com/doitian/agent-berth/releases/tag/v3.1.1) - 2026-10-05
 
 ### Changed
