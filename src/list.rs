@@ -3,8 +3,10 @@ use std::io::{self, Write};
 use anyhow::Result;
 
 use crate::db;
+use crate::hubs::tmux::running_pane;
 use crate::paths::{self, Context};
 use crate::store::ListedSession;
+use crate::tmux::{self, Pane};
 
 pub fn run(
     ctx: &Context,
@@ -33,20 +35,41 @@ pub fn run(
     Ok(())
 }
 
-/// Serialize sessions with their stable IDs, which are computed rather than
-/// stored and so are not part of `ListedSession` itself.
+/// Serialize sessions with their stable IDs and the tmux panes they run in,
+/// which are computed rather than stored and so are not part of
+/// `ListedSession` itself.
 pub(crate) fn to_json(sessions: &[ListedSession]) -> Result<String> {
-    let values: Vec<serde_json::Value> = sessions
+    // Without tmux no session has a pane, so the field is simply omitted.
+    let panes = if tmux::available() {
+        tmux::list_panes(true).unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    Ok(serde_json::to_string_pretty(&json_values(
+        sessions,
+        &panes,
+        std::process::id(),
+    )?)?)
+}
+
+fn json_values(
+    sessions: &[ListedSession],
+    panes: &[Pane],
+    me: u32,
+) -> Result<Vec<serde_json::Value>> {
+    sessions
         .iter()
         .map(|session| {
             let mut value = serde_json::to_value(session)?;
             if let Some(map) = value.as_object_mut() {
                 map.insert("id".into(), session.id().into());
+                if let Some(pane) = running_pane(session, panes, me) {
+                    map.insert("tmux_pane".into(), serde_json::to_value(pane)?);
+                }
             }
             Ok(value)
         })
-        .collect::<Result<_>>()?;
-    Ok(serde_json::to_string_pretty(&values)?)
+        .collect()
 }
 
 pub(crate) fn print_table(sessions: &[ListedSession], created: bool) -> Result<()> {
@@ -133,3 +156,7 @@ pub(crate) fn ago_label(last_report_ms: u64) -> String {
         format!("{}d", secs / 86400)
     }
 }
+
+#[cfg(test)]
+#[path = "list_tests.rs"]
+mod tests;

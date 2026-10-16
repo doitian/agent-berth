@@ -1120,6 +1120,27 @@ fn claude_pane_session(sandbox: &mut Sandbox) -> (std::process::Child, String) {
 }
 
 #[test]
+fn list_json_includes_the_tmux_pane_a_session_runs_in() {
+    let mut sandbox = Sandbox::new();
+    sandbox.start();
+    let (mut agent, id) = claude_pane_session(&mut sandbox);
+    sandbox.hook("claude", "nowhere", "UserPromptSubmit", None);
+    let output = success(sandbox.berth().args(["list", "--json"]));
+    let sessions: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap();
+    let in_pane = sessions.iter().find(|session| session["id"] == id).unwrap();
+    assert_eq!(in_pane["tmux_pane"]["id"], "%7", "{in_pane}");
+    assert_eq!(in_pane["tmux_pane"]["session"], "project");
+    assert_eq!(in_pane["tmux_pane"]["window"], "0");
+    let elsewhere = sessions
+        .iter()
+        .find(|session| session["session_id"] == "nowhere")
+        .unwrap();
+    assert!(elsewhere.get("tmux_pane").is_none(), "{elsewhere}");
+    let _ = agent.kill();
+    let _ = agent.wait();
+}
+
+#[test]
 fn send_types_into_the_agent_tmux_pane() {
     let mut sandbox = Sandbox::new();
     sandbox.start();
@@ -1171,6 +1192,13 @@ fn send_rejects_a_session_without_a_command_or_pane() {
     sandbox.start();
     sandbox.hook("claude", "nowhere", "UserPromptSubmit", None);
     let id = stable_id(&sandbox, "claude", "nowhere");
+    // `list --json` looks up tmux panes; only `send` itself must not call tmux.
+    for path in fs::read_dir(sandbox.root.path().join("tmux-log")).unwrap() {
+        let path = path.unwrap().path();
+        if path.extension().is_some_and(|ext| ext == "txt") {
+            fs::remove_file(path).unwrap();
+        }
+    }
     let output = sandbox
         .berth()
         .args(["send", &id, "hello"])
@@ -1701,9 +1729,11 @@ fn recording_hook_forwards_payload_and_observes_session() {
         .unwrap();
     serde_json::to_writer(child.stdin.take().unwrap(), &payload).unwrap();
     assert!(support::finish(child).status.success());
+    // The recorder's `list --json` also logs its tmux pane lookup here.
     let records: Vec<_> = fs::read_dir(sandbox.root.path().join("tmux-log"))
         .unwrap()
         .map(|entry| entry.unwrap().path())
+        .filter(|path| path.extension().is_none_or(|ext| ext != "txt"))
         .collect();
     assert_eq!(records.len(), 2);
     let recorded = fs::read(

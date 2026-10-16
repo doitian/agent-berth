@@ -5,6 +5,7 @@ use std::thread;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
+use serde::Serialize;
 
 const DEFAULT_CONFIG: &str = ".tmux-up.conf";
 
@@ -186,7 +187,7 @@ fn client_attached() -> bool {
 
 const PANE_FORMAT: &str = "#{pane_id}\t#{pane_pid}\t#{session_name}\t#{window_index}\t#{window_name}\t#{pane_current_path}";
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Pane {
     pub id: String,
     pub pid: u32,

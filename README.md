@@ -211,6 +211,12 @@ and native session ID, so it survives restarts and database rebuilds. Commands
 that take patterns (`attach`, `resume`, `rm`, `search`, `logs`) also match the ID; for
 example, `agent-berth attach <id>` focuses a pane without opening the picker.
 
+Sessions running in a tmux pane also carry `tmux_pane` in `list --json` and
+`search --json`: the pane `id` (such as `%7`), its tmux `session`, `window`
+index, `window_name`, current `path`, and `pid`. The field is omitted for
+sessions outside tmux, such as desktop and Paseo sessions or ones whose
+process has ended.
+
 ### Transcripts
 
 `agent-berth logs <id>` prints a session's transcript, oldest message first.
