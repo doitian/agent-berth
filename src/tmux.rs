@@ -63,8 +63,9 @@ pub fn spawn_window(session: &str, name: &str, cwd: &Path, cmd: &[String]) -> Re
         "-t".into(),
         target,
     ];
+    args.extend(passthrough_env());
     args.extend(window_command(name, cwd, cmd));
-    let pane_id = spawn(&args)?.context("tmux new-window failed for {name}")?;
+    let pane_id = spawn(&args)?.with_context(|| format!("tmux new-window failed for {name}"))?;
     Ok(pane_id)
 }
 

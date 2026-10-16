@@ -796,11 +796,17 @@ fn new_starts_the_command_in_a_window_of_the_directory_session() {
             .any(|log| log.ends_with(&format!("\nnew\n-d\n-c\n{project}\n-s\nproject"))),
         "{logs:?}"
     );
+    // AGENT_BERTH_* overrides reach the agent, so its hooks report to this
+    // sandbox's server rather than the tmux server's startup environment.
+    let window = format!(
+        "\n-t\n=project\n-e\nAGENT_BERTH_SOCK={}\n-e\nAGENT_BERTH_TMUX_CONFIG={}\n-e\nAGENT_BERTH_TMUX_SOCKET={}\n-n\nclaude\n-c\n{project}\n--\nclaude\n--model\nopus\n--help",
+        sandbox.endpoint,
+        sandbox.root.path().join("tmux.conf").display(),
+        sandbox.namespace,
+    );
     assert!(
-        logs.iter().any(|log| log.contains("new-window")
-            && log.ends_with(&format!(
-                "\n-t\n=project\n-n\nclaude\n-c\n{project}\n--\nclaude\n--model\nopus\n--help"
-            ))),
+        logs.iter()
+            .any(|log| log.contains("new-window") && log.ends_with(&window)),
         "{logs:?}"
     );
 }
