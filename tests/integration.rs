@@ -782,7 +782,9 @@ fn new_starts_the_command_in_a_window_of_the_directory_session() {
             .berth()
             .args(["new", "claude", "--model", "opus", "--help"]),
     );
-    let text = String::from_utf8_lossy(&output.stdout);
+    // The fixture's tmux reports `%1` for every new window.
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "%1\n");
+    let text = String::from_utf8_lossy(&output.stderr);
     assert!(
         text.contains("started claude --model opus --help in tmux project window claude"),
         "{text}"

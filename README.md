@@ -77,7 +77,7 @@ uses [fzf](https://github.com/junegunn/fzf).
 | `agent-berth search [patterns...] [--created-in DURATION] [--json]` | Search stored sessions across all providers, newest first |
 | `agent-berth logs <id> [--tail N]` | Print a session's full transcript; `--tail` limits it to the last N lines |
 | `agent-berth stats [--json]` | Aggregate active session counts by status and provider |
-| `agent-berth new <command> [args...]` | Start an agent in a new window of the current directory's tmux session, the one `resume` uses, creating it when missing; for example `agent-berth new claude --model opus` |
+| `agent-berth new <command> [args...]` | Start an agent in a new window of the current directory's tmux session, the one `resume` uses, creating it when missing, and print the new pane id; for example `agent-berth new claude --model opus` |
 | `agent-berth resume [pattern] [--idle 20m] [--here] [--dry-run]` | Resume sessions in tmux |
 | `agent-berth attach [query] [--preview] [--session] [--dry-run]` | Select an agent running in a tmux pane with fzf and attach to it; Paseo and desktop sessions are only reachable from the TUI |
 | `agent-berth send <id> "message"` | Send a message to a session through the agent's CLI, or into its tmux pane |
