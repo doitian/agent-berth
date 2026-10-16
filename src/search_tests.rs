@@ -107,3 +107,42 @@ fn stored_sessions_include_closed_tabs_but_not_explicit_removals() {
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].session_id, "closed");
 }
+
+fn in_pane(pid: u32, pane_pid: Option<u32>, front: bool) -> ListedSession {
+    let mut session: ListedSession = serde_json::from_value(serde_json::json!({
+        "provider":"opencode", "session_id":"s", "status":"running", "source":"cli",
+        "cwd":"/work", "cmdline":["opencode"], "pid":pid, "created_ms":1,
+        "last_report_ms":2, "kind":"plugin"
+    }))
+    .unwrap();
+    session.pane_pid = pane_pid;
+    session.front = front;
+    session
+}
+
+fn pane(id: &str, pid: u32) -> Pane {
+    Pane {
+        id: id.into(),
+        pid,
+        session: "dev".into(),
+        window: "0".into(),
+        window_name: "agent".into(),
+        path: "/work".into(),
+    }
+}
+
+#[test]
+fn tmux_pane_keeps_only_the_session_the_pane_shows() {
+    let me = std::process::id();
+    let panes = [pane("%1", me), pane("%2", 1)];
+    let shown = in_pane(me, None, false);
+    assert_eq!(showing(vec![shown.clone()], &panes, "%1", 0).len(), 1);
+    assert!(showing(vec![shown], &panes, "%2", 0).is_empty());
+
+    // A shared server hosts tabs from the pane; only the front one shows.
+    let front = in_pane(u32::MAX, Some(me), true);
+    let background = in_pane(u32::MAX, Some(me), false);
+    let kept = showing(vec![front, background], &panes, "%1", 0);
+    assert_eq!(kept.len(), 1);
+    assert!(kept[0].front);
+}

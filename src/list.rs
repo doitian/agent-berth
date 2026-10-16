@@ -45,9 +45,14 @@ pub(crate) fn to_json(sessions: &[ListedSession]) -> Result<String> {
     } else {
         Vec::new()
     };
+    to_json_with_panes(sessions, &panes)
+}
+
+/// Like [`to_json`], with tmux panes the caller already listed.
+pub(crate) fn to_json_with_panes(sessions: &[ListedSession], panes: &[Pane]) -> Result<String> {
     Ok(serde_json::to_string_pretty(&json_values(
         sessions,
-        &panes,
+        panes,
         std::process::id(),
     )?)?)
 }

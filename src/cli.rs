@@ -68,6 +68,10 @@ enum Command {
         /// Only include sessions created within this window (e.g. 3h, 2d)
         #[arg(long, value_name = "DURATION", value_parser = parse_duration)]
         created_in: Option<std::time::Duration>,
+        /// Only include the session this tmux pane shows now (e.g. %7, or
+        /// "$TMUX_PANE" for the current pane)
+        #[arg(long, value_name = "PANE_ID")]
+        tmux_pane: Option<String>,
         /// Print JSON
         #[arg(long)]
         json: bool,
@@ -202,8 +206,9 @@ pub fn run() -> Result<()> {
         Command::Search {
             patterns,
             created_in,
+            tmux_pane,
             json,
-        } => search::run(&ctx, &patterns, created_in, json),
+        } => search::run(&ctx, &patterns, created_in, tmux_pane.as_deref(), json),
         Command::Stats { json } => stats::run(&ctx, json),
         Command::Notify { provider } => notify::run(&ctx, provider),
         Command::Attach {

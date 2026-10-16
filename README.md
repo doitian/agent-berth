@@ -74,7 +74,7 @@ uses [fzf](https://github.com/junegunn/fzf).
 | `agent-berth service start\|stop\|restart` | Manage the background server |
 | `agent-berth server` | Run the server in the foreground |
 | `agent-berth list [--json] [--resumable [--idle 20m] [--here]]` | List sessions |
-| `agent-berth search [patterns...] [--created-in DURATION] [--json]` | Search stored sessions across all providers, newest first |
+| `agent-berth search [patterns...] [--created-in DURATION] [--tmux-pane PANE_ID] [--json]` | Search stored sessions across all providers, newest first; `--tmux-pane` keeps only the agent a tmux pane shows now |
 | `agent-berth logs <id> [--tail N]` | Print a session's full transcript; `--tail` limits it to the last N lines |
 | `agent-berth stats [--json]` | Aggregate active session counts by status and provider |
 | `agent-berth new <command> [args...]` | Start an agent in a new window of the current directory's tmux session, the one `resume` uses, creating it when missing, and print the new pane id; for example `agent-berth new claude --model opus` |
@@ -217,6 +217,17 @@ Sessions running in a tmux pane also carry `tmux_pane` in `list --json` and
 index, `window_name`, current `path`, and `pid`. The field is omitted for
 sessions outside tmux, such as desktop and Paseo sessions or ones whose
 process has ended.
+
+`search --tmux-pane <pane-id>` finds the agent a pane shows right now, such as
+the pane id printed by `new` or `"$TMUX_PANE"` inside a pane. It matches only
+the session the pane displays: an agent hosting several sessions in one pane
+matches its front tab. A freshly started agent appears once its first hook or
+plugin report arrives.
+
+```sh
+pane=$(agent-berth new claude)
+agent-berth search --tmux-pane "$pane" --json
+```
 
 ### Transcripts
 

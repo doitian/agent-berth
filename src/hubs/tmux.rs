@@ -138,10 +138,30 @@ impl Hub for Tmux {
 /// and a hook session whose process ended no longer runs in any pane, even
 /// one where another session of the same agent now runs.
 pub(crate) fn running_pane(session: &ListedSession, panes: &[Pane], me: u32) -> Option<Pane> {
+    live_session_pane(session, panes, me).map(|resolved| resolved.pane.clone())
+}
+
+/// Pane currently showing the session: it runs there, or is the front tab of
+/// the process hosting it. This is the pane `send` would type into.
+pub(crate) fn showing_pane<'a>(
+    session: &ListedSession,
+    panes: &'a [Pane],
+    me: u32,
+) -> Option<&'a Pane> {
+    live_session_pane(session, panes, me)
+        .filter(|resolved| resolved.own_content)
+        .map(|resolved| resolved.pane)
+}
+
+fn live_session_pane<'a>(
+    session: &ListedSession,
+    panes: &'a [Pane],
+    me: u32,
+) -> Option<SessionPane<'a>> {
     if session.kind == SessionKind::Hook && !session.pid.is_some_and(process::pid_alive) {
         return None;
     }
-    resolve_session_pane(panes, session, me).map(|resolved| resolved.pane.clone())
+    resolve_session_pane(panes, session, me)
 }
 
 fn pane_for_pid<'a>(panes: &'a [Pane], chain: &[u32]) -> Option<&'a Pane> {

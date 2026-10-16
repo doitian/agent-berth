@@ -1180,6 +1180,32 @@ fn list_json_includes_the_tmux_pane_a_session_runs_in() {
 }
 
 #[test]
+fn search_finds_the_agent_a_tmux_pane_shows() {
+    let mut sandbox = Sandbox::new();
+    sandbox.start();
+    let (mut agent, id) = claude_pane_session(&mut sandbox);
+    sandbox.hook("claude", "nowhere", "UserPromptSubmit", None);
+    let output = success(
+        sandbox
+            .berth()
+            .args(["search", "--tmux-pane", "%7", "--json"]),
+    );
+    let sessions: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(sessions.len(), 1, "{sessions:?}");
+    assert_eq!(sessions[0]["id"], id);
+    assert_eq!(sessions[0]["tmux_pane"]["id"], "%7");
+    let output = success(
+        sandbox
+            .berth()
+            .args(["search", "--tmux-pane", "%8", "--json"]),
+    );
+    let sessions: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(sessions.is_empty(), "{sessions:?}");
+    let _ = agent.kill();
+    let _ = agent.wait();
+}
+
+#[test]
 fn send_types_into_the_agent_tmux_pane() {
     let mut sandbox = Sandbox::new();
     sandbox.start();
