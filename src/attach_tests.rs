@@ -25,6 +25,9 @@ fn listed(cwd: Option<&str>, title: Option<&str>) -> ListedSession {
         front: false,
         tabbed: false,
         memo: None,
+        turns_started: 0,
+        turns_ended: 0,
+        delegator: None,
     }
 }
 

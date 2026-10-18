@@ -71,6 +71,13 @@ impl Provider for Claude {
         vec!["claude".into(), "--resume".into(), session_id.into()]
     }
 
+    /// Subagents inherit this from their parent, so `self` inside one names
+    /// the parent session rather than the `<session>:<agent>` key its hooks
+    /// report.
+    fn session_env(&self) -> Option<&'static str> {
+        Some("CLAUDE_CODE_SESSION_ID")
+    }
+
     fn hooks(&self) -> Option<&dyn HookEvents> {
         Some(self)
     }
@@ -584,10 +591,10 @@ pub fn apply_agents(
                     && existing.status == AgentStatus::Running
                     && observed_ms > existing.last_report_ms
                 {
-                    existing.status = AgentStatus::Done;
+                    existing.observe(AgentStatus::Done);
                     existing.background_only = false;
                 } else if status != AgentStatus::Idle && existing.status == AgentStatus::Idle {
-                    existing.status = status;
+                    existing.observe(status);
                 }
                 if desktop {
                     existing.source = Source::Desktop;
@@ -606,7 +613,7 @@ pub fn apply_agents(
             created_ms: crate::store::now_ms(),
             ..AgentSession::default()
         });
-        item.status = status;
+        item.observe(status);
         if pid.is_some() {
             item.pid = pid;
         }

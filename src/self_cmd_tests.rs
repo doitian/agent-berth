@@ -21,10 +21,26 @@ fn env_identity_uses_the_provider_session_variable() {
 }
 
 #[test]
+fn env_identity_reads_claude_code_session_id() {
+    let this = from_env(env_of(&[(
+        "CLAUDE_CODE_SESSION_ID",
+        "83844ac0-e963-46b0-9c67-c1b43aacd29c",
+    )]))
+    .unwrap();
+    assert_eq!(this.provider, "claude");
+    assert_eq!(this.session_id, "83844ac0-e963-46b0-9c67-c1b43aacd29c");
+    assert_eq!(
+        providers::lookup("claude").unwrap().session_env(),
+        Some("CLAUDE_CODE_SESSION_ID")
+    );
+}
+
+#[test]
 fn env_identity_ignores_missing_and_empty_variables() {
     assert!(from_env(env_of(&[])).is_none());
     assert!(from_env(env_of(&[("TMUX_PANE", "%7")])).is_none());
     assert!(from_env(env_of(&[("PI_SESSION_ID", "")])).is_none());
+    assert!(from_env(env_of(&[("CLAUDE_CODE_SESSION_ID", "")])).is_none());
 }
 
 fn session(provider: &str, id: &str, pid: u32, created_ms: u64) -> ListedSession {

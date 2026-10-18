@@ -173,6 +173,10 @@ fn is_central_worktrees(components: &[&str], wt: usize, home: Option<&Path>) -> 
         && components[home_components.len()].starts_with('.')
 }
 
+/// Environment variable `new` sets in an agent's window to the stable id of
+/// the session that started it, which hooks and plugins report back.
+pub const DELEGATOR_ENV: &str = "AGENT_BERTH_DELEGATOR";
+
 pub fn env_path(key: &str) -> Option<PathBuf> {
     env::var_os(key)
         .filter(|v| !v.is_empty())

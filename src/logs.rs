@@ -44,7 +44,7 @@ struct Output {
 
 pub fn run(ctx: &AppContext, selector: &str, options: Options) -> Result<()> {
     let sessions = db::query_stored(ctx)?;
-    let Some(session) = pick::single(&sessions, selector)? else {
+    let Some(session) = pick::single_by_id(&sessions, selector)? else {
         return Ok(());
     };
     let conversation = transcript_for(ctx, &session)?;

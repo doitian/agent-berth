@@ -9,18 +9,21 @@ use crate::store::{ListedSession, display_id};
 use crate::tmux::{self, Pane};
 use crate::{db, list, providers};
 
-struct SelfSession {
-    provider: String,
-    session_id: String,
+pub(crate) struct Identity {
+    pub provider: String,
+    pub session_id: String,
+}
+
+impl Identity {
+    pub fn id(&self) -> String {
+        display_id(&self.provider, &self.session_id)
+    }
 }
 
 pub fn run(ctx: &Context, json: bool) -> Result<()> {
-    let this = match from_env(env_value) {
-        Some(this) => this,
-        None => from_current_pane(ctx)?,
-    };
+    let this = resolve(ctx)?;
     if !json {
-        println!("{}", display_id(&this.provider, &this.session_id));
+        println!("{}", this.id());
         return Ok(());
     }
     let sessions = db::query_stored(ctx)?;
@@ -42,16 +45,30 @@ pub fn run(ctx: &Context, json: bool) -> Result<()> {
     Ok(())
 }
 
+/// The agent running this command, or why none can be named.
+fn resolve(ctx: &Context) -> Result<Identity> {
+    match from_env(env_value) {
+        Some(this) => Ok(this),
+        None => from_current_pane(ctx),
+    }
+}
+
+/// The agent running this command, for callers that also work without one,
+/// such as a human in a shell pane.
+pub(crate) fn identity(ctx: &Context) -> Option<Identity> {
+    resolve(ctx).ok()
+}
+
 fn env_value(name: &str) -> Option<String> {
     std::env::var(name).ok().filter(|value| !value.is_empty())
 }
 
 /// Provider and native session id when the agent exposes them to its shell
 /// tool, such as Pi's `PI_SESSION_ID`.
-fn from_env(get: impl Fn(&str) -> Option<String>) -> Option<SelfSession> {
+fn from_env(get: impl Fn(&str) -> Option<String>) -> Option<Identity> {
     providers::all().iter().find_map(|provider| {
         let session_id = get(provider.session_env()?).filter(|id| !id.is_empty())?;
-        Some(SelfSession {
+        Some(Identity {
             provider: provider.name().to_string(),
             session_id,
         })
@@ -59,7 +76,7 @@ fn from_env(get: impl Fn(&str) -> Option<String>) -> Option<SelfSession> {
 }
 
 /// Identity of the session the current tmux pane shows right now.
-fn from_current_pane(ctx: &Context) -> Result<SelfSession> {
+fn from_current_pane(ctx: &Context) -> Result<Identity> {
     let pane_id = env_value("TMUX_PANE").context(
         "not inside a known agent session: no provider session id in the environment and $TMUX_PANE is unset",
     )?;
@@ -76,7 +93,7 @@ fn from_current_pane(ctx: &Context) -> Result<SelfSession> {
 }
 
 /// Sessions the pane shows now, newest first, as provider/id pairs.
-fn in_pane(sessions: &[ListedSession], panes: &[Pane], pane_id: &str) -> Vec<SelfSession> {
+pub(crate) fn in_pane(sessions: &[ListedSession], panes: &[Pane], pane_id: &str) -> Vec<Identity> {
     let me = std::process::id();
     let mut showing: Vec<&ListedSession> = sessions
         .iter()
@@ -85,7 +102,7 @@ fn in_pane(sessions: &[ListedSession], panes: &[Pane], pane_id: &str) -> Vec<Sel
     showing.sort_by_key(|a| std::cmp::Reverse(a.created_ms));
     showing
         .into_iter()
-        .map(|session| SelfSession {
+        .map(|session| Identity {
             provider: session.provider.clone(),
             session_id: session.session_id.clone(),
         })

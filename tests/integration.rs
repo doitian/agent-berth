@@ -882,6 +882,275 @@ fn new_starts_the_command_in_a_window_of_the_directory_session() {
 }
 
 #[test]
+fn new_wait_prints_the_session_id_once_the_agent_reports() {
+    let mut sandbox = Sandbox::new();
+    sandbox.start();
+    let mut agent = sandbox.command(sandbox.fixture_agent()).spawn().unwrap();
+    let pid = agent.id();
+    // The fixture's tmux reports `%1` for the new window and lists it as
+    // running the live agent process.
+    sandbox.env.insert(
+        "FIXTURE_TMUX_PANES".into(),
+        format!(
+            "%1\t{pid}\tproject\t0\tclaude\t{}",
+            sandbox.project().display()
+        )
+        .into(),
+    );
+    let child = sandbox
+        .berth()
+        .args(["new", "--wait", "--timeout", "10s", "claude"])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    sandbox.notify(
+        "claude",
+        json!({
+            "session_id": "fresh", "hook_event_name": "UserPromptSubmit",
+            "pid": pid, "cwd": sandbox.project(),
+        }),
+    );
+    let output = support::finish(child);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{stderr}");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        stable_id(&sandbox, "claude", "fresh")
+    );
+    assert!(
+        stderr.contains("started claude in tmux project window claude (pane %1)"),
+        "{stderr}"
+    );
+    let _ = agent.kill();
+    let _ = agent.wait();
+}
+
+#[test]
+fn new_wait_fails_when_the_pane_closes_and_times_out_without_a_report() {
+    let mut sandbox = Sandbox::new();
+    sandbox.start();
+    // No pane list at all: the window is gone before any report.
+    let output = sandbox
+        .berth()
+        .args(["new", "--wait", "claude"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("exited before reporting"), "{stderr}");
+    assert!(output.stdout.is_empty());
+
+    sandbox.env.insert(
+        "FIXTURE_TMUX_PANES".into(),
+        format!(
+            "%1\t{}\tproject\t0\tclaude\t{}",
+            std::process::id(),
+            sandbox.project().display()
+        )
+        .into(),
+    );
+    let output = sandbox
+        .berth()
+        .args(["new", "--wait", "--timeout", "1s", "claude"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(4));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("has not reported within 1s"), "{stderr}");
+    assert!(output.stdout.is_empty());
+}
+
+#[test]
+fn new_names_the_delegator_in_the_window_environment() {
+    let mut sandbox = Sandbox::new();
+    let log = sandbox.root.path().join("tmux-log");
+    let window_env = |sandbox: &Sandbox, args: &[&str]| {
+        success(sandbox.berth().arg("new").args(args).arg("claude"));
+        let logs = recorded(&log, "txt");
+        let window = logs
+            .iter()
+            .find(|log| log.contains("new-window"))
+            .cloned()
+            .unwrap_or_default();
+        for path in fs::read_dir(&log).unwrap() {
+            fs::remove_file(path.unwrap().path()).unwrap();
+        }
+        window
+    };
+    // A caller that is not a tracked agent names no delegator.
+    assert!(!window_env(&sandbox, &[]).contains("AGENT_BERTH_DELEGATOR"));
+    // One that is names itself, unless told otherwise.
+    sandbox
+        .env
+        .insert("CLAUDE_CODE_SESSION_ID".into(), "orchestrator".into());
+    let own = agent_berth_id("claude", "orchestrator");
+    assert!(
+        window_env(&sandbox, &[]).contains(&format!("\n-e\nAGENT_BERTH_DELEGATOR={own}\n-n\n"))
+    );
+    assert!(
+        window_env(&sandbox, &["--delegator", "boss12"])
+            .contains("\n-e\nAGENT_BERTH_DELEGATOR=boss12\n-n\n")
+    );
+    assert!(!window_env(&sandbox, &["--no-delegator"]).contains("AGENT_BERTH_DELEGATOR"));
+    // The caller's own delegator is not forwarded as an override.
+    sandbox
+        .env
+        .insert("AGENT_BERTH_DELEGATOR".into(), "grand1".into());
+    let window = window_env(&sandbox, &[]);
+    assert!(!window.contains("grand1"), "{window}");
+    assert!(window.contains(&format!("AGENT_BERTH_DELEGATOR={own}")));
+}
+
+/// The stable id agent-berth derives for a provider's native session id,
+/// read back from the binary so the test does not reimplement the hash.
+fn agent_berth_id(provider: &str, session_id: &str) -> String {
+    let mut store = agent_berth::Store::default();
+    store
+        .update(
+            provider,
+            json!({"session_id": session_id, "hook_event_name": "UserPromptSubmit"}),
+        )
+        .unwrap();
+    store.listed().remove(0).id()
+}
+
+#[test]
+fn delegators_are_captured_from_reports_and_searchable() {
+    let mut sandbox = Sandbox::new();
+    sandbox.start();
+    let pid = Some(std::process::id());
+    sandbox
+        .env
+        .insert("AGENT_BERTH_DELEGATOR".into(), "boss12".into());
+    sandbox.hook("codex", "child", "UserPromptSubmit", pid);
+    sandbox.notify(
+        "pi",
+        json!({"id": "pi-reporter", "status": {"pi-child": "busy"}}),
+    );
+    sandbox.env.remove(OsStr::new("AGENT_BERTH_DELEGATOR"));
+    // A report without the variable keeps the stored delegator.
+    sandbox.hook("codex", "child", "Stop", pid);
+    // Another process, or a new prompt from the same one would prune the
+    // finished session.
+    sandbox.hook("codex", "solo", "UserPromptSubmit", None);
+    for restart in [false, true] {
+        if restart {
+            sandbox.stop();
+            sandbox.start();
+            // The plugin keeps heartbeating without the variable.
+            sandbox.notify(
+                "pi",
+                json!({"id": "pi-reporter", "status": {"pi-child": "idle"}}),
+            );
+        }
+        let sessions = sandbox.sessions(false);
+        let delegator = |sid: &str| {
+            sessions
+                .iter()
+                .find(|session| session["session_id"] == sid)
+                .map(|session| session["delegator"].clone())
+                .unwrap_or_else(|| panic!("no session {sid} in {sessions:?}"))
+        };
+        assert_eq!(delegator("child"), "boss12");
+        assert_eq!(delegator("pi-child"), "boss12");
+        assert!(delegator("solo").is_null());
+        let output =
+            success(
+                sandbox
+                    .berth()
+                    .args(["search", "--delegated-by", "boss12", "--json"]),
+            );
+        let found: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap();
+        let mut ids: Vec<&str> = found
+            .iter()
+            .map(|session| session["session_id"].as_str().unwrap())
+            .collect();
+        ids.sort_unstable();
+        assert_eq!(ids, ["child", "pi-child"]);
+        let output = success(sandbox.berth().args(["search", "boss12", "--json"]));
+        let found: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(found.len(), 2, "{found:?}");
+        let output =
+            success(
+                sandbox
+                    .berth()
+                    .args(["search", "--delegated-by", "other1", "--json"]),
+            );
+        assert_eq!(
+            serde_json::from_slice::<Value>(&output.stdout).unwrap(),
+            json!([])
+        );
+    }
+}
+
+#[test]
+fn reply_reaches_the_delegator_and_agents_sign_their_messages() {
+    let mut sandbox = Sandbox::new();
+    sandbox.start();
+    let log = sandbox.root.path().join("tmux-log");
+    sandbox.hook("codex", "boss", "UserPromptSubmit", None);
+    let boss = stable_id(&sandbox, "codex", "boss");
+    sandbox
+        .env
+        .insert("AGENT_BERTH_DELEGATOR".into(), boss.clone().into());
+    sandbox.hook(
+        "claude",
+        "child",
+        "UserPromptSubmit",
+        Some(std::process::id()),
+    );
+    sandbox
+        .env
+        .insert("CLAUDE_CODE_SESSION_ID".into(), "child".into());
+    let child = stable_id(&sandbox, "claude", "child");
+
+    // The environment names the delegator, and the sender signs the message.
+    let output = success(sandbox.berth().args(["reply", "done"]));
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        "sent to codex boss (turns_ended 0)"
+    );
+    assert_eq!(
+        recorded(&log, "send"),
+        vec![format!(
+            "codex\nqueue\n--thread\nboss\n--message\n[agent-berth message from {child} (claude)]\n\ndone"
+        )]
+    );
+
+    // Without the variable, the caller's own session names the delegator.
+    sandbox.env.remove(OsStr::new("AGENT_BERTH_DELEGATOR"));
+    success(sandbox.berth().args(["reply", "--raw", "again"]));
+    let logs = recorded(&log, "send");
+    assert!(
+        logs.contains(&"codex\nqueue\n--thread\nboss\n--message\nagain".to_string()),
+        "{logs:?}"
+    );
+
+    // Plain `send` from an agent is signed too; `--raw` leaves it bare.
+    success(sandbox.berth().args(["send", "--raw", &boss, "bare"]));
+    success(sandbox.berth().args(["send", &boss, "signed"]));
+    let logs = recorded(&log, "send");
+    assert!(
+        logs.contains(&"codex\nqueue\n--thread\nboss\n--message\nbare".to_string()),
+        "{logs:?}"
+    );
+    assert!(
+        logs.iter().any(|entry| entry.ends_with(&format!(
+            "[agent-berth message from {child} (claude)]\n\nsigned"
+        ))),
+        "{logs:?}"
+    );
+
+    // A caller with no identity has no delegator to reply to.
+    sandbox.env.remove(OsStr::new("CLAUDE_CODE_SESSION_ID"));
+    let output = sandbox.berth().args(["reply", "lost"]).output().unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("no delegator"), "{stderr}");
+}
+
+#[test]
 fn new_requires_a_command() {
     let sandbox = Sandbox::new();
     let output = sandbox.berth().arg("new").output().unwrap();
@@ -1307,6 +1576,47 @@ fn send_types_into_the_agent_tmux_pane() {
 }
 
 #[test]
+fn stop_kills_the_pane_showing_the_session() {
+    let mut sandbox = Sandbox::new();
+    sandbox.start();
+    let (mut agent, id) = claude_pane_session(&mut sandbox);
+    let log = sandbox.root.path().join("tmux-log");
+    let output = success(sandbox.berth().args(["stop", "--dry-run", &id]));
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        format!("would kill tmux pane %7 showing claude {id}")
+    );
+    assert!(
+        !recorded(&log, "txt")
+            .iter()
+            .any(|log| log.contains("kill-pane"))
+    );
+    let output = success(sandbox.berth().args(["stop", &id]));
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        format!("killed tmux pane %7 showing claude {id}")
+    );
+    assert!(
+        recorded(&log, "txt")
+            .iter()
+            .any(|log| log.ends_with("kill-pane\n-t\n%7")),
+        "{:?}",
+        recorded(&log, "txt")
+    );
+    sandbox.hook("claude", "nowhere", "UserPromptSubmit", None);
+    let nowhere = stable_id(&sandbox, "claude", "nowhere");
+    let output = sandbox.berth().args(["stop", &nowhere]).output().unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("is not showing in any tmux pane"),
+        "{stderr}"
+    );
+    let _ = agent.kill();
+    let _ = agent.wait();
+}
+
+#[test]
 fn send_types_hyphen_text_literally_and_drops_trailing_newlines() {
     let mut sandbox = Sandbox::new();
     sandbox.start();
@@ -1366,6 +1676,123 @@ fn send_rejects_an_unknown_session_id() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+#[test]
+fn send_refuses_a_waiting_session_unless_forced() {
+    let mut sandbox = Sandbox::new();
+    sandbox.start();
+    sandbox.hook("codex", "dialog", "UserPromptSubmit", None);
+    sandbox.hook("codex", "dialog", "PermissionRequest", None);
+    let id = stable_id(&sandbox, "codex", "dialog");
+    let log = sandbox.root.path().join("tmux-log");
+    for args in [
+        vec!["send", &id, "yes"],
+        vec!["send", "--wait", "--timeout", "1s", &id, "yes"],
+    ] {
+        let output = sandbox.berth().args(&args).output().unwrap();
+        assert_eq!(output.status.code(), Some(1), "{args:?}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("is waiting on a permission prompt or a question"),
+            "{stderr}"
+        );
+        assert!(stderr.contains("--force"), "{stderr}");
+        assert!(output.stdout.is_empty(), "{args:?}");
+    }
+    assert!(recorded(&log, "send").is_empty());
+    success(sandbox.berth().args(["send", "--force", &id, "yes"]));
+    assert_eq!(
+        recorded(&log, "send"),
+        vec!["codex\nqueue\n--thread\ndialog\n--message\nyes".to_string()]
+    );
+}
+
+/// Exit code, stdout word, and stderr of `agent-berth wait`.
+fn wait(sandbox: &Sandbox, args: &[&str]) -> (Option<i32>, String, String) {
+    let output = sandbox.berth().arg("wait").args(args).output().unwrap();
+    (
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout).trim().to_string(),
+        String::from_utf8_lossy(&output.stderr).to_string(),
+    )
+}
+
+#[test]
+fn wait_reports_turn_ends_blocks_and_exits_with_distinct_codes() {
+    let mut sandbox = Sandbox::new();
+    sandbox.start();
+    let pid = Some(std::process::id());
+    sandbox.hook("claude", "turns", "UserPromptSubmit", pid);
+    let id = stable_id(&sandbox, "claude", "turns");
+    let (code, word, _) = wait(&sandbox, &[&id, "--timeout", "1s"]);
+    assert_eq!((code, word.as_str()), (Some(4), "timeout"));
+
+    sandbox.hook("claude", "turns", "Stop", pid);
+    let sessions = sandbox.sessions(false);
+    assert_eq!(sessions[0]["turns_started"], 1, "{sessions:?}");
+    assert_eq!(sessions[0]["turns_ended"], 1, "{sessions:?}");
+    // The turn ended before this wait started, so only a baseline sees it.
+    let (code, word, err) = wait(&sandbox, &[&id, "--after", "0"]);
+    assert_eq!((code, word.as_str()), (Some(0), "done"), "{err}");
+    assert!(err.contains("turns_ended 1"), "{err}");
+    let (code, word, _) = wait(&sandbox, &[&id, "--timeout", "1s"]);
+    assert_eq!((code, word.as_str()), (Some(4), "timeout"));
+
+    sandbox.hook("claude", "turns", "PermissionRequest", pid);
+    let (code, word, _) = wait(&sandbox, &[&id]);
+    assert_eq!((code, word.as_str()), (Some(2), "waiting"));
+
+    sandbox.hook("claude", "turns", "SessionEnd", pid);
+    let (code, word, err) = wait(&sandbox, &[&id]);
+    assert_eq!((code, word.as_str()), (Some(3), "gone"), "{err}");
+
+    let (code, word, err) = wait(&sandbox, &["zzzzzz"]);
+    assert_eq!((code, word.as_str()), (Some(1), ""));
+    assert!(err.contains("no session with ID"), "{err}");
+}
+
+#[test]
+fn send_wait_blocks_until_the_turn_it_starts_ends() {
+    let mut sandbox = Sandbox::new();
+    sandbox.start();
+    let pid = Some(std::process::id());
+    for event in ["UserPromptSubmit", "Stop"] {
+        sandbox.hook("codex", "wait-target", event, pid);
+    }
+    let id = stable_id(&sandbox, "codex", "wait-target");
+    let output = success(sandbox.berth().args(["send", &id, "first"]));
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        "sent to codex wait-target (turns_ended 1)"
+    );
+
+    let child = sandbox
+        .berth()
+        .args(["send", "--wait", "--timeout", "15s", &id, "second"])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    // The agent takes the message, which `send` records after reading its
+    // baseline, and ends the turn while `send` polls.
+    let log = sandbox.root.path().join("tmux-log");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while recorded(&log, "send").len() < 2 {
+        assert!(Instant::now() < deadline, "second send never reached codex");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    sandbox.hook("codex", "wait-target", "UserPromptSubmit", pid);
+    sandbox.hook("codex", "wait-target", "Stop", pid);
+    let output = support::finish(child);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(0), "{stderr}");
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "done");
+    assert!(
+        stderr.contains("sent to codex wait-target (turns_ended 1)"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("turns_ended 2"), "{stderr}");
 }
 
 fn extend_path(sandbox: &mut Sandbox) {

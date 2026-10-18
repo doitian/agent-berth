@@ -238,3 +238,91 @@ fn migrates_legacy_json_once() {
     let loaded = load_from_path(&ctx).unwrap();
     assert_eq!(loaded.snapshots["pi"]["1"].cwd.as_deref(), Some("/old"));
 }
+
+#[test]
+fn turn_counters_survive_a_restart() {
+    let root = tempdir().unwrap();
+    let ctx = Context::for_test(root.path(), &root.path().join("agent-berth"));
+    std::fs::create_dir_all(&ctx.state_dir).unwrap();
+    let db = open(&ctx).unwrap();
+    let mut store = Store::default();
+    for event in ["UserPromptSubmit", "Stop"] {
+        let change = store
+            .update(
+                "claude",
+                serde_json::json!({"session_id":"h", "hook_event_name":event, "cwd":"/work"}),
+            )
+            .unwrap();
+        persist_change(&db, &store, &change).unwrap();
+    }
+    for status in ["busy", "idle"] {
+        let change = store
+            .update("pi", serde_json::json!({"id":"p", "status":{"s":status}}))
+            .unwrap();
+        persist_change(&db, &store, &change).unwrap();
+    }
+    drop(db);
+
+    let mut loaded = load_from_path(&ctx).unwrap();
+    let hook = &loaded.hooks["claude"]["h"];
+    assert_eq!((hook.turns_started, hook.turns_ended), (1, 1));
+    assert_eq!(
+        loaded.turns["pi"]["s"],
+        TurnCounts {
+            started: 1,
+            ended: 1,
+            busy: false
+        }
+    );
+    let counts: Vec<(u64, u64)> = loaded
+        .stored()
+        .iter()
+        .map(|session| (session.turns_started, session.turns_ended))
+        .collect();
+    assert_eq!(counts, [(1, 1), (1, 1)]);
+
+    let db = open(&ctx).unwrap();
+    loaded.turns.clear();
+    persist_all(&db, &loaded).unwrap();
+    drop(db);
+    assert!(load_from_path(&ctx).unwrap().turns.is_empty());
+}
+
+#[test]
+fn delegators_survive_a_restart_for_both_session_kinds() {
+    let root = tempdir().unwrap();
+    let ctx = Context::for_test(root.path(), &root.path().join("agent-berth"));
+    std::fs::create_dir_all(&ctx.state_dir).unwrap();
+    let db = open(&ctx).unwrap();
+    let mut store = Store::default();
+    let change = store
+        .update(
+            "claude",
+            serde_json::json!({
+                "session_id":"h", "hook_event_name":"UserPromptSubmit", "delegator":"boss12"
+            }),
+        )
+        .unwrap();
+    persist_change(&db, &store, &change).unwrap();
+    let change = store
+        .update(
+            "pi",
+            serde_json::json!({"id":"p", "status":{"s":"busy"}, "delegator":"boss12"}),
+        )
+        .unwrap();
+    persist_change(&db, &store, &change).unwrap();
+    drop(db);
+
+    let mut loaded = load_from_path(&ctx).unwrap();
+    assert!(
+        loaded
+            .stored()
+            .iter()
+            .all(|session| session.delegator.as_deref() == Some("boss12"))
+    );
+    let db = open(&ctx).unwrap();
+    loaded.delegators.clear();
+    persist_all(&db, &loaded).unwrap();
+    drop(db);
+    assert!(load_from_path(&ctx).unwrap().delegators.is_empty());
+}

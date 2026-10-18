@@ -61,6 +61,31 @@ pub struct PluginSnapshot {
     pub paseo_host_changed_ms: BTreeMap<String, u64>,
 }
 
+/// Turn edges seen for a plugin session, which reports levels rather than
+/// events: a busy report after an idle one starts a turn, and the reverse
+/// ends one. Hook sessions count their own in [`AgentSession`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TurnCounts {
+    #[serde(default)]
+    pub started: u64,
+    #[serde(default)]
+    pub ended: u64,
+    /// Whether the latest report showed the session busy.
+    #[serde(default)]
+    pub busy: bool,
+}
+
+impl TurnCounts {
+    fn report(&mut self, busy: bool) {
+        if busy && !self.busy {
+            self.started += 1;
+        } else if !busy && self.busy {
+            self.ended += 1;
+        }
+        self.busy = busy;
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Store {
     #[serde(default)]
@@ -81,6 +106,12 @@ pub struct Store {
     /// User-set notes per session, shown instead of the detected title.
     #[serde(default)]
     pub memos: BTreeMap<String, BTreeMap<String, String>>,
+    /// Turn counters of plugin sessions, per provider and session.
+    #[serde(default)]
+    pub turns: BTreeMap<String, BTreeMap<String, TurnCounts>>,
+    /// Delegator ids of plugin sessions, per provider and session.
+    #[serde(default)]
+    pub delegators: BTreeMap<String, BTreeMap<String, String>>,
 }
 
 impl Default for Store {
@@ -93,6 +124,8 @@ impl Default for Store {
             removed: BTreeMap::new(),
             hosted: BTreeMap::new(),
             memos: BTreeMap::new(),
+            turns: BTreeMap::new(),
+            delegators: BTreeMap::new(),
         }
     }
 }
@@ -157,6 +190,16 @@ pub struct ListedSession {
     /// server and only a live hosting tab (`pane_pid`) locates the session.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub tabbed: bool,
+    /// Turns seen starting since the session was first tracked. Monotonic,
+    /// unlike `status`, so a turn shorter than a poll interval still shows.
+    #[serde(default)]
+    pub turns_started: u64,
+    /// Turns seen ending; `wait` compares this against a baseline.
+    #[serde(default)]
+    pub turns_ended: u64,
+    /// Stable id of the session that started this one with `new`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delegator: Option<String>,
 }
 
 impl Store {
@@ -305,6 +348,17 @@ impl Store {
             })
             .collect();
         let hosted_tabs = tabs.clone();
+        let turns = self.turns.entry(provider.to_string()).or_default();
+        for (sid, kind) in &status {
+            let busy = blocking.contains(sid) || matches!(kind.as_str(), "busy" | "retry");
+            turns.entry(sid.clone()).or_default().report(busy);
+        }
+        if let Some(delegator) = string_field(&payload, &["delegator"]) {
+            let delegators = self.delegators.entry(provider.to_string()).or_default();
+            for sid in status.keys().chain(tabs.iter().flatten()) {
+                delegators.insert(sid.clone(), delegator.to_string());
+            }
+        }
         let snapshot = PluginSnapshot {
             status,
             blocking,
@@ -428,10 +482,15 @@ impl Store {
                     front: false,
                     tabbed: false,
                     memo: None,
+                    turns_started: session.turns_started,
+                    turns_ended: session.turns_ended,
+                    delegator: session.delegator.clone(),
                 });
             }
         }
         for (provider, instances) in &self.snapshots {
+            let turns = self.turns.get(provider);
+            let delegators = self.delegators.get(provider);
             for snapshot in instances.values() {
                 let blocking: std::collections::BTreeSet<_> =
                     snapshot.blocking.iter().cloned().collect();
@@ -447,6 +506,10 @@ impl Store {
                     if cmdline.is_empty() {
                         cmdline = providers::resume_cmd(provider, sid);
                     }
+                    let counts = turns
+                        .and_then(|bucket| bucket.get(sid))
+                        .copied()
+                        .unwrap_or_default();
                     out.push(ListedSession {
                         provider: provider.clone(),
                         session_id: sid.clone(),
@@ -468,6 +531,9 @@ impl Store {
                         front: false,
                         tabbed: false,
                         memo: None,
+                        turns_started: counts.started,
+                        turns_ended: counts.ended,
+                        delegator: delegators.and_then(|bucket| bucket.get(sid)).cloned(),
                     });
                 }
             }
@@ -615,6 +681,20 @@ impl Store {
             changed |= bucket.len() != before;
         }
         self.memos.retain(|_, bucket| !bucket.is_empty());
+
+        for (provider, bucket) in self.turns.iter_mut() {
+            let before = bucket.len();
+            bucket.retain(|sid, _| live.contains(&(provider.clone(), sid.clone())));
+            changed |= bucket.len() != before;
+        }
+        self.turns.retain(|_, bucket| !bucket.is_empty());
+
+        for (provider, bucket) in self.delegators.iter_mut() {
+            let before = bucket.len();
+            bucket.retain(|sid, _| live.contains(&(provider.clone(), sid.clone())));
+            changed |= bucket.len() != before;
+        }
+        self.delegators.retain(|_, bucket| !bucket.is_empty());
         changed
     }
 }
@@ -846,6 +926,9 @@ fn touch_session(
     }
     session.hooked = true;
     session.last_report_ms = now_ms();
+    if let Some(delegator) = string_field(payload, &["delegator"]) {
+        session.delegator = Some(delegator.to_string());
+    }
     if let Some(cwd) = cwd_field(payload) {
         session.cwd = Some(cwd);
     }

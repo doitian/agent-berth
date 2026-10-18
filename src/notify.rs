@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use serde_json::Value;
 
 use crate::ipc;
-use crate::paths::Context as AppContext;
+use crate::paths::{Context as AppContext, DELEGATOR_ENV};
 use crate::providers;
 
 pub fn run(ctx: &AppContext, provider: String) -> Result<()> {
@@ -18,6 +18,7 @@ pub fn send_payload(ctx: &AppContext, provider: String, mut payload: Value) -> R
         &mut payload,
         std::env::var("PASEO_AGENT_ID").ok().as_deref(),
     );
+    enrich_delegator(&mut payload, std::env::var(DELEGATOR_ENV).ok().as_deref());
     if let Some(hooks) = providers::lookup(&provider).and_then(|p| p.hooks()) {
         hooks.enrich(&mut payload);
     }
@@ -33,6 +34,18 @@ fn enrich_paseo_agent(payload: &mut Value, agent_id: Option<&str>) {
             .filter(|id| !id.is_empty())
             .map(|id| Value::String(id.to_string()))
             .unwrap_or(Value::Null);
+    }
+}
+
+/// Hooks and plugins run inside the agent's process tree, which inherited the
+/// window environment `new` set, so this process sees the delegator the
+/// long-lived server cannot.
+fn enrich_delegator(payload: &mut Value, delegator: Option<&str>) {
+    if let Some(id) = delegator.filter(|id| !id.is_empty())
+        && payload.is_object()
+        && payload.get("delegator").is_none()
+    {
+        payload["delegator"] = Value::String(id.to_string());
     }
 }
 

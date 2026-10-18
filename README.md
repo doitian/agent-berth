@@ -74,15 +74,18 @@ uses [fzf](https://github.com/junegunn/fzf).
 | `agent-berth service start\|stop\|restart` | Manage the background server |
 | `agent-berth server` | Run the server in the foreground |
 | `agent-berth list [--json] [--resumable [--idle 20m] [--here]]` | List sessions |
-| `agent-berth search [patterns...] [--created-in DURATION] [--tmux-pane PANE_ID] [--json]` | Search stored sessions across all providers, newest first; `--tmux-pane` keeps only the agent a tmux pane shows now |
+| `agent-berth search [patterns...] [--created-in DURATION] [--delegated-by ID] [--tmux-pane PANE_ID] [--json]` | Search stored sessions across all providers, newest first; `--delegated-by` keeps only sessions started by that session, `--tmux-pane` only the agent a tmux pane shows now |
 | `agent-berth self [--json]` | Print the stable id of the agent session running the command, from the provider's shell-tool environment when it exposes one, otherwise from the enclosing tmux pane |
 | `agent-berth logs <id> [--final \| --turns N] [--tools full\|brief\|none] [--tail N] [--json]` | Print a session's transcript, its latest reply, or its latest turns |
 | `agent-berth stats [--json]` | Aggregate active session counts by status and provider |
-| `agent-berth new <command> [args...]` | Start an agent in a new window of the current directory's tmux session, the one `resume` uses, creating it when missing, and print the new pane id; for example `agent-berth new claude --model opus` |
+| `agent-berth new [--wait [--timeout 2m]] [--delegator ID \| --no-delegator] <command> [args...]` | Start an agent in a new window of the current directory's tmux session, the one `resume` uses, creating it when missing, and print the new pane id; for example `agent-berth new claude --model opus`. With `--wait`, print the stable session id once the agent first reports (exit 4 on timeout, exit 1 when the pane closes first). The window gets `AGENT_BERTH_DELEGATOR` set to the caller's id |
 | `agent-berth resume [pattern] [--idle 20m] [--here] [--dry-run]` | Resume sessions in tmux |
 | `agent-berth attach [query] [--preview] [--session] [--dry-run]` | Select an agent running in a tmux pane with fzf and attach to it; Paseo and desktop sessions are only reachable from the TUI |
-| `agent-berth send <id> "message"` | Send a message to a session through the agent's CLI, or into its tmux pane |
 | `agent-berth memo [pattern] [text...]` | Set a note for the selected session, shown instead of its detected title and matched by search; no text prints the current note, `--clear` removes it |
+| `agent-berth send [--wait [--timeout 10m]] [--force] [--raw] <id> "message"` | Send a message to a session through the agent's CLI, or into its tmux pane; `--wait` then waits for the turn it starts to end, as `wait` does; a `waiting` session is refused without `--force`; `--raw` drops the sender line |
+| `agent-berth reply [--wait [--timeout 10m]] [--force] [--raw] "message"` | Send a message to the session that started this agent with `new`, exactly as `send` would |
+| `agent-berth wait <id> [--after N] [--timeout 10m]` | Wait for a session to end a turn; prints `done`, `waiting`, `gone`, or `timeout` with exit code 0, 2, 3, or 4 |
+| `agent-berth stop <id> [--force] [--dry-run]` | End a session by killing the tmux pane that shows it; refused when the pane also hosts other sessions unless `--force` |
 | `agent-berth rm [patterns...]` | Hide sessions so they are never resumed |
 | `agent-berth doctor` | Check server, service, and hook installation |
 | `agent-berth notify --provider <name>` | Report agent status (used by hooks) |
@@ -215,8 +218,11 @@ and native session ID, so it survives restarts and database rebuilds. Commands
 that take patterns (`attach`, `resume`, `rm`, `search`, `logs`) also match the ID; for
 example, `agent-berth attach <id>` focuses a pane without opening the picker.
 An agent prints its own ID with `agent-berth self` (the session's JSON with
-`--json`), derived from the provider's shell-tool environment — such as Pi's
-`PI_SESSION_ID` — or from the session shown in `$TMUX_PANE`.
+`--json`), derived from the provider's shell-tool environment — Claude Code's
+`CLAUDE_CODE_SESSION_ID` or Pi's `PI_SESSION_ID` — or from the session shown
+in `$TMUX_PANE`. A Claude Code subagent shares its parent's environment, so
+`self` inside one names the parent session, not the `<session>:<agent>` key
+its hooks report.
 
 Sessions running in a tmux pane also carry `tmux_pane` in `list --json` and
 `search --json`: the pane `id` (such as `%7`), its tmux `session`, `window`
@@ -296,6 +302,94 @@ with `C-j`, and a final Enter submits it. The session must be the active
 program in the pane; a session that is only a background tab is rejected.
 Codex desktop sessions are reached like CLI ones when they share the local
 app-server; Claude desktop sessions have no send path.
+
+A session whose status is `waiting` is refused: it is showing a permission
+prompt or a question, so typed text and Enter would answer the dialog, and a
+message queued behind it is not what the caller meant either. Answer the
+dialog with `agent-berth attach <id>`, or pass `--force` to deliver anyway.
+
+`send` prints `sent to <provider> <session-id> (turns_ended N)`, where N is
+the session's turn count before delivery, for a later `wait --after N`.
+
+### Wait
+
+`agent-berth wait <id> [--after N] [--timeout DURATION]` blocks until the
+session ends a turn and prints one word on stdout, with the reason on stderr:
+`done` (exit 0) once a turn ended and the session is not busy, `waiting`
+(exit 2) when it is blocked on a permission prompt or a question, `gone`
+(exit 3) when it exited or is no longer active, or `timeout` (exit 4; the
+default is `10m`).
+
+Every session carries monotonic `turns_started` and `turns_ended` counts in
+`list --json`, `search --json`, and `self --json`. Hook providers (Claude,
+Codex, Grok) count a start when a turn becomes `running` or `waiting` and an
+end on each Stop hook; plugin providers (OpenCode, Pi) count the busy/idle
+edges between their reports. Unlike `status`, which only holds the latest
+level, the counts show a turn that began and ended between two looks, and
+they survive server restarts.
+
+`wait` returns `done` once `turns_ended` exceeds a baseline: `--after N` when
+given, otherwise the count read when `wait` starts, so a turn that ended
+before then is missed. Right after `new` the count is 0, so `--after 0` is
+safe. `send --wait [--timeout DURATION] <id> "message"` reads the count
+before delivering and then waits exactly like `wait --after` that count; its
+"sent to" line goes to stderr so stdout holds only the outcome.
+
+```sh
+pane=$(agent-berth new claude "Fix the failing test")
+id=$(agent-berth search --tmux-pane "$pane" --json | jq -r '.[0].id')
+agent-berth wait --after 0 "$id" && agent-berth logs "$id" --final
+agent-berth send --wait "$id" "Now run the full suite." && agent-berth logs "$id" --final
+```
+
+An agent queues a message sent while it is busy, so `wait` then reports the
+end of the turn already in progress; send follow-ups once the previous turn
+has ended.
+
+### Delegation
+
+When a tracked agent runs `agent-berth new`, the new window gets
+`AGENT_BERTH_DELEGATOR` set to the caller's stable id (`--delegator <id>`
+names another, `--no-delegator` leaves it out). The agent's hooks and
+plugins run inside that window, so `agent-berth notify` copies the variable
+into every report and the server stores it as the session's `delegator`,
+shown in `list --json`, `search --json`, and `self --json`. A later report
+without it keeps the stored value. For OpenCode 2 the variable is read by
+the reporting process: the TUI names the delegator of the sessions it tabs,
+and a standalone server names it for the sessions it runs.
+
+`agent-berth search --delegated-by <id>` keeps only the sessions a given
+session started, and a plain `search <id>` pattern matches the delegator
+too.
+
+The delegate answers with `agent-berth reply "message"`, which resolves the
+delegator from `AGENT_BERTH_DELEGATOR`, or else from the delegate's own
+stored session, and then behaves exactly like `send` to that id: the same
+`--wait`, `--timeout`, `--force`, and `--raw` flags, the waiting refusal,
+and the exit codes. It fails with a clear error when there is no delegator.
+
+When the sender of `send` or `reply` is itself a tracked agent (resolved as
+`self` does), the message starts with one line naming it, followed by a
+blank line:
+
+```
+[agent-berth message from 4wqecx (claude)]
+
+Tests pass; the changelog is updated.
+```
+
+`--raw` leaves the line out. A human running `send` from a shell pane has no
+identity, so their messages carry no header.
+
+### Stop
+
+`agent-berth stop <id>` ends a session by killing the tmux pane that shows
+it (`tmux kill-pane`). It refuses a session that no pane shows — a desktop
+or Paseo session, one that already exited, or a tab in the background of an
+OpenCode TUI — and, without `--force`, a pane whose process also shows or
+hosts other sessions, since they would end with it. `--dry-run` prints what
+would be killed. The session stays stored and searchable, its transcript
+stays readable with `logs`, and `rm` hides it.
 
 ### Resume behavior
 

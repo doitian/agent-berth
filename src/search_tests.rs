@@ -24,7 +24,7 @@ fn searches_all_providers_and_inactive_sessions_newest_first() {
         session("pi", "new", 20, 20),
         session("codex", "middle", 15, 15),
     ];
-    let results = filter(sessions, &[], None, 100);
+    let results = filter(sessions, &[], None, None, 100);
     assert_eq!(
         results
             .iter()
@@ -46,6 +46,7 @@ fn creation_window_uses_creation_not_activity_and_includes_boundary() {
         ],
         &[],
         Some(Duration::from_secs(3)),
+        None,
         10_000,
     );
     assert_eq!(
@@ -68,10 +69,10 @@ fn keywords_are_case_insensitive_and_all_must_match() {
         "abc".into(),
         "missing-project".into(),
     ];
-    let results = filter(sessions.clone(), &patterns, None, 100);
+    let results = filter(sessions.clone(), &patterns, None, None, 100);
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].session_id, "abc");
-    assert!(filter(sessions, &["not-found".into()], None, 100).is_empty());
+    assert!(filter(sessions, &["not-found".into()], None, None, 100).is_empty());
 }
 
 #[test]
@@ -80,9 +81,24 @@ fn creation_window_can_exceed_timestamp_range() {
         vec![session("pi", "s", 10, 10)],
         &[],
         Some(Duration::MAX),
+        None,
         100,
     );
     assert_eq!(results.len(), 1);
+}
+
+#[test]
+fn delegated_by_keeps_only_that_delegators_sessions_and_patterns_match_it() {
+    let mut delegated = session("claude", "child", 10, 10);
+    delegated.delegator = Some("boss12".into());
+    let sessions = vec![delegated, session("codex", "solo", 20, 20)];
+    let results = filter(sessions.clone(), &[], None, Some(" BOSS12 "), 100);
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].session_id, "child");
+    assert!(filter(sessions.clone(), &[], None, Some("other1"), 100).is_empty());
+    let results = filter(sessions, &["boss12".into()], None, None, 100);
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].session_id, "child");
 }
 
 #[test]

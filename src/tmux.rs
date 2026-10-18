@@ -48,12 +48,19 @@ pub fn ensure_session(root: &Path) -> Result<String> {
 }
 
 pub fn new_window(session: &str, name: &str, cwd: &Path, cmd: &[String]) -> Result<()> {
-    spawn_window(session, name, cwd, cmd)?;
+    spawn_window(session, name, cwd, cmd, &[])?;
     Ok(())
 }
 
-/// Like [`new_window`] but returns the id of the created pane.
-pub fn spawn_window(session: &str, name: &str, cwd: &Path, cmd: &[String]) -> Result<String> {
+/// Like [`new_window`] but returns the id of the created pane, with `env`
+/// set in the window on top of the forwarded overrides.
+pub fn spawn_window(
+    session: &str,
+    name: &str,
+    cwd: &Path,
+    cmd: &[String],
+    env: &[(String, String)],
+) -> Result<String> {
     let target = format!("={session}");
     let mut args = vec![
         "new-window".into(),
@@ -64,6 +71,10 @@ pub fn spawn_window(session: &str, name: &str, cwd: &Path, cmd: &[String]) -> Re
         target,
     ];
     args.extend(passthrough_env());
+    args.extend(
+        env.iter()
+            .flat_map(|(key, value)| ["-e".into(), format!("{key}={value}")]),
+    );
     args.extend(window_command(name, cwd, cmd));
     let pane_id = spawn(&args)?.with_context(|| format!("tmux new-window failed for {name}"))?;
     Ok(pane_id)
@@ -112,10 +123,11 @@ fn window_command(name: &str, cwd: &Path, cmd: &[String]) -> Vec<String> {
 
 /// `-e` flags forwarding AGENT_BERTH_* overrides to the new window: the tmux
 /// server passes its own (startup-time) environment to the processes it
-/// spawns, not the caller's.
+/// spawns, not the caller's. The caller's own delegator is not an override
+/// to forward; `new` names the new window's delegator explicitly.
 fn passthrough_env() -> Vec<String> {
     let mut vars: Vec<String> = std::env::vars()
-        .filter(|(key, _)| key.starts_with("AGENT_BERTH_"))
+        .filter(|(key, _)| key.starts_with("AGENT_BERTH_") && key != crate::paths::DELEGATOR_ENV)
         .map(|(key, value)| format!("{key}={value}"))
         .collect();
     vars.sort();
@@ -345,6 +357,10 @@ fn message_keys(pane_id: &str, message: &str) -> Vec<Vec<String>> {
     }
     keys.push(key("Enter"));
     keys
+}
+
+pub fn kill_pane(id: &str) -> Result<()> {
+    run(["kill-pane", "-t", id]).with_context(|| format!("tmux kill-pane failed for {id}"))
 }
 
 pub fn attach_pane(pane: &Pane) -> Result<()> {

@@ -12,10 +12,17 @@ pub fn run(
     ctx: &Context,
     patterns: &[String],
     created_in: Option<Duration>,
+    delegated_by: Option<&str>,
     tmux_pane: Option<&str>,
     json: bool,
 ) -> Result<()> {
-    let mut sessions = filter(db::query_stored(ctx)?, patterns, created_in, now_ms());
+    let mut sessions = filter(
+        db::query_stored(ctx)?,
+        patterns,
+        created_in,
+        delegated_by,
+        now_ms(),
+    );
     let panes = match tmux_pane {
         Some(pane_id) => {
             let panes = tmux::list_panes(true)?;
@@ -42,11 +49,20 @@ fn filter(
     mut sessions: Vec<ListedSession>,
     patterns: &[String],
     created_in: Option<Duration>,
+    delegated_by: Option<&str>,
     now: u64,
 ) -> Vec<ListedSession> {
     if let Some(window) = created_in {
         let cutoff = u128::from(now).saturating_sub(window.as_millis()) as u64;
         sessions.retain(|session| session.created_ms >= cutoff && session.created_ms <= now);
+    }
+    if let Some(delegator) = delegated_by.map(str::trim) {
+        sessions.retain(|session| {
+            session
+                .delegator
+                .as_deref()
+                .is_some_and(|id| id.eq_ignore_ascii_case(delegator))
+        });
     }
     let mut sessions = pick::filter(&sessions, patterns);
     sessions.sort_by(|a, b| {

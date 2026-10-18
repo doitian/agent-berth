@@ -7,7 +7,7 @@ use redb::{Database, ReadableDatabase, ReadableTable, TableDefinition};
 use crate::ipc;
 use crate::paths::Context as AppContext;
 use crate::status::AgentSession;
-use crate::store::{Change, ListedSession, PluginSnapshot, ProviderStats, Store};
+use crate::store::{Change, ListedSession, PluginSnapshot, ProviderStats, Store, TurnCounts};
 
 const META: TableDefinition<&str, u64> = TableDefinition::new("meta");
 const HOOKS: TableDefinition<&str, &[u8]> = TableDefinition::new("hooks");
@@ -15,6 +15,8 @@ const SNAPSHOTS: TableDefinition<&str, &[u8]> = TableDefinition::new("snapshots"
 const REMOVED: TableDefinition<&str, u64> = TableDefinition::new("removed");
 const HOSTED: TableDefinition<&str, &[u8]> = TableDefinition::new("hosted");
 const MEMOS: TableDefinition<&str, &str> = TableDefinition::new("memos");
+const TURNS: TableDefinition<&str, &[u8]> = TableDefinition::new("turns");
+const DELEGATORS: TableDefinition<&str, &str> = TableDefinition::new("delegators");
 
 const LAST_HEARTBEAT: &str = "last_heartbeat_ms";
 const PREV_HEARTBEAT: &str = "previous_heartbeat_ms";
@@ -103,6 +105,33 @@ pub fn load(db: &Database) -> Result<Store> {
             };
             store
                 .memos
+                .entry(provider.to_string())
+                .or_default()
+                .insert(session_id.to_string(), value.value().to_string());
+        }
+    }
+    if let Ok(table) = txn.open_table(TURNS) {
+        for entry in table.iter()? {
+            let (key, value) = entry?;
+            let Some((provider, session_id)) = split_key(key.value()) else {
+                continue;
+            };
+            let counts: TurnCounts = serde_json::from_slice(value.value())?;
+            store
+                .turns
+                .entry(provider.to_string())
+                .or_default()
+                .insert(session_id.to_string(), counts);
+        }
+    }
+    if let Ok(table) = txn.open_table(DELEGATORS) {
+        for entry in table.iter()? {
+            let (key, value) = entry?;
+            let Some((provider, session_id)) = split_key(key.value()) else {
+                continue;
+            };
+            store
+                .delegators
                 .entry(provider.to_string())
                 .or_default()
                 .insert(session_id.to_string(), value.value().to_string());
@@ -217,6 +246,12 @@ pub fn persist_change(db: &Database, store: &Store, change: &Change) -> Result<(
             if let Some(set) = store.hosted.get(provider) {
                 persist_hosted(db, provider, set)?;
             }
+            if let Some(bucket) = store.turns.get(provider) {
+                persist_turns(db, provider, bucket)?;
+            }
+            if let Some(bucket) = store.delegators.get(provider) {
+                persist_delegators(db, provider, bucket)?;
+            }
             Ok(())
         }
     }
@@ -313,6 +348,104 @@ fn persist_hosted(db: &Database, provider: &str, set: &BTreeSet<String>) -> Resu
     Ok(())
 }
 
+fn persist_turns(
+    db: &Database,
+    provider: &str,
+    bucket: &BTreeMap<String, TurnCounts>,
+) -> Result<()> {
+    let txn = db.begin_write().context("write redb")?;
+    {
+        let mut table = txn.open_table(TURNS)?;
+        for (sid, counts) in bucket {
+            let key = format!("{provider}\0{sid}");
+            let bytes = serde_json::to_vec(counts)?;
+            table.insert(key.as_str(), bytes.as_slice())?;
+        }
+    }
+    txn.commit()?;
+    Ok(())
+}
+
+fn sync_turns(db: &Database, all: &BTreeMap<String, BTreeMap<String, TurnCounts>>) -> Result<()> {
+    let mut valid = std::collections::BTreeSet::new();
+    for (provider, bucket) in all {
+        for sid in bucket.keys() {
+            valid.insert(format!("{provider}\0{sid}"));
+        }
+    }
+    let txn = db.begin_write().context("write redb")?;
+    {
+        let mut table = txn.open_table(TURNS)?;
+        let mut stale = Vec::new();
+        for entry in table.iter()? {
+            let (key, _) = entry?;
+            if !valid.contains(key.value()) {
+                stale.push(key.value().to_string());
+            }
+        }
+        for key in stale {
+            table.remove(key.as_str())?;
+        }
+        for (provider, bucket) in all {
+            for (sid, counts) in bucket {
+                let key = format!("{provider}\0{sid}");
+                let bytes = serde_json::to_vec(counts)?;
+                table.insert(key.as_str(), bytes.as_slice())?;
+            }
+        }
+    }
+    txn.commit()?;
+    Ok(())
+}
+
+fn persist_delegators(
+    db: &Database,
+    provider: &str,
+    bucket: &BTreeMap<String, String>,
+) -> Result<()> {
+    let txn = db.begin_write().context("write redb")?;
+    {
+        let mut table = txn.open_table(DELEGATORS)?;
+        for (sid, delegator) in bucket {
+            let key = format!("{provider}\0{sid}");
+            table.insert(key.as_str(), delegator.as_str())?;
+        }
+    }
+    txn.commit()?;
+    Ok(())
+}
+
+fn sync_delegators(db: &Database, all: &BTreeMap<String, BTreeMap<String, String>>) -> Result<()> {
+    let mut valid = std::collections::BTreeSet::new();
+    for (provider, bucket) in all {
+        for sid in bucket.keys() {
+            valid.insert(format!("{provider}\0{sid}"));
+        }
+    }
+    let txn = db.begin_write().context("write redb")?;
+    {
+        let mut table = txn.open_table(DELEGATORS)?;
+        let mut stale = Vec::new();
+        for entry in table.iter()? {
+            let (key, _) = entry?;
+            if !valid.contains(key.value()) {
+                stale.push(key.value().to_string());
+            }
+        }
+        for key in stale {
+            table.remove(key.as_str())?;
+        }
+        for (provider, bucket) in all {
+            for (sid, delegator) in bucket {
+                let key = format!("{provider}\0{sid}");
+                table.insert(key.as_str(), delegator.as_str())?;
+            }
+        }
+    }
+    txn.commit()?;
+    Ok(())
+}
+
 fn sync_hosted(db: &Database, all: &BTreeMap<String, BTreeSet<String>>) -> Result<()> {
     let txn = db.begin_write().context("write redb")?;
     {
@@ -343,6 +476,8 @@ pub fn persist_all(db: &Database, store: &Store) -> Result<()> {
     sync_removed(db, &store.removed)?;
     sync_hosted(db, &store.hosted)?;
     sync_memos(db, &store.memos)?;
+    sync_turns(db, &store.turns)?;
+    sync_delegators(db, &store.delegators)?;
     Ok(())
 }
 
@@ -484,6 +619,8 @@ fn init_tables(db: &Database) -> Result<()> {
         let _ = txn.open_table(REMOVED)?;
         let _ = txn.open_table(HOSTED)?;
         let _ = txn.open_table(MEMOS)?;
+        let _ = txn.open_table(TURNS)?;
+        let _ = txn.open_table(DELEGATORS)?;
     }
     txn.commit()?;
     Ok(())

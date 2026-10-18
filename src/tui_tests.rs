@@ -24,6 +24,9 @@ fn listed(provider: &str, session_id: &str, title: Option<&str>) -> ListedSessio
         front: false,
         tabbed: false,
         memo: None,
+        turns_started: 0,
+        turns_ended: 0,
+        delegator: None,
     }
 }
 

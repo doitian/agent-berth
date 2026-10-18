@@ -132,6 +132,18 @@ pub struct AgentSession {
     pub paseo_agent_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub paseo_host_changed_ms: Option<u64>,
+    /// Turns seen starting: every move from an idle or done status into a
+    /// busy one. Monotonic, so a poller can tell a short turn from none.
+    #[serde(default)]
+    pub turns_started: u64,
+    /// Turns seen ending: every Stop that leaves the session done, counted
+    /// even when the start edge was missed.
+    #[serde(default)]
+    pub turns_ended: u64,
+    /// Stable id of the session that started this one with `new`, as its
+    /// hooks report it from the window environment.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delegator: Option<String>,
 }
 
 impl Default for AgentSession {
@@ -153,6 +165,9 @@ impl Default for AgentSession {
             transcript_path: None,
             paseo_agent_id: None,
             paseo_host_changed_ms: None,
+            turns_started: 0,
+            turns_ended: 0,
+            delegator: None,
         }
     }
 }
@@ -166,6 +181,29 @@ impl AgentSession {
         if event.parent_id.is_some() {
             self.parent_id = event.parent_id.clone();
         }
+        let was_busy = self.status.is_busy();
+        self.apply_status(event);
+        if !was_busy && self.status.is_busy() {
+            self.turns_started += 1;
+        }
+        if event.kind == AgentEventKind::Stop && !event.background_running {
+            self.turns_ended += 1;
+        }
+    }
+
+    /// Records a status observed outside the hook stream, such as from
+    /// `claude agents --json`, counting the turn it starts or ends.
+    pub fn observe(&mut self, status: AgentStatus) {
+        let was_busy = self.status.is_busy();
+        self.status = status;
+        if !was_busy && status.is_busy() {
+            self.turns_started += 1;
+        } else if was_busy && !status.is_busy() {
+            self.turns_ended += 1;
+        }
+    }
+
+    fn apply_status(&mut self, event: &AgentEvent) {
         match event.kind {
             AgentEventKind::PromptSubmit | AgentEventKind::PermissionReview => {
                 self.status = AgentStatus::Running;

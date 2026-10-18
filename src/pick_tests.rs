@@ -24,6 +24,9 @@ fn session(provider: &str, title: &str, cwd: &str) -> ListedSession {
         front: false,
         tabbed: false,
         memo: None,
+        turns_started: 0,
+        turns_ended: 0,
+        delegator: None,
     }
 }
 
@@ -37,6 +40,21 @@ fn filters_all_terms_case_insensitively() {
     let matched = filter(&sessions, &["CLAUDE".into(), "parser".into()]);
     assert_eq!(matched.len(), 1);
     assert_eq!(matched[0].provider, "claude");
+}
+
+#[test]
+fn single_by_id_takes_the_exact_id_before_matching_patterns() {
+    let cwd = std::env::current_dir().unwrap().display().to_string();
+    let target = session("claude", "Fix the parser", &cwd);
+    let decoy = session("codex", &format!("Notes on {}", target.id()), &cwd);
+    let sessions = [target.clone(), decoy];
+    // As a pattern the id matches both, which would need the fzf picker.
+    assert_eq!(filter(&sessions, &[target.id()]).len(), 2);
+    let picked = single_by_id(&sessions, &target.id()).unwrap().unwrap();
+    assert_eq!(picked.provider, "claude");
+    let picked = single_by_id(&sessions, "PARSER").unwrap().unwrap();
+    assert_eq!(picked.provider, "claude");
+    assert!(single_by_id(&sessions, "nothing").is_err());
 }
 
 #[test]

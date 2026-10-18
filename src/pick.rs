@@ -21,6 +21,37 @@ pub fn single(sessions: &[ListedSession], pattern: &str) -> Result<Option<Listed
         .next())
 }
 
+/// The session whose stable id is exactly `id`, for commands that act on one
+/// session and must not guess from a pattern.
+pub fn by_id<'a>(sessions: &'a [ListedSession], id: &str) -> Result<&'a ListedSession> {
+    let id = id.trim();
+    let matches: Vec<&ListedSession> = sessions
+        .iter()
+        .filter(|session| session.id().eq_ignore_ascii_case(id))
+        .collect();
+    match matches.as_slice() {
+        [] => bail!("no session with ID {id:?}"),
+        [only] => Ok(*only),
+        _ => {
+            let listed: Vec<String> = matches
+                .iter()
+                .map(|session| format!("{} {}", session.provider, session.session_id))
+                .collect();
+            bail!("ID {id:?} matches several sessions: {}", listed.join(", "));
+        }
+    }
+}
+
+/// The session whose stable id is exactly `selector`, else the one `single`
+/// picks for it as a pattern. An id also matches as text inside other
+/// sessions' ids, titles, and paths, which would otherwise open the picker.
+pub fn single_by_id(sessions: &[ListedSession], selector: &str) -> Result<Option<ListedSession>> {
+    match by_id(sessions, selector) {
+        Ok(session) => Ok(Some(session.clone())),
+        Err(_) => single(sessions, selector),
+    }
+}
+
 pub fn multi(sessions: &[ListedSession], patterns: &[String]) -> Result<Vec<ListedSession>> {
     let candidates = filter(sessions, patterns);
     if candidates.is_empty() {
@@ -63,7 +94,7 @@ fn search_text(session: &ListedSession) -> String {
     let branch = git::branch(Path::new(&cwd)).unwrap_or_default();
     let folder = folder_name(&cwd).unwrap_or_default();
     format!(
-        "{} {} {} {} {} {} {} {} {}",
+        "{} {} {} {} {} {} {} {} {} {}",
         session.id(),
         session.provider,
         session.session_id,
@@ -73,6 +104,7 @@ fn search_text(session: &ListedSession) -> String {
         cwd,
         folder,
         branch,
+        session.delegator.as_deref().unwrap_or(""),
     )
     .to_ascii_lowercase()
 }

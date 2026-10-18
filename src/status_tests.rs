@@ -202,3 +202,83 @@ fn tool_start_resumes_a_session_marked_done() {
     );
     assert_eq!(sessions["s"].status, AgentStatus::Running);
 }
+
+fn turns(sessions: &std::collections::BTreeMap<String, AgentSession>, sid: &str) -> (u64, u64) {
+    (sessions[sid].turns_started, sessions[sid].turns_ended)
+}
+
+#[test]
+fn turn_counters_follow_hook_edges() {
+    let mut sessions = std::collections::BTreeMap::new();
+    emit(&mut sessions, AgentEventKind::PromptSubmit, "s");
+    assert_eq!(turns(&sessions, "s"), (1, 0));
+    // Moves between busy levels and tool events are the same turn.
+    emit(&mut sessions, AgentEventKind::PermissionRequest, "s");
+    emit(&mut sessions, AgentEventKind::ToolStart, "s");
+    emit(&mut sessions, AgentEventKind::ToolComplete, "s");
+    emit(&mut sessions, AgentEventKind::Notification, "s");
+    assert_eq!(turns(&sessions, "s"), (1, 0));
+    emit(&mut sessions, AgentEventKind::Stop, "s");
+    assert_eq!(turns(&sessions, "s"), (1, 1));
+    // A Stop while already done ends a turn whose start was missed.
+    emit(&mut sessions, AgentEventKind::Stop, "s");
+    assert_eq!(turns(&sessions, "s"), (1, 2));
+    // A tool starting in a done session is the next turn.
+    emit(&mut sessions, AgentEventKind::ToolStart, "s");
+    assert_eq!(turns(&sessions, "s"), (2, 2));
+    emit(&mut sessions, AgentEventKind::Stop, "s");
+    assert_eq!(turns(&sessions, "s"), (2, 3));
+    emit(&mut sessions, AgentEventKind::QuestionAsked, "s");
+    assert_eq!(sessions["s"].status, AgentStatus::Waiting);
+    assert_eq!(turns(&sessions, "s"), (3, 3));
+}
+
+#[test]
+fn stop_with_background_work_does_not_end_the_turn() {
+    let mut sessions = std::collections::BTreeMap::new();
+    emit(&mut sessions, AgentEventKind::PromptSubmit, "s");
+    apply_event(
+        &mut sessions,
+        AgentEvent {
+            session_id: "s".into(),
+            kind: AgentEventKind::Stop,
+            source: Source::Cli,
+            pid: None,
+            parent_id: None,
+            background_running: true,
+        },
+    );
+    assert_eq!(turns(&sessions, "s"), (1, 0));
+    emit(&mut sessions, AgentEventKind::Stop, "s");
+    assert_eq!(turns(&sessions, "s"), (1, 1));
+}
+
+#[test]
+fn observed_status_counts_turn_edges() {
+    let mut session = AgentSession::default();
+    session.observe(AgentStatus::Running);
+    assert_eq!((session.turns_started, session.turns_ended), (1, 0));
+    session.observe(AgentStatus::Waiting);
+    assert_eq!((session.turns_started, session.turns_ended), (1, 0));
+    session.observe(AgentStatus::Done);
+    assert_eq!((session.turns_started, session.turns_ended), (1, 1));
+    session.observe(AgentStatus::Idle);
+    assert_eq!((session.turns_started, session.turns_ended), (1, 1));
+    assert_eq!(session.status, AgentStatus::Idle);
+}
+
+#[test]
+fn turn_counters_round_trip_and_default_to_zero() {
+    let session = AgentSession {
+        turns_started: 3,
+        turns_ended: 2,
+        ..AgentSession::default()
+    };
+    let json = serde_json::to_string(&session).unwrap();
+    assert_eq!(
+        serde_json::from_str::<AgentSession>(&json).unwrap(),
+        session
+    );
+    let legacy: AgentSession = serde_json::from_str("{\"status\":\"done\"}").unwrap();
+    assert_eq!((legacy.turns_started, legacy.turns_ended), (0, 0));
+}

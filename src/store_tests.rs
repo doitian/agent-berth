@@ -912,6 +912,9 @@ fn plugin_session(sid: &str) -> ListedSession {
         front: false,
         tabbed: false,
         memo: None,
+        turns_started: 0,
+        turns_ended: 0,
+        delegator: None,
     }
 }
 
@@ -1002,6 +1005,142 @@ fn hook_reports_mark_the_session_as_hook_tracked() {
         )
         .unwrap();
     assert!(store.hooks["claude"]["abc"].hooked);
+}
+
+fn listed_turns(store: &Store, sid: &str) -> (u64, u64) {
+    let session = store
+        .stored()
+        .into_iter()
+        .find(|session| session.session_id == sid)
+        .unwrap();
+    (session.turns_started, session.turns_ended)
+}
+
+#[test]
+fn plugin_reports_count_turn_edges_per_session() {
+    let mut store = Store::default();
+    let report = |store: &mut Store, status: Value, blocking: Vec<&str>| {
+        store
+            .update(
+                "pi",
+                json!({"id":"p", "status":status, "blocking":blocking}),
+            )
+            .unwrap();
+    };
+    report(&mut store, json!({"a":"idle"}), vec![]);
+    assert_eq!(listed_turns(&store, "a"), (0, 0));
+    // A session first seen busy starts a turn like one seen going busy.
+    report(&mut store, json!({"a":"busy", "b":"busy"}), vec![]);
+    assert_eq!(listed_turns(&store, "a"), (1, 0));
+    assert_eq!(listed_turns(&store, "b"), (1, 0));
+    // Retrying and blocking are still busy; only idle ends the turn.
+    report(&mut store, json!({"a":"retry", "b":"idle"}), vec!["a"]);
+    assert_eq!(listed_turns(&store, "a"), (1, 0));
+    assert_eq!(listed_turns(&store, "b"), (1, 1));
+    report(&mut store, json!({"a":"idle", "b":"idle"}), vec![]);
+    assert_eq!(listed_turns(&store, "a"), (1, 1));
+    // Heartbeats repeating a level change nothing.
+    report(&mut store, json!({"a":"idle", "b":"idle"}), vec![]);
+    assert_eq!(listed_turns(&store, "a"), (1, 1));
+    assert_eq!(listed_turns(&store, "b"), (1, 1));
+    // An idle session blocked on a question is waiting, which is busy.
+    report(&mut store, json!({"a":"idle"}), vec!["a"]);
+    assert_eq!(listed_turns(&store, "a"), (2, 1));
+    // Another reporting instance continues the session's count.
+    store
+        .update("pi", json!({"id":"q", "status":{"a":"idle"}}))
+        .unwrap();
+    assert_eq!(listed_turns(&store, "a"), (2, 2));
+}
+
+#[test]
+fn hook_turn_counters_are_listed_and_session_end_is_not_a_turn_end() {
+    let mut store = Store::default();
+    let hook = |store: &mut Store, event: &str| {
+        store
+            .update(
+                "claude",
+                json!({"session_id":"s", "hook_event_name":event, "cwd":"/work"}),
+            )
+            .unwrap();
+    };
+    hook(&mut store, "UserPromptSubmit");
+    hook(&mut store, "Stop");
+    assert_eq!(listed_turns(&store, "s"), (1, 1));
+    hook(&mut store, "UserPromptSubmit");
+    hook(&mut store, "SessionEnd");
+    assert!(store.stored()[0].exited);
+    assert_eq!(listed_turns(&store, "s"), (2, 1));
+}
+
+#[test]
+fn delegators_are_kept_once_reported_and_listed_for_both_kinds() {
+    let mut store = Store::default();
+    store
+        .update(
+            "claude",
+            json!({"session_id":"h", "hook_event_name":"UserPromptSubmit", "delegator":"boss12"}),
+        )
+        .unwrap();
+    // A later report without the field, such as from a hook whose process
+    // lost the variable, keeps the stored value.
+    store
+        .update(
+            "claude",
+            json!({"session_id":"h", "hook_event_name":"Stop"}),
+        )
+        .unwrap();
+    store
+        .update(
+            "opencode",
+            json!({"id":"server", "status":{"a":"busy"}, "delegator":"boss12"}),
+        )
+        .unwrap();
+    store
+        .update(
+            "opencode",
+            json!({"id":"tui", "pid":u32::MAX, "status":{}, "tabs":["b"], "delegator":"other1"}),
+        )
+        .unwrap();
+    store
+        .update(
+            "opencode",
+            json!({"id":"server", "status":{"a":"busy", "b":"idle"}}),
+        )
+        .unwrap();
+    let delegator = |sid: &str| {
+        store
+            .stored()
+            .into_iter()
+            .find(|session| session.session_id == sid)
+            .unwrap()
+            .delegator
+    };
+    assert_eq!(delegator("h").as_deref(), Some("boss12"));
+    assert_eq!(delegator("a").as_deref(), Some("boss12"));
+    assert_eq!(delegator("b").as_deref(), Some("other1"));
+    store.snapshots.clear();
+    assert!(store.prune(now_ms(), Duration::from_secs(60)));
+    assert!(store.delegators.is_empty());
+}
+
+#[test]
+fn prune_drops_turn_counters_of_forgotten_sessions() {
+    let mut store = Store::default();
+    store
+        .update(
+            "pi",
+            json!({"id":"p", "status":{"gone":"busy", "kept":"busy"}}),
+        )
+        .unwrap();
+    store
+        .update("pi", json!({"id":"p", "status":{"kept":"busy"}}))
+        .unwrap();
+    assert!(store.turns["pi"].contains_key("gone"));
+    let now = store.snapshots["pi"]["p"].last_report_ms;
+    assert!(store.prune(now, Duration::from_secs(60)));
+    assert!(!store.turns["pi"].contains_key("gone"));
+    assert_eq!(store.turns["pi"]["kept"].started, 1);
 }
 
 #[test]
