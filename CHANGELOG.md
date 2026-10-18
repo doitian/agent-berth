@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
+## [3.3.0](https://github.com/doitian/agent-berth/releases/tag/v3.3.0) - 2026-10-18
+
+### Added
+
+- Add session memos overriding detected titles ([debc479](https://github.com/doitian/agent-berth/commit/debc479754152d96fb02fc1133747bf9edc3a3bc))
+- Add wait, reply, stop, and turn counters for agent orchestration ([9486a2c](https://github.com/doitian/agent-berth/commit/9486a2c013bb46edfcf1b0598f6141065b2dca50))
+
 ## [3.2.0](https://github.com/doitian/agent-berth/releases/tag/v3.2.0) - 2026-10-16
 
 ### Added
