@@ -82,6 +82,7 @@ uses [fzf](https://github.com/junegunn/fzf).
 | `agent-berth resume [pattern] [--idle 20m] [--here] [--dry-run]` | Resume sessions in tmux |
 | `agent-berth attach [query] [--preview] [--session] [--dry-run]` | Select an agent running in a tmux pane with fzf and attach to it; Paseo and desktop sessions are only reachable from the TUI |
 | `agent-berth send <id> "message"` | Send a message to a session through the agent's CLI, or into its tmux pane |
+| `agent-berth memo [pattern] [text...]` | Set a note for the selected session, shown instead of its detected title and matched by search; no text prints the current note, `--clear` removes it |
 | `agent-berth rm [patterns...]` | Hide sessions so they are never resumed |
 | `agent-berth doctor` | Check server, service, and hook installation |
 | `agent-berth notify --provider <name>` | Report agent status (used by hooks) |
@@ -175,6 +176,7 @@ symbol. Clean repositories without an upstream show only the branch name.
 | `a` | Focus a Paseo, Claude Desktop, or Codex desktop session, or attach to its tmux pane: switch-client inside tmux, attach outside; detaching returns to the TUI |
 | `r` | Resume the selected resumable session in tmux and attach to it |
 | `d` | Delete the selected session after confirming with `y` |
+| `m` | Edit the selected session's memo, shown instead of its detected title; submit an empty memo to clear it |
 | `q` | Quit |
 
 Group headers use `1h`, `1d`, `7d`, and `>7d` for creation/activity sorting:
@@ -196,7 +198,7 @@ agent-berth search claude my-project --json
 
 With no keywords, it shows all stored sessions, including inactive sessions
 and closed tabs, newest first. Keywords are case-insensitive; every term must
-match the provider, session ID, title, status, working directory, or current
+match the provider, session ID, title, memo, status, working directory, or current
 Git branch. `--created-in` restricts creation time, not recent activity, and
 accepts seconds, minutes, hours, or days (e.g. `30m`, `1.5h`, `2d`). The table's
 `CREATED` column shows the age since creation; JSON includes `created_ms`.

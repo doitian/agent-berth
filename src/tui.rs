@@ -53,7 +53,7 @@ mod latte {
     pub const BLUE: Color = Color::Rgb(30, 102, 245);
 }
 
-const HINTS: &str = "q quit · j/k move · / filter · ga/gr view · s sort · w groups · a attach/focus · r resume · d delete · I idle · = zoom · ␣gg lazygit · br/bp browse";
+const HINTS: &str = "q quit · j/k move · / filter · ga/gr view · s sort · w groups · a attach/focus · r resume · d delete · m memo · I idle · = zoom · ␣gg lazygit · br/bp browse";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Sort {
@@ -87,6 +87,7 @@ enum Input {
     Normal,
     Filter,
     Idle,
+    Memo,
     Confirm,
 }
 
@@ -115,6 +116,7 @@ pub(crate) enum Effect {
     },
     Resume(ListedSession),
     Remove(ListedSession),
+    Memo(ListedSession, String),
     Lazygit(PathBuf),
     Browse(PathBuf, Browse),
 }
@@ -269,6 +271,8 @@ struct App {
     idle_enabled: bool,
     idle: Duration,
     idle_input: String,
+    memo_input: String,
+    memo_session: Option<ListedSession>,
     confirm_session: Option<ListedSession>,
     pending: Option<Pending>,
     git: Option<git::RepoInfo>,
@@ -314,6 +318,8 @@ impl App {
             idle_enabled: false,
             idle: DEFAULT_IDLE,
             idle_input: String::new(),
+            memo_input: String::new(),
+            memo_session: None,
             confirm_session: None,
             pending: None,
             git: None,
@@ -698,6 +704,7 @@ impl App {
         match self.input {
             Input::Filter => return self.handle_filter_key(key),
             Input::Idle => return self.handle_idle_key(key),
+            Input::Memo => return self.handle_memo_key(key),
             Input::Confirm => return self.handle_confirm_key(key),
             Input::Normal => {}
         }
@@ -773,6 +780,7 @@ impl App {
             KeyCode::Char('a') => self.attach_selected(),
             KeyCode::Char('r') => self.resume_selected(),
             KeyCode::Char('d') => self.confirm_remove(),
+            KeyCode::Char('m') => self.edit_memo(),
             _ => Effect::None,
         }
     }
@@ -819,6 +827,29 @@ impl App {
                 self.idle_input.pop();
             }
             KeyCode::Char(ch) => self.idle_input.push(ch),
+            _ => {}
+        }
+        Effect::None
+    }
+
+    fn handle_memo_key(&mut self, key: KeyEvent) -> Effect {
+        match key.code {
+            KeyCode::Enter => {
+                self.input = Input::Normal;
+                return match self.memo_session.take() {
+                    Some(session) => Effect::Memo(session, std::mem::take(&mut self.memo_input)),
+                    None => Effect::None,
+                };
+            }
+            KeyCode::Esc => {
+                self.input = Input::Normal;
+                self.memo_session = None;
+                self.memo_input.clear();
+            }
+            KeyCode::Backspace => {
+                self.memo_input.pop();
+            }
+            KeyCode::Char(ch) => self.memo_input.push(ch),
             _ => {}
         }
         Effect::None
@@ -896,6 +927,18 @@ impl App {
             Some(session) => {
                 self.confirm_session = Some(session);
                 self.input = Input::Confirm;
+            }
+            None => self.message = Some("no session selected".into()),
+        }
+        Effect::None
+    }
+
+    fn edit_memo(&mut self) -> Effect {
+        match self.selected_session().cloned() {
+            Some(session) => {
+                self.memo_input = session.memo.clone().unwrap_or_default();
+                self.memo_session = Some(session);
+                self.input = Input::Memo;
             }
             None => self.message = Some("no session selected".into()),
         }
@@ -1032,6 +1075,7 @@ pub fn run(ctx: &Context) -> Result<()> {
                         Err(err) => app.message = Some(format!("{err:#}")),
                     },
                     Effect::Remove(session) => remove_effect(&mut app, ctx, &session),
+                    Effect::Memo(session, memo) => memo_effect(&mut app, ctx, &session, &memo),
                     Effect::Lazygit(cwd) => lazygit_effect(&mut guard, &mut app, &cwd),
                     Effect::Browse(cwd, target) => browse_effect(&mut app, &cwd, target),
                 },
@@ -1150,6 +1194,23 @@ fn remove_effect(app: &mut App, ctx: &Context, session: &ListedSession) {
     }
 }
 
+fn memo_effect(app: &mut App, ctx: &Context, session: &ListedSession, memo: &str) {
+    match db::set_memo(ctx, &session.provider, &session.session_id, memo) {
+        Ok(()) => {
+            app.message = Some(if memo.trim().is_empty() {
+                format!(
+                    "cleared memo for {} {}",
+                    session.provider, session.session_id
+                )
+            } else {
+                format!("memo set for {} {}", session.provider, session.session_id)
+            });
+            app.dirty = true;
+        }
+        Err(err) => app.message = Some(format!("memo: {err:#}")),
+    }
+}
+
 fn render(frame: &mut Frame, app: &App) {
     let area = frame.area();
     frame.render_widget(
@@ -1208,7 +1269,7 @@ fn render_list(frame: &mut Frame, app: &App, area: Rect) {
         if index == app.selected {
             selected_row = Some(items.len());
         }
-        let title = list::truncate(session.title.as_deref().unwrap_or("-"), title_width);
+        let title = list::truncate(session.display_title().unwrap_or("-"), title_width);
         items.push(ListItem::new(Line::from(vec![
             Span::raw(" "),
             Span::styled(logo(&session.provider), Style::default().fg(latte::MAUVE)),
@@ -1318,6 +1379,9 @@ fn render_details(frame: &mut Frame, app: &App, area: Rect) {
         ("ago", ago),
         ("command", command),
     ]);
+    if let Some(memo) = &session.memo {
+        rows.push(("memo", memo.clone()));
+    }
     if let Some(pane) = &app.selected_pane {
         rows.push((
             "tmux",
@@ -1343,7 +1407,7 @@ fn render_details(frame: &mut Frame, app: &App, area: Rect) {
                 "status" => status_style(session.status),
                 "cwd" | "repo" => Style::default().fg(latte::BLUE),
                 "source" | "tmux" => Style::default().fg(latte::TEAL),
-                "title" => Style::default().add_modifier(Modifier::BOLD),
+                "title" | "memo" => Style::default().add_modifier(Modifier::BOLD),
                 _ => Style::default(),
             };
             spans.push(Span::styled(value, style));
@@ -1462,6 +1526,11 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
             let prompt = format!("idle within: {}", app.idle_input);
             frame.render_widget(Paragraph::new(prompt), area);
             frame.set_cursor_position((area.x + 13 + app.idle_input.len() as u16, area.y));
+        }
+        Input::Memo => {
+            let prompt = format!("memo: {}", app.memo_input);
+            frame.render_widget(Paragraph::new(prompt), area);
+            frame.set_cursor_position((area.x + 6 + app.memo_input.len() as u16, area.y));
         }
         Input::Confirm => {
             let label = match &app.confirm_session {

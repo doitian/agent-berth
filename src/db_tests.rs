@@ -170,6 +170,48 @@ fn persist_all_drops_pruned_entries() {
 }
 
 #[test]
+fn memos_persist_and_clear() {
+    let root = tempdir().unwrap();
+    let ctx = Context::for_test(root.path(), &root.path().join("agent-berth"));
+    std::fs::create_dir_all(&ctx.state_dir).unwrap();
+    let db = open(&ctx).unwrap();
+    let mut store = Store::default();
+    store
+        .update(
+            "claude",
+            serde_json::json!({"session_id":"abc","hook_event_name":"UserPromptSubmit"}),
+        )
+        .unwrap();
+    store.set_memo("claude", "abc", "investigate flaky CI");
+    store.set_memo("claude", "ghost", "stale");
+    store.prune(crate::store::now_ms(), crate::store::SESSION_RETENTION);
+    persist_all(&db, &store).unwrap();
+    drop(db);
+
+    let loaded = load_from_path(&ctx).unwrap();
+    assert_eq!(loaded.memo("claude", "abc"), Some("investigate flaky CI"));
+    assert_eq!(loaded.memo("claude", "ghost"), None);
+    let listed = loaded.listed();
+    assert_eq!(listed[0].memo.as_deref(), Some("investigate flaky CI"));
+
+    let db = open(&ctx).unwrap();
+    persist_memo(&db, "claude", "abc", "").unwrap();
+    assert!(load(&db).unwrap().memos.is_empty());
+}
+
+#[test]
+fn set_memo_falls_back_to_direct_write_without_server() {
+    let root = tempdir().unwrap();
+    let ctx = Context::for_test(root.path(), &root.path().join("agent-berth"));
+    std::fs::create_dir_all(&ctx.state_dir).unwrap();
+    set_memo(&ctx, "claude", "abc", " note over\nlines ").unwrap();
+    let loaded = load_from_path(&ctx).unwrap();
+    assert_eq!(loaded.memo("claude", "abc"), Some("note over lines"));
+    set_memo(&ctx, "claude", "abc", "  ").unwrap();
+    assert!(load_from_path(&ctx).unwrap().memos.is_empty());
+}
+
+#[test]
 fn migrates_legacy_json_once() {
     let root = tempdir().unwrap();
     let ctx = Context::for_test(root.path(), &root.path().join("agent-berth"));

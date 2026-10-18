@@ -5,8 +5,8 @@ use crate::duration::{parse_duration, parse_idle};
 use crate::paths::Context;
 use crate::transcript::Tools;
 use crate::{
-    attach, doctor, list, logs, new, notify, resume, rm, search, self_cmd, send, server, service,
-    setup, stats, tui,
+    attach, doctor, list, logs, memo, new, notify, resume, rm, search, self_cmd, send, server,
+    service, setup, stats, tui,
 };
 
 /// Monitor coding agents and resume their sessions.
@@ -64,7 +64,7 @@ enum Command {
     },
     /// Search stored sessions across all providers, including inactive sessions
     Search {
-        /// Match all terms against provider, session ID, title, status, directory, or branch
+        /// Match all terms against provider, session ID, title, memo, status, directory, or branch
         patterns: Vec<String>,
         /// Only include sessions created within this window (e.g. 3h, 2d)
         #[arg(long, value_name = "DURATION", value_parser = parse_duration)]
@@ -167,6 +167,18 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Set or show a session's memo, shown instead of its detected title
+    Memo {
+        /// Session ID or pattern to select the session with fzf
+        pattern: Option<String>,
+        /// Memo text; remaining arguments are joined with spaces. With no
+        /// text, prints the current memo.
+        #[arg(num_args = 0..)]
+        text: Vec<String>,
+        /// Clear the memo
+        #[arg(long, conflicts_with = "text")]
+        clear: bool,
+    },
     /// Remove sessions so they are hidden and never resumed
     #[command(alias = "remove")]
     Rm {
@@ -250,6 +262,11 @@ pub fn run() -> Result<()> {
             dry_run,
         } => resume::run(&ctx, parse_idle(idle.as_deref())?, pattern, here, dry_run),
         Command::Rm { patterns } => rm::run(&ctx, patterns),
+        Command::Memo {
+            pattern,
+            text,
+            clear,
+        } => memo::run(&ctx, pattern.as_deref(), &text, clear),
         Command::Logs {
             selector,
             last_reply,
@@ -271,5 +288,41 @@ pub fn run() -> Result<()> {
             };
             logs::run(&ctx, &selector, options)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn memo_parses_pattern_text_and_clear() {
+        let cli = Cli::try_parse_from(["agent-berth", "memo", "abc", "fix", "it"]).unwrap();
+        let Some(Command::Memo {
+            pattern,
+            text,
+            clear,
+        }) = cli.command
+        else {
+            panic!("expected memo command");
+        };
+        assert_eq!(pattern.as_deref(), Some("abc"));
+        assert_eq!(text, ["fix", "it"]);
+        assert!(!clear);
+
+        let cli = Cli::try_parse_from(["agent-berth", "memo", "abc", "--clear"]).unwrap();
+        let Some(Command::Memo { text, clear, .. }) = cli.command else {
+            panic!("expected memo command");
+        };
+        assert!(clear);
+        assert!(text.is_empty());
+
+        // Hyphen-leading text needs the `--` separator so flags still parse.
+        let cli = Cli::try_parse_from(["agent-berth", "memo", "abc", "--", "-fix"]).unwrap();
+        let Some(Command::Memo { text, .. }) = cli.command else {
+            panic!("expected memo command");
+        };
+        assert_eq!(text, ["-fix"]);
+        assert!(Cli::try_parse_from(["agent-berth", "memo", "abc", "x", "--clear"]).is_err());
     }
 }

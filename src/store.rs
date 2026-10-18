@@ -78,6 +78,9 @@ pub struct Store {
     /// it is busy; closing the tab or the host hides it for good.
     #[serde(default)]
     pub hosted: BTreeMap<String, BTreeSet<String>>,
+    /// User-set notes per session, shown instead of the detected title.
+    #[serde(default)]
+    pub memos: BTreeMap<String, BTreeMap<String, String>>,
 }
 
 impl Default for Store {
@@ -89,6 +92,7 @@ impl Default for Store {
             snapshots: BTreeMap::new(),
             removed: BTreeMap::new(),
             hosted: BTreeMap::new(),
+            memos: BTreeMap::new(),
         }
     }
 }
@@ -133,6 +137,8 @@ pub struct ListedSession {
     pub exited: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memo: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transcript_path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -348,6 +354,31 @@ impl Store {
             .is_some_and(|bucket| bucket.contains_key(session_id))
     }
 
+    /// An empty or whitespace-only memo clears the session's note.
+    pub fn set_memo(&mut self, provider: &str, session_id: &str, memo: &str) {
+        let memo = normalize_memo(memo);
+        if memo.is_empty() {
+            if let Some(bucket) = self.memos.get_mut(provider) {
+                bucket.remove(session_id);
+                if bucket.is_empty() {
+                    self.memos.remove(provider);
+                }
+            }
+        } else {
+            self.memos
+                .entry(provider.to_string())
+                .or_default()
+                .insert(session_id.to_string(), memo);
+        }
+    }
+
+    pub fn memo(&self, provider: &str, session_id: &str) -> Option<&str> {
+        self.memos
+            .get(provider)
+            .and_then(|bucket| bucket.get(session_id))
+            .map(String::as_str)
+    }
+
     pub fn discover(&mut self, ctx: &crate::paths::Context) -> bool {
         let mut changed = false;
         for provider in providers::all() {
@@ -396,6 +427,7 @@ impl Store {
                     pane_pid: None,
                     front: false,
                     tabbed: false,
+                    memo: None,
                 });
             }
         }
@@ -435,6 +467,7 @@ impl Store {
                         pane_pid: None,
                         front: false,
                         tabbed: false,
+                        memo: None,
                     });
                 }
             }
@@ -459,6 +492,11 @@ impl Store {
             }
         }
         let mut out: Vec<ListedSession> = best.into_values().collect();
+        for session in &mut out {
+            session.memo = self
+                .memo(&session.provider, &session.session_id)
+                .map(str::to_string);
+        }
         // Closed tabs emit no session events; the hosting TUI's tab list is
         // the only removal signal. An idle session outside every live host's
         // tabs is a closed tab (or a finished headless run), so hide it once
@@ -570,6 +608,13 @@ impl Store {
             changed |= set.len() != before;
         }
         self.hosted.retain(|_, set| !set.is_empty());
+
+        for (provider, bucket) in self.memos.iter_mut() {
+            let before = bucket.len();
+            bucket.retain(|sid, _| live.contains(&(provider.clone(), sid.clone())));
+            changed |= bucket.len() != before;
+        }
+        self.memos.retain(|_, bucket| !bucket.is_empty());
         changed
     }
 }
@@ -670,6 +715,20 @@ impl ListedSession {
         display_id(&self.provider, &self.session_id)
     }
 
+    /// The memo when set, otherwise the detected session title.
+    pub fn display_title(&self) -> Option<&str> {
+        self.memo.as_deref().or(self.title.as_deref())
+    }
+
+    /// Picker rows show the memo with the detected title appended, so fzf can
+    /// still match the title it no longer displays on its own.
+    pub fn picker_title(&self) -> String {
+        match (self.memo.as_deref(), self.title.as_deref()) {
+            (Some(memo), Some(title)) if memo != title => format!("{memo} ({title})"),
+            (memo, title) => memo.or(title).unwrap_or("-").to_string(),
+        }
+    }
+
     pub fn is_active(&self, now_ms: u64) -> bool {
         if self.exited || self.parent_id.is_some() {
             return false;
@@ -727,6 +786,12 @@ impl ListedSession {
         }
         idle_age_ms(self, store, now_ms) <= idle.as_millis() as u64
     }
+}
+
+/// Memos are single-line notes shown in delimited listings: collapse every
+/// whitespace run, including tabs and newlines, to a single space.
+pub fn normalize_memo(memo: &str) -> String {
+    memo.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 fn created_or(created_ms: u64, fallback_ms: u64) -> u64 {

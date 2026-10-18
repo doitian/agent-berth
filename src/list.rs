@@ -104,7 +104,7 @@ pub(crate) fn print_table(sessions: &[ListedSession], created: bool) -> Result<(
                 session.status.as_str().to_string(),
                 session.source.as_str().to_string(),
                 session.session_id.clone(),
-                truncate(session.title.as_deref().unwrap_or("-"), 40),
+                truncate(session.display_title().unwrap_or("-"), 40),
                 session.cwd.clone().unwrap_or_else(|| "-".into()),
                 session
                     .pid

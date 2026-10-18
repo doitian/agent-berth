@@ -99,6 +99,18 @@ pub fn remove(ctx: &AppContext, provider: &str, session_id: &str) -> Result<()> 
     }
 }
 
+pub fn memo(ctx: &AppContext, provider: &str, session_id: &str, memo: &str) -> Result<()> {
+    let request = Request::Memo {
+        provider: provider.to_string(),
+        session_id: session_id.to_string(),
+        memo: memo.to_string(),
+    };
+    match send(ctx, &request)? {
+        Response::Ok { .. } => Ok(()),
+        Response::Error { message } => bail!("{message}"),
+    }
+}
+
 pub fn bind(ctx: &AppContext) -> Result<Listener> {
     #[cfg(unix)]
     {

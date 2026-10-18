@@ -911,6 +911,7 @@ fn plugin_session(sid: &str) -> ListedSession {
         pane_pid: None,
         front: false,
         tabbed: false,
+        memo: None,
     }
 }
 
@@ -1011,4 +1012,73 @@ fn display_id_is_stable_short_and_provider_scoped() {
     assert_ne!(first, display_id("claude", "xyz"));
     assert_ne!(first, display_id("codex", "abc"));
     assert!(first.chars().all(|c| c.is_ascii_alphanumeric()));
+}
+
+#[test]
+fn memo_overrides_title_and_clears_on_empty() {
+    let mut store = Store::default();
+    store
+        .update(
+            "claude",
+            serde_json::json!({"session_id":"abc","hook_event_name":"UserPromptSubmit","title":"Detected title"}),
+        )
+        .unwrap();
+    store.set_memo("claude", "abc", " My note ");
+    let listed = store.listed();
+    assert_eq!(listed[0].memo.as_deref(), Some("My note"));
+    assert_eq!(listed[0].display_title(), Some("My note"));
+    assert_eq!(store.stored()[0].memo.as_deref(), Some("My note"));
+    store.set_memo("claude", "abc", "   ");
+    let listed = store.listed();
+    assert_eq!(listed[0].memo, None);
+    assert_eq!(listed[0].display_title(), Some("Detected title"));
+    assert!(store.memos.is_empty());
+}
+
+#[test]
+fn memo_collapses_whitespace_to_single_line() {
+    let mut store = Store::default();
+    store.set_memo("claude", "abc", "  a note\nwith\ttabs  ");
+    assert_eq!(store.memo("claude", "abc"), Some("a note with tabs"));
+}
+
+#[test]
+fn memo_applies_to_hook_and_plugin_entries_with_the_same_session_id() {
+    let mut store = Store::default();
+    store
+        .update(
+            "claude",
+            serde_json::json!({"session_id":"s","hook_event_name":"UserPromptSubmit"}),
+        )
+        .unwrap();
+    store
+        .update(
+            "claude",
+            serde_json::json!({"id":"instance","status":{"s":"busy"}}),
+        )
+        .unwrap();
+    store.set_memo("claude", "s", "shared note");
+    let listed = store.listed();
+    assert_eq!(listed.len(), 2);
+    assert!(
+        listed
+            .iter()
+            .all(|session| session.memo.as_deref() == Some("shared note"))
+    );
+}
+
+#[test]
+fn prune_drops_memos_of_dead_sessions() {
+    let mut store = Store::default();
+    store
+        .update(
+            "claude",
+            serde_json::json!({"session_id":"abc","hook_event_name":"UserPromptSubmit"}),
+        )
+        .unwrap();
+    store.set_memo("claude", "abc", "note");
+    store.set_memo("claude", "ghost", "stale");
+    assert!(store.prune(now_ms(), SESSION_RETENTION));
+    assert_eq!(store.memo("claude", "abc"), Some("note"));
+    assert_eq!(store.memo("claude", "ghost"), None);
 }

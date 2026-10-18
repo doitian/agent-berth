@@ -23,6 +23,7 @@ fn listed(provider: &str, session_id: &str, title: Option<&str>) -> ListedSessio
         pane_pid: None,
         front: false,
         tabbed: false,
+        memo: None,
     }
 }
 
@@ -600,6 +601,75 @@ fn confirm_cancel_keys_keep_the_session() {
         assert_eq!(app.input, Input::Normal);
         assert!(app.confirm_session.is_none());
     }
+}
+
+#[test]
+fn m_opens_memo_input_prefilled_and_enter_emits_effect() {
+    let mut app = app_with_sessions();
+    app.handle_key(char_key('j'));
+    assert!(matches!(app.handle_key(char_key('m')), Effect::None));
+    assert_eq!(app.input, Input::Memo);
+    assert_eq!(app.memo_input, "");
+    assert_eq!(app.memo_session.as_ref().unwrap().session_id, "def");
+    for ch in "investigate flaky CI".chars() {
+        app.handle_key(char_key(ch));
+    }
+    match app.handle_key(key(KeyCode::Enter)) {
+        Effect::Memo(session, memo) => {
+            assert_eq!(session.session_id, "def");
+            assert_eq!(memo, "investigate flaky CI");
+        }
+        _ => panic!("expected memo effect"),
+    }
+    assert_eq!(app.input, Input::Normal);
+    assert!(app.memo_session.is_none());
+
+    app.sessions[0].memo = Some("old memo".into());
+    app.handle_key(char_key('k'));
+    app.handle_key(char_key('m'));
+    assert_eq!(app.memo_input, "old memo");
+    app.handle_key(key(KeyCode::Backspace));
+    assert_eq!(app.memo_input, "old mem");
+    match app.handle_key(key(KeyCode::Enter)) {
+        Effect::Memo(session, memo) => {
+            assert_eq!(session.session_id, "abc");
+            assert_eq!(memo, "old mem");
+        }
+        _ => panic!("expected memo effect"),
+    }
+}
+
+#[test]
+fn memo_esc_cancels_without_effect() {
+    let mut app = app_with_sessions();
+    app.handle_key(char_key('m'));
+    app.handle_key(char_key('x'));
+    assert!(matches!(app.handle_key(key(KeyCode::Esc)), Effect::None));
+    assert_eq!(app.input, Input::Normal);
+    assert!(app.memo_session.is_none());
+    assert!(app.memo_input.is_empty());
+}
+
+#[test]
+fn m_without_sessions_shows_message() {
+    let mut app = App::new(&test_ctx());
+    assert!(matches!(app.handle_key(char_key('m')), Effect::None));
+    assert_eq!(app.input, Input::Normal);
+    assert!(app.message.is_some());
+}
+
+#[test]
+fn list_shows_memo_instead_of_title() {
+    let mut app = app_with_sessions();
+    app.sessions[0].memo = Some("my note".into());
+    let buffer = list_buffer(&app, 12);
+    let text = buffer
+        .content
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect::<String>();
+    assert!(text.contains("my note"), "{text}");
+    assert!(!text.contains("Fix attach"), "{text}");
 }
 
 #[test]

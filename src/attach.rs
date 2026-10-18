@@ -154,7 +154,7 @@ impl Candidate {
             self.session.id(),
             self.session.provider,
             self.session.status.as_str(),
-            self.session.title.as_deref().unwrap_or("-"),
+            self.session.picker_title(),
             folder_name(&self.cwd).unwrap_or_else(|| "-".into()),
             self.branch.as_deref().unwrap_or("-"),
             self.session.session_id,

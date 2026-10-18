@@ -68,6 +68,22 @@ fn request_response_roundtrip() {
             if provider == "claude" && session_id == "s"
     ));
 
+    let memo = Request::Memo {
+        provider: "claude".into(),
+        session_id: "s".into(),
+        memo: "note".into(),
+    };
+    let text = serde_json::to_string(&memo).unwrap();
+    assert!(text.contains("memo"));
+    assert!(matches!(
+        serde_json::from_str(&text).unwrap(),
+        Request::Memo {
+            provider,
+            session_id,
+            memo
+        } if provider == "claude" && session_id == "s" && memo == "note"
+    ));
+
     let ok = serde_json::to_string(&Response::ok()).unwrap();
     let parsed: Response = serde_json::from_str(&ok).unwrap();
     assert!(matches!(parsed, Response::Ok { sessions: None, .. }));

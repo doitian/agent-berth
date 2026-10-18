@@ -8,6 +8,7 @@ mod hubs;
 mod ipc;
 mod list;
 mod logs;
+mod memo;
 mod new;
 mod notify;
 mod paths;

@@ -23,6 +23,12 @@ pub enum Request {
         provider: String,
         session_id: String,
     },
+    /// An empty memo clears the session's note.
+    Memo {
+        provider: String,
+        session_id: String,
+        memo: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -23,6 +23,7 @@ fn session(provider: &str, title: &str, cwd: &str) -> ListedSession {
         pane_pid: None,
         front: false,
         tabbed: false,
+        memo: None,
     }
 }
 
@@ -43,6 +44,26 @@ fn filters_nothing_when_patterns_are_empty() {
     let cwd = std::env::current_dir().unwrap().display().to_string();
     let sessions = [session("claude", "Fix", &cwd)];
     assert_eq!(filter(&sessions, &[]).len(), 1);
+}
+
+#[test]
+fn filters_match_memos_and_lines_keep_titles_searchable() {
+    let cwd = std::env::current_dir().unwrap().display().to_string();
+    let mut claude = session("claude", "Fix the parser", &cwd);
+    claude.memo = Some("investigate flaky CI".into());
+    let sessions = [claude, session("codex", "Unrelated work", &cwd)];
+    let matched = filter(&sessions, &["flaky".into()]);
+    assert_eq!(matched.len(), 1);
+    assert_eq!(matched[0].provider, "claude");
+
+    // The picker row shows the memo with the detected title appended, so an
+    // fzf query seeded from patterns that matched the title still matches.
+    let line = display_line(&matched[0]);
+    assert!(
+        line.contains("investigate flaky CI (Fix the parser)"),
+        "{line}"
+    );
+    assert!(display_line(&sessions[1]).contains("Unrelated work"));
 }
 
 #[test]

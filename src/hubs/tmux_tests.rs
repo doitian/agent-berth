@@ -23,6 +23,7 @@ fn listed() -> ListedSession {
         pane_pid: None,
         front: false,
         tabbed: false,
+        memo: None,
     }
 }
 

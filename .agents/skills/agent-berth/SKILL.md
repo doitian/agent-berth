@@ -64,6 +64,7 @@ session the process opened, newest first. Useful fields:
 | `status` | `running`, `waiting`, `done`, or `idle` (step 3) |
 | `provider` | `claude`, `codex`, `grok`, `opencode`, or `pi` |
 | `title`, `cwd` | Session title and working directory |
+| `memo` | User-set note; shown in place of the title when set, and matched by search |
 | `tmux_pane` | `id`, `session`, `window`, `window_name`, `path`, and `pid` of the pane |
 | `last_report_ms` | Time of the latest report, in Unix milliseconds |
 

@@ -63,12 +63,13 @@ fn search_text(session: &ListedSession) -> String {
     let branch = git::branch(Path::new(&cwd)).unwrap_or_default();
     let folder = folder_name(&cwd).unwrap_or_default();
     format!(
-        "{} {} {} {} {} {} {} {}",
+        "{} {} {} {} {} {} {} {} {}",
         session.id(),
         session.provider,
         session.session_id,
         session.status.as_str(),
         session.title.as_deref().unwrap_or(""),
+        session.memo.as_deref().unwrap_or(""),
         cwd,
         folder,
         branch,
@@ -115,7 +116,7 @@ fn display_line(session: &ListedSession) -> String {
         session.provider,
         session.status.as_str(),
         session.session_id,
-        session.title.as_deref().unwrap_or("-"),
+        session.picker_title(),
         folder,
         branch,
     )

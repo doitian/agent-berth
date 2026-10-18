@@ -14,6 +14,7 @@ const HOOKS: TableDefinition<&str, &[u8]> = TableDefinition::new("hooks");
 const SNAPSHOTS: TableDefinition<&str, &[u8]> = TableDefinition::new("snapshots");
 const REMOVED: TableDefinition<&str, u64> = TableDefinition::new("removed");
 const HOSTED: TableDefinition<&str, &[u8]> = TableDefinition::new("hosted");
+const MEMOS: TableDefinition<&str, &str> = TableDefinition::new("memos");
 
 const LAST_HEARTBEAT: &str = "last_heartbeat_ms";
 const PREV_HEARTBEAT: &str = "previous_heartbeat_ms";
@@ -94,6 +95,19 @@ pub fn load(db: &Database) -> Result<Store> {
             store.hosted.insert(key.value().to_string(), set);
         }
     }
+    if let Ok(table) = txn.open_table(MEMOS) {
+        for entry in table.iter()? {
+            let (key, value) = entry?;
+            let Some((provider, session_id)) = split_key(key.value()) else {
+                continue;
+            };
+            store
+                .memos
+                .entry(provider.to_string())
+                .or_default()
+                .insert(session_id.to_string(), value.value().to_string());
+        }
+    }
     Ok(store)
 }
 
@@ -164,6 +178,14 @@ pub fn mark_removed(ctx: &AppContext, provider: &str, session_id: &str) -> Resul
     }
     let db = open(ctx)?;
     persist_removal(&db, provider, session_id, removed_at)
+}
+
+pub fn set_memo(ctx: &AppContext, provider: &str, session_id: &str, memo: &str) -> Result<()> {
+    if ipc::memo(ctx, provider, session_id, memo).is_ok() {
+        return Ok(());
+    }
+    let db = open(ctx)?;
+    persist_memo(&db, provider, session_id, memo)
 }
 
 pub fn persist_heartbeats(db: &Database, store: &Store) -> Result<()> {
@@ -246,6 +268,23 @@ pub fn persist_removal(
     Ok(())
 }
 
+/// An empty memo deletes the row, mirroring [`Store::set_memo`].
+pub fn persist_memo(db: &Database, provider: &str, session_id: &str, memo: &str) -> Result<()> {
+    let txn = db.begin_write().context("write redb")?;
+    {
+        let mut table = txn.open_table(MEMOS)?;
+        let key = format!("{provider}\0{session_id}");
+        let memo = crate::store::normalize_memo(memo);
+        if memo.is_empty() {
+            table.remove(key.as_str())?;
+        } else {
+            table.insert(key.as_str(), memo.as_str())?;
+        }
+    }
+    txn.commit()?;
+    Ok(())
+}
+
 fn persist_snapshot(
     db: &Database,
     provider: &str,
@@ -303,6 +342,7 @@ pub fn persist_all(db: &Database, store: &Store) -> Result<()> {
     sync_snapshots(db, &store.snapshots)?;
     sync_removed(db, &store.removed)?;
     sync_hosted(db, &store.hosted)?;
+    sync_memos(db, &store.memos)?;
     Ok(())
 }
 
@@ -404,6 +444,37 @@ fn sync_removed(db: &Database, all: &BTreeMap<String, BTreeMap<String, u64>>) ->
     Ok(())
 }
 
+fn sync_memos(db: &Database, all: &BTreeMap<String, BTreeMap<String, String>>) -> Result<()> {
+    let mut valid = std::collections::BTreeSet::new();
+    for (provider, memos) in all {
+        for sid in memos.keys() {
+            valid.insert(format!("{provider}\0{sid}"));
+        }
+    }
+    let txn = db.begin_write().context("write redb")?;
+    {
+        let mut table = txn.open_table(MEMOS)?;
+        let mut stale = Vec::new();
+        for entry in table.iter()? {
+            let (key, _) = entry?;
+            if !valid.contains(key.value()) {
+                stale.push(key.value().to_string());
+            }
+        }
+        for key in stale {
+            table.remove(key.as_str())?;
+        }
+        for (provider, memos) in all {
+            for (sid, memo) in memos {
+                let key = format!("{provider}\0{sid}");
+                table.insert(key.as_str(), memo.as_str())?;
+            }
+        }
+    }
+    txn.commit()?;
+    Ok(())
+}
+
 fn init_tables(db: &Database) -> Result<()> {
     let txn = db.begin_write().context("write redb")?;
     {
@@ -412,6 +483,7 @@ fn init_tables(db: &Database) -> Result<()> {
         let _ = txn.open_table(SNAPSHOTS)?;
         let _ = txn.open_table(REMOVED)?;
         let _ = txn.open_table(HOSTED)?;
+        let _ = txn.open_table(MEMOS)?;
     }
     txn.commit()?;
     Ok(())

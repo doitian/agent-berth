@@ -63,6 +63,9 @@ fn serve(ctx: &AppContext) -> Result<()> {
     let db = Arc::new(db::open(ctx)?);
     let mut store = db::load(&db)?;
     store.on_server_start();
+    // Discover before pruning so a memo written while the server was down is
+    // not dropped for a session only discovery knows about.
+    store.discover(ctx);
     store.prune(crate::store::now_ms(), crate::store::SESSION_RETENTION);
     db::persist_all(&db, &store)?;
     std::fs::write(ctx.pid_path(), std::process::id().to_string())
@@ -170,6 +173,20 @@ fn handle(stream: Stream, state: &Mutex<Store>, db: &Database) -> Result<()> {
             Ok(mut store) => {
                 let removed_at = store.mark_removed(&provider, &session_id);
                 match db::persist_removal(db, &provider, &session_id, removed_at) {
+                    Ok(()) => Response::ok(),
+                    Err(err) => Response::error(err.to_string()),
+                }
+            }
+            Err(_) => Response::error("store lock poisoned"),
+        },
+        Request::Memo {
+            provider,
+            session_id,
+            memo,
+        } => match state.lock() {
+            Ok(mut store) => {
+                store.set_memo(&provider, &session_id, &memo);
+                match db::persist_memo(db, &provider, &session_id, &memo) {
                     Ok(()) => Response::ok(),
                     Err(err) => Response::error(err.to_string()),
                 }

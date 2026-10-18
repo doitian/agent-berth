@@ -24,6 +24,7 @@ fn listed(cwd: Option<&str>, title: Option<&str>) -> ListedSession {
         pane_pid: None,
         front: false,
         tabbed: false,
+        memo: None,
     }
 }
 
@@ -62,6 +63,20 @@ fn line_exposes_title_folder_and_branch() {
         candidate.line(),
         format!("%1\t{id}\tclaude\trunning\tFix attach\tproject\tmain\tabc")
     );
+}
+
+#[test]
+fn line_shows_memo_but_keeps_title_searchable() {
+    let root = repo("project", "main");
+    let project = root.path().join("project");
+    let cwd = project.display().to_string();
+    let mut session = listed(Some(&cwd), Some("Fix attach"));
+    session.memo = Some("my note".into());
+    let candidate = Candidate::new(pane("%1", 1, &cwd), session);
+    let line = candidate.line();
+    let fields: Vec<_> = line.split('\t').collect();
+    assert_eq!(fields[4], "my note (Fix attach)");
+    assert_eq!(fields.len(), 8);
 }
 
 #[test]
