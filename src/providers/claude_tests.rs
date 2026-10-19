@@ -409,3 +409,34 @@ fn turn_terminal_hooks_are_installed_synchronously() {
         assert_eq!(handler["async"], Value::Bool(expected), "{event}");
     }
 }
+
+fn desktop_session(title: Option<&str>) -> ListedSession {
+    let mut session: ListedSession = serde_json::from_value(json!({
+        "provider": "claude", "session_id": "sid-1", "status": "idle",
+        "source": "desktop", "cwd": null, "cmdline": [], "pid": null,
+        "created_ms": 1, "last_report_ms": 2, "kind": "hook"
+    }))
+    .unwrap();
+    session.title = title.map(str::to_string);
+    session
+}
+
+#[test]
+fn desktop_send_prompts_a_sonnet_run_to_message_the_session() {
+    let cmd = desktop_send_cmd(&desktop_session(Some("fix rebases")), "rebase onto main");
+    assert_eq!(
+        cmd,
+        vec![
+            "claude",
+            "--model",
+            "sonnet",
+            "-p",
+            "Do not reply to the sender; this session exits as soon as the message is delivered. Send a message to the session named \"fix rebases\" (session ID sid-1): rebase onto main",
+        ]
+    );
+    let cmd = desktop_send_cmd(&desktop_session(None), "rebase onto main");
+    assert_eq!(
+        cmd[4],
+        "Do not reply to the sender; this session exits as soon as the message is delivered. Send a message to the session with session ID sid-1: rebase onto main"
+    );
+}

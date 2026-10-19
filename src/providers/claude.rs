@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 use super::{
     Discovery, Focus, HookEvents, Integration, Messaging, Provider, Transcript, TranscriptLog,
     command_handler, focus_or_desktop, group_is_ours, load_object, log_preview, log_transcript,
-    save_object,
+    run_send_cmd, save_object,
 };
 use crate::hubs::{Hub, Preview};
 use crate::paths::Context;
@@ -120,7 +120,40 @@ impl Focus for Claude {
     }
 }
 
-impl Messaging for Claude {}
+impl Messaging for Claude {
+    // A Desktop session lives in the app, not in a pane the hub can type
+    // into. A fresh `claude -p` run reaches it through the CLI's
+    // cross-session messaging instead, on a cheap model.
+    fn send(&self, hub: &dyn Hub, session: &ListedSession, message: &str) -> Result<()> {
+        if session.source != Source::Desktop {
+            return hub.send(session, message);
+        }
+        run_send_cmd(session, &desktop_send_cmd(session, message))
+    }
+}
+
+fn desktop_send_cmd(session: &ListedSession, message: &str) -> Vec<String> {
+    let sid = &session.session_id;
+    // The static part leads so the one-shot run can reuse a cached prompt
+    // prefix; the session name, ID, and message follow it.
+    let one_shot =
+        "Do not reply to the sender; this session exits as soon as the message is delivered. ";
+    let prompt = match &session.title {
+        Some(name) => format!(
+            "{one_shot}Send a message to the session named {name:?} (session ID {sid}): {message}"
+        ),
+        None => {
+            format!("{one_shot}Send a message to the session with session ID {sid}: {message}")
+        }
+    };
+    vec![
+        "claude".into(),
+        "--model".into(),
+        "sonnet".into(),
+        "-p".into(),
+        prompt,
+    ]
+}
 
 impl Transcript for Claude {
     fn transcript(

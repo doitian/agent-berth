@@ -301,7 +301,10 @@ with `tmux send-keys`: `-l` keeps the text literal, each newline is inserted
 with `C-j`, and a final Enter submits it. The session must be the active
 program in the pane; a session that is only a background tab is rejected.
 Codex desktop sessions are reached like CLI ones when they share the local
-app-server; Claude desktop sessions have no send path.
+app-server. A Claude desktop session has no pane, so a fresh
+`claude --model sonnet -p` run delivers the message through the CLI's
+cross-session messaging, addressed by the session's name and Claude session
+ID.
 
 A session whose status is `waiting` is refused: it is showing a permission
 prompt or a question, so typed text and Enter would answer the dialog, and a
