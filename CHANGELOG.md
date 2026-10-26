@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented in this file.
 
+## [3.4.0](https://github.com/doitian/agent-berth/releases/tag/v3.4.0) - 2026-10-26
+
+### Added
+
+- Add send path for claude desktop sessions via cross-session messaging ([16e628b](https://github.com/doitian/agent-berth/commit/16e628b9cea3bc3397606652cc7961cf2bc66b6e))
+- Add message input to tui for sending to active sessions ([dd1fa15](https://github.com/doitian/agent-berth/commit/dd1fa15f6fa2555ac5cc58462f78bb0da4a3b1ed))
+- Add codebuddy provider ([0e6558c](https://github.com/doitian/agent-berth/commit/0e6558c3e055b765b336bf488573350eeb9113aa))
+- Add per-agent launch references to agent-berth skill ([3172543](https://github.com/doitian/agent-berth/commit/3172543ddfe87d10c20c83d49b080d21a4c355f0))
+
 ## [3.3.0](https://github.com/doitian/agent-berth/releases/tag/v3.3.0) - 2026-10-18
 
 ### Added
