@@ -14,6 +14,7 @@ pub struct Context {
     pub xdg_runtime_dir: PathBuf,
     pub state_dir: PathBuf,
     pub claude_config_dir: PathBuf,
+    pub codebuddy_config_dir: PathBuf,
     pub codex_home: PathBuf,
     pub grok_home: PathBuf,
     pub pi_dir: PathBuf,
@@ -44,6 +45,8 @@ impl Context {
         Ok(Self {
             claude_config_dir: env_path("CLAUDE_CONFIG_DIR")
                 .unwrap_or_else(|| home.join(".claude")),
+            codebuddy_config_dir: env_path("CODEBUDDY_CONFIG_DIR")
+                .unwrap_or_else(|| home.join(".codebuddy")),
             codex_home: env_path("CODEX_HOME").unwrap_or_else(|| home.join(".codex")),
             grok_home: env_path("GROK_HOME").unwrap_or_else(|| home.join(".grok")),
             pi_dir: env_path("PI_CODING_AGENT_DIR")
@@ -260,6 +263,7 @@ impl Context {
             xdg_runtime_dir: root.join("run"),
             state_dir: root.join("state"),
             claude_config_dir: root.join("claude"),
+            codebuddy_config_dir: root.join("codebuddy"),
             codex_home: root.join("codex"),
             grok_home: root.join("grok"),
             pi_dir: root.join("pi"),

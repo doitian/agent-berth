@@ -1570,7 +1570,7 @@ fn cli_app(provider: &str) -> App {
 
 #[test]
 fn cli_without_front_pane_previews_conversation_when_supported() {
-    for provider in ["claude", "codex", "pi"] {
+    for provider in ["claude", "codebuddy", "codex", "pi"] {
         let mut app = cli_app(provider);
         assert!(app.selected_transcript.is_some(), "{provider}");
         assert!(app.has_preview(), "{provider}");
@@ -1649,7 +1649,7 @@ fn cli_front_pane_keeps_pane_preview_over_conversation() {
 
 #[test]
 fn logos_cover_known_providers() {
-    for provider in ["claude", "codex", "grok", "opencode", "pi"] {
+    for provider in ["claude", "codebuddy", "codex", "grok", "opencode", "pi"] {
         assert_ne!(logo(provider), logo("unknown"), "{provider}");
     }
 }

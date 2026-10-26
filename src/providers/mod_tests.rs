@@ -182,6 +182,9 @@ fn install_and_uninstall_are_idempotent() {
             .join("agent-berth.json")
             .exists()
     );
+    let codebuddy =
+        fs::read_to_string(ctx.codebuddy_config_dir.join("settings.json")).unwrap_or_default();
+    assert!(!codebuddy.contains("notify --provider codebuddy"));
 }
 
 #[test]
@@ -189,6 +192,10 @@ fn resume_commands_match_providers() {
     assert_eq!(resume_cmd("claude", "abc"), ["claude", "--resume", "abc"]);
     assert_eq!(resume_cmd("codex", "abc"), ["codex", "resume", "abc"]);
     assert_eq!(resume_cmd("grok", "abc"), ["grok", "--resume", "abc"]);
+    assert_eq!(
+        resume_cmd("codebuddy", "abc"),
+        ["codebuddy", "--resume", "abc"]
+    );
     assert_eq!(
         resume_cmd("opencode", "abc"),
         ["opencode", "--session", "abc"]
@@ -220,6 +227,10 @@ fn log_roots_cover_local_providers_only() {
     );
     let root = |name: &str| lookup(name).unwrap().log().map(|log| log.root(&ctx));
     assert_eq!(root("claude"), Some(ctx.claude_config_dir.join("projects")));
+    assert_eq!(
+        root("codebuddy"),
+        Some(ctx.codebuddy_config_dir.join("projects"))
+    );
     assert_eq!(root("codex"), Some(ctx.codex_home.join("sessions")));
     assert_eq!(root("pi"), Some(ctx.pi_dir.join("sessions")));
     assert_eq!(root("opencode"), None);

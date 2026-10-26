@@ -13,6 +13,7 @@ use crate::store::ListedSession;
 use crate::transcript::{self, Conversation, Feed, Record};
 
 mod claude;
+mod codebuddy;
 mod codex;
 mod grok;
 mod opencode;
@@ -21,8 +22,9 @@ mod pi;
 /// Every supported agent. Adding a provider means implementing [`Provider`]
 /// and its supertraits, overriding the hub defaults it supports natively, and
 /// listing it here.
-static ALL: [&dyn Provider; 5] = [
+static ALL: [&dyn Provider; 6] = [
     &claude::Claude,
+    &codebuddy::CodeBuddy,
     &codex::Codex,
     &grok::Grok,
     &opencode::Opencode,

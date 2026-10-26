@@ -262,9 +262,9 @@ fn bounds_text_and_removes_terminal_controls() {
 #[test]
 fn discovers_only_transcripts_with_matching_session_identity() {
     let dir = tempfile::tempdir().unwrap();
-    for provider in ["claude", "codex", "pi"] {
+    for provider in ["claude", "codebuddy", "codex", "pi"] {
         let path = dir.path().join(match provider {
-            "claude" => "s.jsonl",
+            "claude" | "codebuddy" => "s.jsonl",
             "codex" => "rollout-date-s.jsonl",
             _ => "2026-09-26T12-00-00_s.jsonl",
         });
@@ -277,7 +277,7 @@ fn discovers_only_transcripts_with_matching_session_identity() {
         std::fs::write(&path, "{\"sessionId\":\"other\"}\n").unwrap();
         assert!(locate(&source).is_none());
         let header = match provider {
-            "claude" => json!({"sessionId":"s"}),
+            "claude" | "codebuddy" => json!({"sessionId":"s"}),
             "codex" => json!({"type":"session_meta","payload":{"id":"s"}}),
             _ => json!({"type":"session","version":3,"id":"s"}),
         };
@@ -312,6 +312,7 @@ fn unavailable_and_read_errors_are_distinct_and_recoverable() {
 #[test]
 fn supports_covers_exactly_the_parseable_providers() {
     assert!(supports("claude"));
+    assert!(supports("codebuddy"));
     assert!(supports("codex"));
     assert!(supports("pi"));
     for provider in ["grok", "opencode", "unknown"] {

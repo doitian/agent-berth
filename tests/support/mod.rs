@@ -98,6 +98,7 @@ impl Sandbox {
             ("XDG_RUNTIME_DIR", "run"),
             ("CLAUDE_CONFIG_DIR", "claude"),
             ("CLAUDE_DESKTOP_SESSIONS", "claude-desktop"),
+            ("CODEBUDDY_CONFIG_DIR", "codebuddy"),
             ("CODEX_HOME", "codex"),
             ("GROK_HOME", "grok"),
             ("PI_CODING_AGENT_DIR", "pi"),
@@ -117,6 +118,7 @@ impl Sandbox {
         let fixture = fixture();
         for name in [
             "claude",
+            "codebuddy",
             "codex",
             "fzf",
             "grok",
@@ -272,6 +274,25 @@ impl Sandbox {
             "session_id": sid, "hook_event_name": event,
             "cwd": self.project(), "pid": pid,
         });
+        self.deliver(provider, payload, pid);
+    }
+
+    pub fn hook_notification(
+        &self,
+        provider: &str,
+        sid: &str,
+        notification: &str,
+        pid: Option<u32>,
+    ) {
+        let payload = json!({
+            "session_id": sid, "hook_event_name": "Notification",
+            "notification_type": notification,
+            "cwd": self.project(), "pid": pid,
+        });
+        self.deliver(provider, payload, pid);
+    }
+
+    fn deliver(&self, provider: &str, payload: Value, pid: Option<u32>) {
         if pid.is_some() {
             self.notify(provider, payload);
         } else {

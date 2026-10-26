@@ -3,8 +3,8 @@
 Monitor coding agents and resume their sessions.
 
 agent-berth runs a small background server that tracks the status of your AI
-coding agent sessions — Claude Code, Codex, Grok, OpenCode, and Pi — through
-hooks installed into each agent. When the server or the host restarts, it can
+coding agent sessions — Claude Code, CodeBuddy, Codex, Grok, OpenCode, and Pi
+— through hooks installed into each agent. When the server or the host restarts, it can
 resume the sessions you were working on, each in its own tmux window, grouped
 by working directory.
 
@@ -103,14 +103,14 @@ and Codex desktop sessions show a live conversation preview instead, with
 user messages, assistant responses, and concise tool activity. CLI sessions
 fall back to the same conversation preview when no front tmux pane shows
 their output — no pane at all, or the pane hosts the session only as a
-background tab — if the provider supports transcripts (Claude, Codex, and
-Pi).
+background tab — if the provider supports transcripts (Claude, CodeBuddy,
+Codex, and Pi).
 
 Conversation previews follow the transcript path reported by agent hooks. For
 already-running sessions, agent-berth also looks for a matching session file
-under `CLAUDE_CONFIG_DIR/projects`, `CODEX_HOME/sessions`, or
-`PI_CODING_AGENT_DIR/sessions` (using the default provider directories when
-these variables are unset). If no transcript can
+under `CLAUDE_CONFIG_DIR/projects`, `CODEBUDDY_CONFIG_DIR/projects`,
+`CODEX_HOME/sessions`, or `PI_CODING_AGENT_DIR/sessions` (using the default
+provider directories when these variables are unset). If no transcript can
 be located, the preview waits for a hook to provide its path. Run `setup` to
 install hooks, then send a prompt in the session.
 
@@ -220,7 +220,8 @@ that take patterns (`attach`, `resume`, `rm`, `search`, `logs`) also match the I
 example, `agent-berth attach <id>` focuses a pane without opening the picker.
 An agent prints its own ID with `agent-berth self` (the session's JSON with
 `--json`), derived from the provider's shell-tool environment — Claude Code's
-`CLAUDE_CODE_SESSION_ID` or Pi's `PI_SESSION_ID` — or from the session shown
+`CLAUDE_CODE_SESSION_ID`, CodeBuddy's `CODEBUDDY_SESSION_ID`, or Pi's
+`PI_SESSION_ID` — or from the session shown
 in `$TMUX_PANE`. A Claude Code subagent shares its parent's environment, so
 `self` inside one names the parent session, not the `<session>:<agent>` key
 its hooks report.
@@ -269,8 +270,8 @@ turns, each starting with a prompt and holding the agent's work on it:
   `final` reply, `complete` flag, and entries. A transcript read from a tmux
   pane has no turns and prints `"structured": false` with its text.
 
-Claude, Codex, Pi, and OpenCode transcripts have turns. A tmux pane capture
-does not, so there `--final` and `--turns` print its last 40 lines, or the
+Claude, CodeBuddy, Codex, Pi, and OpenCode transcripts have turns. A tmux pane
+capture does not, so there `--final` and `--turns` print its last 40 lines, or the
 last `--tail` lines, and say so on stderr.
 
 ```sh
@@ -279,9 +280,9 @@ agent-berth logs 4wqecx --turns 1 --tools brief
 agent-berth logs 4wqecx --final --json | jq -r '.turns[0].final'
 ```
 
-Claude, Codex, and Pi transcripts come from their local JSONL session files.
-OpenCode keeps sessions in a service-owned database with no log file, so `logs`
-runs `opencode session export <id>` and renders its messages. When no local or
+Claude, CodeBuddy, Codex, and Pi transcripts come from their local JSONL
+session files. OpenCode keeps sessions in a service-owned database with no log
+file, so `logs` runs `opencode session export <id>` and renders its messages. When no local or
 exported transcript is available — an unsupported provider such as Grok or
 Paseo, a missing file, or an OpenCode server that is not running — and the
 session resolves to a tmux pane, `logs` falls back to capturing that pane's
@@ -296,9 +297,9 @@ own CLI when
 that CLI can hand a message to the running session: Codex goes through
 `codex queue --thread <id> --message`, which targets the shared app-server the
 session is attached to, and OpenCode goes through its prompt API on the shared
-background server. Claude, Grok, and Pi have no command that reaches an
-already-running session, so the message is typed into the tmux pane running it
-with `tmux send-keys`: `-l` keeps the text literal, each newline is inserted
+background server. Claude, CodeBuddy, Grok, and Pi have no command that reaches
+an already-running session, so the message is typed into the tmux pane running
+it with `tmux send-keys`: `-l` keeps the text literal, each newline is inserted
 with `C-j`, and a final Enter submits it. The session must be the active
 program in the pane; a session that is only a background tab is rejected.
 Codex desktop sessions are reached like CLI ones when they share the local
@@ -326,9 +327,9 @@ default is `10m`).
 
 Every session carries monotonic `turns_started` and `turns_ended` counts in
 `list --json`, `search --json`, and `self --json`. Hook providers (Claude,
-Codex, Grok) count a start when a turn becomes `running` or `waiting` and an
-end on each Stop hook; plugin providers (OpenCode, Pi) count the busy/idle
-edges between their reports. Unlike `status`, which only holds the latest
+CodeBuddy, Codex, Grok) count a start when a turn becomes `running` or
+`waiting` and an end on each Stop hook; plugin providers (OpenCode, Pi) count
+the busy/idle edges between their reports. Unlike `status`, which only holds the latest
 level, the counts show a turn that began and ended between two looks, and
 they survive server restarts.
 
@@ -431,8 +432,8 @@ named pipe on Windows.
 | `AGENT_BERTH_TMUX_SOCKET` | Add `tmux -L <name>` to every tmux invocation |
 | `AGENT_BERTH_TMUX_CONFIG` | Add `tmux -f <path>` to every tmux invocation |
 
-Provider config locations honor `CLAUDE_CONFIG_DIR`, `CODEX_HOME`,
-`GROK_HOME`, and `PI_CODING_AGENT_DIR`.
+Provider config locations honor `CLAUDE_CONFIG_DIR`, `CODEBUDDY_CONFIG_DIR`,
+`CODEX_HOME`, `GROK_HOME`, and `PI_CODING_AGENT_DIR`.
 
 ## Development
 

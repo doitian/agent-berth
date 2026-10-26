@@ -13,7 +13,7 @@ tmux, authentication, or model request is needed for the default suite.
 
 Coverage includes:
 
-- Claude, Codex, and Grok hook lifecycle transitions, including session removal.
+- Claude, CodeBuddy, Codex, and Grok hook lifecycle transitions, including session removal.
 - Paseo identity forwarding and record-based routing of existing sessions,
   API-backed focus and deep links without tmux or the Paseo CLI, and streaming
   against an in-process WebSocket daemon with lifecycle and output bounds.

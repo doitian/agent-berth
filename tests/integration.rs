@@ -64,17 +64,12 @@ fn client_command(sandbox: &Sandbox, executable: &Path) -> std::process::Command
 fn hook_clients_report_lifecycle_over_ipc() {
     let mut sandbox = Sandbox::new();
     sandbox.start();
-    for provider in ["claude", "codex", "grok"] {
+    for provider in ["claude", "codebuddy", "codex", "grok"] {
         let sid = format!("{provider}-session");
-        sandbox.hook(provider, &sid, "SessionStart", Some(std::process::id()));
+        let pid = Some(std::process::id());
+        sandbox.hook(provider, &sid, "SessionStart", pid);
         assert!(sandbox.sessions(false).is_empty());
-        for (event, status) in [
-            ("UserPromptSubmit", "running"),
-            ("PermissionRequest", "waiting"),
-            ("PostToolUse", "running"),
-            ("Stop", "done"),
-        ] {
-            sandbox.hook(provider, &sid, event, Some(std::process::id()));
+        let assert_status = |event: &str, status: &str| {
             let sessions = sandbox.sessions(false);
             assert_eq!(sessions.len(), 1, "{provider} {event}: {sessions:?}");
             assert_eq!(sessions[0]["provider"], provider);
@@ -82,7 +77,25 @@ fn hook_clients_report_lifecycle_over_ipc() {
             assert_eq!(sessions[0]["status"], status, "{provider} {event}");
             assert_eq!(sessions[0]["cwd"], sandbox.project().to_str().unwrap());
             assert_eq!(sessions[0]["pid"], std::process::id());
+        };
+
+        sandbox.hook(provider, &sid, "UserPromptSubmit", pid);
+        assert_status("UserPromptSubmit", "running");
+
+        // CodeBuddy reports approval dialogs as a notification type rather
+        // than a dedicated PermissionRequest event.
+        if provider == "codebuddy" {
+            sandbox.hook_notification(provider, &sid, "permission_prompt", pid);
+        } else {
+            sandbox.hook(provider, &sid, "PermissionRequest", pid);
         }
+        assert_status("permission", "waiting");
+
+        sandbox.hook(provider, &sid, "PostToolUse", pid);
+        assert_status("PostToolUse", "running");
+
+        sandbox.hook(provider, &sid, "Stop", pid);
+        assert_status("Stop", "done");
         sandbox.hook(provider, &sid, "SessionEnd", Some(std::process::id()));
         assert!(sandbox.sessions(false).is_empty());
         assert!(sandbox.sessions(true).is_empty());
@@ -775,13 +788,14 @@ fn setup_installs_all_hooks_in_disposable_client_homes() {
     success(sandbox.berth().args(["setup", "--no-service"]));
     for (provider, file) in [
         ("claude", "claude/settings.json"),
+        ("codebuddy", "codebuddy/settings.json"),
         ("codex", "codex/hooks.json"),
         ("grok", "grok/hooks/agent-berth.json"),
         ("opencode", "config/opencode/plugins/agent-berth.js"),
         ("pi", "pi/extensions/agent-berth.ts"),
     ] {
         let contents = fs::read_to_string(sandbox.root.path().join(file)).unwrap();
-        if matches!(provider, "claude" | "codex" | "grok") {
+        if matches!(provider, "claude" | "codebuddy" | "codex" | "grok") {
             let config: Value = serde_json::from_str(&contents).unwrap();
             let command = config["hooks"]["SessionStart"][0]["hooks"][0]["command"]
                 .as_str()

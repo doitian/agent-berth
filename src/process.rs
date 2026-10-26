@@ -68,13 +68,28 @@ fn tree_contains(
 }
 
 pub fn ancestor_named(name: &str) -> Option<u32> {
-    let processes = processes();
-    find_ancestor(std::process::id(), name, &processes)
+    ancestor_named_any(&[name])
 }
 
+/// Like ancestor_named, matching the nearest ancestor with any of the names
+/// while taking only one process snapshot.
+pub fn ancestor_named_any(names: &[&str]) -> Option<u32> {
+    let processes = processes();
+    find_ancestor_any(std::process::id(), names, &processes)
+}
+
+#[cfg(test)]
 fn find_ancestor(
     pid: u32,
     name: &str,
+    processes: &std::collections::HashMap<u32, Process>,
+) -> Option<u32> {
+    find_ancestor_any(pid, &[name], processes)
+}
+
+fn find_ancestor_any(
+    pid: u32,
+    names: &[&str],
     processes: &std::collections::HashMap<u32, Process>,
 ) -> Option<u32> {
     walk_ancestors(pid, processes)
@@ -83,7 +98,7 @@ fn find_ancestor(
         .find(|pid| {
             processes
                 .get(pid)
-                .is_some_and(|process| process_named(&process.name, name))
+                .is_some_and(|process| names.iter().any(|name| process_named(&process.name, name)))
         })
 }
 
