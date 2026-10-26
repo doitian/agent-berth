@@ -180,6 +180,7 @@ symbol. Clean repositories without an upstream show only the branch name.
 | `r` | Resume the selected resumable session in tmux and attach to it |
 | `d` | Delete the selected session after confirming with `y` |
 | `m` | Edit the selected session's memo, shown instead of its detected title; submit an empty memo to clear it |
+| `M` | Type a message and send it to the selected active session, like `send` |
 | `q` | Quit |
 
 Group headers use `1h`, `1d`, `7d`, and `>7d` for creation/activity sorting:

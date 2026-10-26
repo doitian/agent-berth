@@ -53,7 +53,7 @@ mod latte {
     pub const BLUE: Color = Color::Rgb(30, 102, 245);
 }
 
-const HINTS: &str = "q quit · j/k move · / filter · ga/gr view · s sort · w groups · a attach/focus · r resume · d delete · m memo · I idle · = zoom · ␣gg lazygit · br/bp browse";
+const HINTS: &str = "q quit · j/k move · / filter · ga/gr view · s sort · w groups · a attach/focus · r resume · d delete · m memo · M message · I idle · = zoom · ␣gg lazygit · br/bp browse";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Sort {
@@ -88,6 +88,7 @@ enum Input {
     Filter,
     Idle,
     Memo,
+    Message,
     Confirm,
 }
 
@@ -117,6 +118,7 @@ pub(crate) enum Effect {
     Resume(ListedSession),
     Remove(ListedSession),
     Memo(ListedSession, String),
+    Send(ListedSession, String),
     Lazygit(PathBuf),
     Browse(PathBuf, Browse),
 }
@@ -127,6 +129,11 @@ enum Fetch {
         ctx: Box<Context>,
         session: Box<ListedSession>,
         hub: Box<dyn Hub>,
+    },
+    Send {
+        session: Box<ListedSession>,
+        hub: Box<dyn Hub>,
+        message: String,
     },
     Refresh(Box<RefreshRequest>),
     Preview {
@@ -164,6 +171,10 @@ struct CachedTranscript {
 
 enum Fetched {
     Focus(Result<()>),
+    Send {
+        label: String,
+        result: Result<()>,
+    },
     Transcript {
         source: Feed,
         reader: Box<transcript::Reader>,
@@ -193,6 +204,17 @@ fn spawn_fetch(tx: &Sender<Fetched>, fetch: Fetch) {
         let fetched = match fetch {
             Fetch::Focus { ctx, session, hub } => {
                 Fetched::Focus(providers::focus(&ctx, hub.as_ref(), &session))
+            }
+            Fetch::Send {
+                session,
+                hub,
+                message,
+            } => {
+                let label = format!("{} {}", session.provider, session.session_id);
+                Fetched::Send {
+                    label,
+                    result: providers::send(hub.as_ref(), &session, &message),
+                }
             }
             Fetch::Refresh(request) => {
                 let RefreshRequest {
@@ -273,6 +295,8 @@ struct App {
     idle_input: String,
     memo_input: String,
     memo_session: Option<ListedSession>,
+    message_input: String,
+    message_session: Option<ListedSession>,
     confirm_session: Option<ListedSession>,
     pending: Option<Pending>,
     git: Option<git::RepoInfo>,
@@ -320,6 +344,8 @@ impl App {
             idle_input: String::new(),
             memo_input: String::new(),
             memo_session: None,
+            message_input: String::new(),
+            message_session: None,
             confirm_session: None,
             pending: None,
             git: None,
@@ -382,6 +408,13 @@ impl App {
                 self.message = Some(match result {
                     Ok(()) => "sent focus request".into(),
                     Err(err) => format!("focus: {err:#}"),
+                });
+                self.needs_redraw = true;
+            }
+            Fetched::Send { label, result } => {
+                self.message = Some(match result {
+                    Ok(()) => format!("sent to {label}"),
+                    Err(err) => format!("send: {err:#}"),
                 });
                 self.needs_redraw = true;
             }
@@ -705,6 +738,7 @@ impl App {
             Input::Filter => return self.handle_filter_key(key),
             Input::Idle => return self.handle_idle_key(key),
             Input::Memo => return self.handle_memo_key(key),
+            Input::Message => return self.handle_message_key(key),
             Input::Confirm => return self.handle_confirm_key(key),
             Input::Normal => {}
         }
@@ -781,6 +815,7 @@ impl App {
             KeyCode::Char('r') => self.resume_selected(),
             KeyCode::Char('d') => self.confirm_remove(),
             KeyCode::Char('m') => self.edit_memo(),
+            KeyCode::Char('M') => self.compose_message(),
             _ => Effect::None,
         }
     }
@@ -850,6 +885,33 @@ impl App {
                 self.memo_input.pop();
             }
             KeyCode::Char(ch) => self.memo_input.push(ch),
+            _ => {}
+        }
+        Effect::None
+    }
+
+    fn handle_message_key(&mut self, key: KeyEvent) -> Effect {
+        match key.code {
+            KeyCode::Enter => {
+                if self.message_input.trim().is_empty() {
+                    self.message = Some("message is empty".into());
+                    return Effect::None;
+                }
+                self.input = Input::Normal;
+                return match self.message_session.take() {
+                    Some(session) => Effect::Send(session, std::mem::take(&mut self.message_input)),
+                    None => Effect::None,
+                };
+            }
+            KeyCode::Esc => {
+                self.input = Input::Normal;
+                self.message_session = None;
+                self.message_input.clear();
+            }
+            KeyCode::Backspace => {
+                self.message_input.pop();
+            }
+            KeyCode::Char(ch) => self.message_input.push(ch),
             _ => {}
         }
         Effect::None
@@ -939,6 +1001,28 @@ impl App {
                 self.memo_input = session.memo.clone().unwrap_or_default();
                 self.memo_session = Some(session);
                 self.input = Input::Memo;
+            }
+            None => self.message = Some("no session selected".into()),
+        }
+        Effect::None
+    }
+
+    fn compose_message(&mut self) -> Effect {
+        if self.view != View::Active {
+            self.message = Some("press ga to return to active sessions".into());
+            return Effect::None;
+        }
+        match self.selected_session().cloned() {
+            Some(session) if session.status == AgentStatus::Waiting => {
+                self.message = Some(format!(
+                    "{} {} is waiting on a permission prompt or a question; answer it with a",
+                    session.provider, session.session_id
+                ));
+            }
+            Some(session) => {
+                self.message_input.clear();
+                self.message_session = Some(session);
+                self.input = Input::Message;
             }
             None => self.message = Some("no session selected".into()),
         }
@@ -1076,6 +1160,17 @@ pub fn run(ctx: &Context) -> Result<()> {
                     },
                     Effect::Remove(session) => remove_effect(&mut app, ctx, &session),
                     Effect::Memo(session, memo) => memo_effect(&mut app, ctx, &session, &memo),
+                    Effect::Send(session, message) => {
+                        let hub = hubs::resolve(&session, Tmux::lookup);
+                        spawn_fetch(
+                            &app.fetch_tx,
+                            Fetch::Send {
+                                session: Box::new(session),
+                                hub,
+                                message,
+                            },
+                        );
+                    }
                     Effect::Lazygit(cwd) => lazygit_effect(&mut guard, &mut app, &cwd),
                     Effect::Browse(cwd, target) => browse_effect(&mut app, &cwd, target),
                 },
@@ -1531,6 +1626,22 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
             let prompt = format!("memo: {}", app.memo_input);
             frame.render_widget(Paragraph::new(prompt), area);
             frame.set_cursor_position((area.x + 6 + app.memo_input.len() as u16, area.y));
+        }
+        Input::Message => {
+            let target = app
+                .message_session
+                .as_ref()
+                .map(|session| session.id())
+                .unwrap_or_default();
+            let prefix = format!("message to {target}: ");
+            frame.render_widget(
+                Paragraph::new(format!("{prefix}{}", app.message_input)),
+                area,
+            );
+            frame.set_cursor_position((
+                area.x + prefix.len() as u16 + app.message_input.len() as u16,
+                area.y,
+            ));
         }
         Input::Confirm => {
             let label = match &app.confirm_session {

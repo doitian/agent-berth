@@ -643,6 +643,77 @@ fn m_opens_memo_input_prefilled_and_enter_emits_effect() {
 }
 
 #[test]
+fn shift_m_opens_message_input_and_enter_emits_effect() {
+    let mut app = app_with_sessions();
+    app.handle_key(char_key('j'));
+    assert!(matches!(app.handle_key(shift_char_key('M')), Effect::None));
+    assert_eq!(app.input, Input::Message);
+    assert!(app.message_input.is_empty());
+    assert_eq!(app.message_session.as_ref().unwrap().session_id, "def");
+    for ch in "please rebase".chars() {
+        app.handle_key(char_key(ch));
+    }
+    match app.handle_key(key(KeyCode::Enter)) {
+        Effect::Send(session, message) => {
+            assert_eq!(session.session_id, "def");
+            assert_eq!(message, "please rebase");
+        }
+        _ => panic!("expected send effect"),
+    }
+    assert_eq!(app.input, Input::Normal);
+    assert!(app.message_session.is_none());
+}
+
+#[test]
+fn message_esc_cancels_without_effect() {
+    let mut app = app_with_sessions();
+    app.handle_key(shift_char_key('M'));
+    app.handle_key(char_key('x'));
+    assert!(matches!(app.handle_key(key(KeyCode::Esc)), Effect::None));
+    assert_eq!(app.input, Input::Normal);
+    assert!(app.message_session.is_none());
+    assert!(app.message_input.is_empty());
+}
+
+#[test]
+fn empty_message_is_not_sent() {
+    let mut app = app_with_sessions();
+    app.handle_key(shift_char_key('M'));
+    assert!(matches!(app.handle_key(key(KeyCode::Enter)), Effect::None));
+    assert_eq!(app.input, Input::Message);
+    assert_eq!(app.message.as_deref(), Some("message is empty"));
+}
+
+#[test]
+fn shift_m_on_waiting_session_warns_without_composing() {
+    let mut app = app_with_sessions();
+    app.sessions[0].status = AgentStatus::Waiting;
+    assert!(matches!(app.handle_key(shift_char_key('M')), Effect::None));
+    assert_eq!(app.input, Input::Normal);
+    assert!(app.message_session.is_none());
+    assert!(
+        app.message
+            .as_deref()
+            .is_some_and(|message| message.contains("waiting on a permission prompt"))
+    );
+}
+
+#[test]
+fn shift_m_requires_active_view_and_a_selected_session() {
+    let mut app = app_with_sessions();
+    app.set_view(View::Resumable);
+    app.dirty = false;
+    assert!(matches!(app.handle_key(shift_char_key('M')), Effect::None));
+    assert_eq!(app.input, Input::Normal);
+    assert!(app.message.is_some());
+
+    let mut app = App::new(&test_ctx());
+    assert!(matches!(app.handle_key(shift_char_key('M')), Effect::None));
+    assert_eq!(app.input, Input::Normal);
+    assert!(app.message.is_some());
+}
+
+#[test]
 fn memo_esc_cancels_without_effect() {
     let mut app = app_with_sessions();
     app.handle_key(char_key('m'));
