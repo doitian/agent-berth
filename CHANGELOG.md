@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented in this file.
 
+## [3.5.0](https://github.com/doitian/agent-berth/releases/tag/v3.5.0) - 2026-10-27
+
+### Added
+
+- Add dsh provider ([a10597a](https://github.com/doitian/agent-berth/commit/a10597ae4829dbac1764d1005d5b6ce9eed98259))
+
+### Changed
+
+- Make rm hide sessions until they are running or waiting ([1b6a13e](https://github.com/doitian/agent-berth/commit/1b6a13e30cc4c45e4ae7f3fe72abca2facd56e61))
+- Rework DSH and CodeBuddy provider logos ([7104b3c](https://github.com/doitian/agent-berth/commit/7104b3c3a4e59bc0154f89362c75a8c36ad6cf34))
+
 ## [3.4.0](https://github.com/doitian/agent-berth/releases/tag/v3.4.0) - 2026-10-26
 
 ### Added
