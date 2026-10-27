@@ -53,7 +53,7 @@ impl Provider for CodeBuddy {
     }
 
     fn logo(&self) -> &'static str {
-        "◈"
+        "⋈"
     }
 
     fn resume_cmd(&self, session_id: &str) -> Vec<String> {

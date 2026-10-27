@@ -38,7 +38,7 @@ impl Provider for Dsh {
     }
 
     fn logo(&self) -> &'static str {
-        "❖"
+        "≋"
     }
 
     /// Sessions are booted by the Harness app or by a profile the launcher
