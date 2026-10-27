@@ -1,0 +1,63 @@
+# Maintainer: add repository secrets SKILL_KEEPER_WEBHOOK_URL and
+# SKILL_KEEPER_WEBHOOK_TOKEN, copying the URL and key from the Skill
+# Keeper routine panel in Grok Bot (routine folder
+# sync-agent-berth-skill-on-push). Do not commit those values.
+name: Notify Skill Keeper
+
+on:
+  push:
+    branches: ['**']
+    paths:
+      - '.agents/skills/agent-berth/**'
+
+permissions:
+  contents: read
+
+jobs:
+  notify:
+    name: Notify Skill Keeper
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Notify webhook if skill files changed
+        env:
+          SKILL_KEEPER_WEBHOOK_URL: ${{ secrets.SKILL_KEEPER_WEBHOOK_URL }}
+          SKILL_KEEPER_WEBHOOK_TOKEN: ${{ secrets.SKILL_KEEPER_WEBHOOK_TOKEN }}
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          skill_path='.agents/skills/agent-berth'
+          zero='0000000000000000000000000000000000000000'
+
+          changed=true
+          if [[ -n "${BEFORE_SHA}" && "${BEFORE_SHA}" != "${zero}" ]]; then
+            if ! git cat-file -e "${BEFORE_SHA}^{commit}" 2>/dev/null; then
+              git fetch --no-tags --depth=1 origin "${BEFORE_SHA}" || true
+            fi
+            if git cat-file -e "${BEFORE_SHA}^{commit}" 2>/dev/null; then
+              if [[ -z "$(git diff --name-only "${BEFORE_SHA}" "${AFTER_SHA}" -- "${skill_path}")" ]]; then
+                changed=false
+              fi
+            fi
+          fi
+
+          if [[ "${changed}" != true ]]; then
+            echo "No files changed under ${skill_path}; skipping notify"
+            exit 0
+          fi
+
+          if [[ -z "${SKILL_KEEPER_WEBHOOK_URL}" || -z "${SKILL_KEEPER_WEBHOOK_TOKEN}" ]]; then
+            echo "Repository secrets SKILL_KEEPER_WEBHOOK_URL and SKILL_KEEPER_WEBHOOK_TOKEN must be set" >&2
+            exit 1
+          fi
+
+          curl -fsS -X POST "${SKILL_KEEPER_WEBHOOK_URL}" \
+            -H "Authorization: Bearer ${SKILL_KEEPER_WEBHOOK_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d '{"source":"doitian/agent-berth","event":"skill-changed","path":".agents/skills/agent-berth"}'
