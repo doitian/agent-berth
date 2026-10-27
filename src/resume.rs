@@ -79,7 +79,7 @@ pub fn run(
                 continue;
             }
             tmux::new_window(&session_name, &window, cwd, &session.cmdline)?;
-            db::mark_removed(ctx, &session.provider, &session.session_id)?;
+            db::mark_resumed(ctx, &session.provider, &session.session_id)?;
             println!(
                 "resumed {} {} in tmux {session_name} window {window}",
                 session.provider, session.session_id

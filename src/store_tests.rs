@@ -507,7 +507,7 @@ fn missing_cwd_and_live_pid_are_not_resumable() {
 }
 
 #[test]
-fn removed_sessions_are_hidden_until_they_report_again() {
+fn removed_sessions_stay_hidden_unless_running_or_waiting() {
     let mut store = Store::default();
     store
         .update(
@@ -521,6 +521,21 @@ fn removed_sessions_are_hidden_until_they_report_again() {
         .unwrap();
     store.mark_removed("claude", "abc");
     assert!(store.listed().is_empty());
+    assert!(store.is_manual_removal("claude", "abc"));
+
+    store
+        .update(
+            "claude",
+            serde_json::json!({
+                "session_id":"abc",
+                "hook_event_name":"Stop",
+                "cwd":"/work"
+            }),
+        )
+        .unwrap();
+    assert!(store.listed().is_empty());
+    assert!(store.is_manual_removal("claude", "abc"));
+
     store
         .update(
             "claude",
@@ -532,6 +547,190 @@ fn removed_sessions_are_hidden_until_they_report_again() {
         )
         .unwrap();
     assert_eq!(store.listed().len(), 1);
+    assert_eq!(store.listed()[0].status, AgentStatus::Waiting);
+    assert!(store.is_manual_removal("claude", "abc"));
+    assert!(store.resumable(Some(Duration::from_secs(1200))).is_empty());
+
+    store
+        .update(
+            "claude",
+            serde_json::json!({
+                "session_id":"abc",
+                "hook_event_name":"Stop",
+                "cwd":"/work"
+            }),
+        )
+        .unwrap();
+    assert!(store.listed().is_empty());
+    assert!(store.is_manual_removal("claude", "abc"));
+}
+
+#[test]
+fn plugin_heartbeat_does_not_restore_a_removed_session() {
+    let mut store = Store::default();
+    let idle = serde_json::json!({"id":"s", "pid": 1, "cwd":"/work", "status":{"s":"idle"}});
+    store.update("dsh", idle.clone()).unwrap();
+    store.mark_removed("dsh", "s");
+    assert!(store.listed().is_empty());
+
+    store.update("dsh", idle).unwrap();
+    assert!(store.listed().is_empty());
+    assert!(store.is_manual_removal("dsh", "s"));
+
+    store
+        .update(
+            "dsh",
+            serde_json::json!({"id":"s", "pid": 1, "cwd":"/work", "status":{"s":"busy"}}),
+        )
+        .unwrap();
+    assert_eq!(store.listed().len(), 1);
+    assert_eq!(store.listed()[0].status, AgentStatus::Running);
+    assert!(store.is_manual_removal("dsh", "s"));
+
+    store
+        .update(
+            "dsh",
+            serde_json::json!({"id":"s", "pid": 1, "cwd":"/work", "status":{"s":"idle"}, "blocking":["s"]}),
+        )
+        .unwrap();
+    assert_eq!(store.listed()[0].status, AgentStatus::Waiting);
+
+    store
+        .update(
+            "dsh",
+            serde_json::json!({"id":"s", "pid": 1, "cwd":"/work", "status":{"s":"idle"}}),
+        )
+        .unwrap();
+    assert!(store.listed().is_empty());
+    assert!(store.is_manual_removal("dsh", "s"));
+}
+
+fn hook(store: &mut Store, event: &str) {
+    store
+        .update(
+            "claude",
+            serde_json::json!({"session_id":"abc", "hook_event_name":event, "cwd":"/work"}),
+        )
+        .unwrap();
+}
+
+#[test]
+fn tool_hooks_mid_turn_do_not_restore_a_removed_session() {
+    let mut store = Store::default();
+    hook(&mut store, "UserPromptSubmit");
+    store.mark_removed("claude", "abc");
+    hook(&mut store, "PreToolUse");
+    hook(&mut store, "PostToolUse");
+    assert!(store.listed().is_empty());
+
+    hook(&mut store, "Stop");
+    hook(&mut store, "UserPromptSubmit");
+    assert_eq!(store.listed().len(), 1);
+}
+
+#[test]
+fn stored_keeps_removed_sessions_for_id_lookups() {
+    let mut store = Store::default();
+    hook(&mut store, "UserPromptSubmit");
+    hook(&mut store, "Stop");
+    store.mark_removed("claude", "abc");
+    assert!(store.listed().is_empty());
+    let stored = store.stored();
+    assert_eq!(stored.len(), 1);
+    assert!(stored[0].hidden);
+    assert!(store.resumable(None).is_empty());
+}
+
+#[test]
+fn a_dead_instance_busy_snapshot_does_not_block_revival() {
+    let mut store = Store::default();
+    store
+        .update(
+            "opencode",
+            serde_json::json!({"id":"dead", "pid": 1, "cwd":"/work", "status":{"s":"busy"}}),
+        )
+        .unwrap();
+    store
+        .snapshots
+        .get_mut("opencode")
+        .unwrap()
+        .get_mut("dead")
+        .unwrap()
+        .last_report_ms = 1;
+    store.mark_removed("opencode", "s");
+    store
+        .update(
+            "opencode",
+            serde_json::json!({"id":"live", "pid": 2, "cwd":"/work", "status":{"s":"idle"}}),
+        )
+        .unwrap();
+    assert!(store.listed().is_empty());
+    store
+        .update(
+            "opencode",
+            serde_json::json!({"id":"live", "pid": 2, "cwd":"/work", "status":{"s":"busy"}}),
+        )
+        .unwrap();
+    assert_eq!(store.listed().len(), 1);
+}
+
+#[test]
+fn a_removed_session_busy_at_server_start_is_listed() {
+    let mut store = Store::default();
+    let busy = serde_json::json!({"id":"s", "pid": 1, "cwd":"/work", "status":{"s":"busy"}});
+    store.update("dsh", busy.clone()).unwrap();
+    store.mark_removed("dsh", "s");
+    store.revived.clear();
+    store.on_server_start();
+    store.update("dsh", busy).unwrap();
+    assert_eq!(store.listed().len(), 1);
+}
+
+#[test]
+fn resume_hide_clears_when_the_session_reports_idle() {
+    let mut store = Store::default();
+    let idle = serde_json::json!({"id":"s", "pid": 1, "cwd":"/work", "status":{"s":"idle"}});
+    store.update("opencode", idle.clone()).unwrap();
+    store.mark_resumed("opencode", "s");
+    assert!(store.listed().is_empty());
+    assert!(!store.is_manual_removal("opencode", "s"));
+
+    store.update("opencode", idle).unwrap();
+    assert_eq!(store.listed().len(), 1);
+    assert!(!store.is_removed("opencode", "s"));
+}
+
+#[test]
+fn quiet_sessions_stay_hidden_unless_running_or_waiting() {
+    let mut store = Store::default();
+    store
+        .update(
+            "dsh",
+            serde_json::json!({"id":"s", "pid": 1, "cwd":"/work", "status":{"s":"idle"}}),
+        )
+        .unwrap();
+    store
+        .quiet
+        .entry("dsh".into())
+        .or_default()
+        .insert("s".into());
+    assert!(store.listed().is_empty());
+
+    store
+        .update(
+            "dsh",
+            serde_json::json!({"id":"s", "pid": 1, "cwd":"/work", "status":{"s":"busy"}}),
+        )
+        .unwrap();
+    assert_eq!(store.listed().len(), 1);
+
+    store
+        .update(
+            "dsh",
+            serde_json::json!({"id":"s", "pid": 1, "cwd":"/work", "status":{"s":"idle"}}),
+        )
+        .unwrap();
+    assert!(store.listed().is_empty());
 }
 
 #[test]
@@ -558,6 +757,13 @@ fn prune_drops_stale_sessions_and_their_tombstones() {
         live.pid = Some(std::process::id());
     }
     store.mark_removed("claude", "old");
+    // Older than the retention window, so pruning the stale session drops the
+    // removal with it. A recent removal is kept even after its row is gone.
+    store
+        .removed
+        .get_mut("claude")
+        .unwrap()
+        .insert("old".into(), 1_000 | super::MANUAL_REMOVAL);
     assert!(store.prune(1_000_000, Duration::from_secs(60)));
     let bucket = &store.hooks["claude"];
     assert!(!bucket.contains_key("old"));
@@ -915,6 +1121,7 @@ fn plugin_session(sid: &str) -> ListedSession {
         turns_started: 0,
         turns_ended: 0,
         delegator: None,
+        hidden: false,
     }
 }
 

@@ -1,5 +1,7 @@
+use std::collections::BTreeSet;
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use anyhow::Result;
 use serde_json::Value;
@@ -60,6 +62,10 @@ impl Provider for Dsh {
 
     fn log(&self) -> Option<&dyn TranscriptLog> {
         Some(self)
+    }
+
+    fn quiet_ids(&self, ctx: &Context) -> BTreeSet<String> {
+        archived_ids(ctx)
     }
 }
 
@@ -273,6 +279,72 @@ fn decode_frame(frame: &[u8]) -> Option<(Vec<u8>, usize)> {
     let mut text = Vec::new();
     decoder.read_to_end(&mut text).ok()?;
     Some((text, frame.len() - decoder.into_inner().len()))
+}
+
+struct ArchiveCache {
+    path: PathBuf,
+    ids: BTreeSet<String>,
+}
+
+/// Archived session ids from the workspace store every profile shares.
+/// A torn write keeps the last set read whole, so a heartbeat does not flash
+/// every archived session back into the list.
+fn archived_ids(ctx: &Context) -> BTreeSet<String> {
+    static CACHE: Mutex<Option<ArchiveCache>> = Mutex::new(None);
+    let path = ctx.dsh_home.join("storages").join("workspace.json");
+    let remembered = || {
+        CACHE
+            .lock()
+            .ok()
+            .and_then(|cache| {
+                cache
+                    .as_ref()
+                    .filter(|cache| cache.path == path)
+                    .map(|cache| cache.ids.clone())
+            })
+            .unwrap_or_default()
+    };
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            if let Ok(mut cache) = CACHE.lock()
+                && cache.as_ref().is_some_and(|cache| cache.path == path)
+            {
+                *cache = None;
+            }
+            return BTreeSet::new();
+        }
+        Err(_) => return remembered(),
+    };
+    match parse_archived(&text) {
+        Some(ids) => {
+            if let Ok(mut cache) = CACHE.lock() {
+                *cache = Some(ArchiveCache {
+                    path: path.clone(),
+                    ids: ids.clone(),
+                });
+            }
+            ids
+        }
+        None => remembered(),
+    }
+}
+
+/// `None` when the file is not valid JSON, so a torn write can keep the last
+/// set. A readable file with no archive list is an empty set.
+fn parse_archived(text: &str) -> Option<BTreeSet<String>> {
+    let value: serde_json::Value = serde_json::from_str(text).ok()?;
+    let Some(ids) = value
+        .pointer("/global/archivedSessionIds")
+        .and_then(serde_json::Value::as_array)
+    else {
+        return Some(BTreeSet::new());
+    };
+    Some(
+        ids.iter()
+            .filter_map(|id| id.as_str().map(str::to_string))
+            .collect(),
+    )
 }
 
 fn plugin_source(ctx: &Context) -> String {

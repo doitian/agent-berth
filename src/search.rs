@@ -52,6 +52,7 @@ fn filter(
     delegated_by: Option<&str>,
     now: u64,
 ) -> Vec<ListedSession> {
+    sessions.retain(|session| !session.hidden);
     if let Some(window) = created_in {
         let cutoff = u128::from(now).saturating_sub(window.as_millis()) as u64;
         sessions.retain(|session| session.created_ms >= cutoff && session.created_ms <= now);

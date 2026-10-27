@@ -1272,7 +1272,7 @@ fn resume_session(ctx: &Context, session: &ListedSession) -> Result<Pane> {
     let name = tmux::ensure_session(&cwd)?;
     let window = resume::window_name(session);
     let pane_id = tmux::spawn_window(&name, &window, &cwd, &session.cmdline, &[])?;
-    db::mark_removed(ctx, &session.provider, &session.session_id)?;
+    db::mark_resumed(ctx, &session.provider, &session.session_id)?;
     tmux::find_pane(&pane_id)?.context("resumed pane not found")
 }
 

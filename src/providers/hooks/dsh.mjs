@@ -35,8 +35,9 @@ const REPORTED = new Set([
 export function apply(ctx) {
   // session id -> { busy, blocked: Set<request id>, title, cwd }
   const sessions = new Map()
-  // Archived ids whose row was already cleared, so the heartbeat reports the
-  // clear once instead of on every tick. An unarchived id leaves the set.
+  // Archived ids whose idle row was already cleared, so the heartbeat reports
+  // the clear once instead of on every tick. A session that is reported again,
+  // including an archived one that is running or waiting, leaves the set.
   const cleared = new Set()
   // The app boots its profile in the Electron main process, which is what
   // separates a desktop session from one a terminal booted.
@@ -111,25 +112,35 @@ export function apply(ctx) {
     }
   }
 
+  function live(state) {
+    return !!state && (state.busy || state.blocked.size > 0)
+  }
+
   // Sessions that were already live when the plugin loaded, and ones that have
-  // not reported an event since, still need a first report.
+  // not reported an event since, still need a first report. An archived
+  // session is one of them only while it is running or waiting.
   function sync(hidden) {
     for (const session of ctx.get?.("sessions")?.list?.() ?? []) {
       const id = session.id
-      if (hidden.has(id)) continue
+      const running = ctx.get?.("agents")?.get?.(id)?.status === "running"
+      const state = sessions.get(id)
+      if (hidden.has(id) && !running && !(state?.blocked.size > 0)) continue
       cleared.delete(id)
-      if (sessions.has(id)) continue
-      const state = entry(id, session)
-      state.busy = ctx.get?.("agents")?.get?.(id)?.status === "running"
+      if (state !== undefined) {
+        if (running) state.busy = true
+        continue
+      }
+      const created = entry(id, session)
+      created.busy = running
     }
   }
 
   function flush() {
     const hidden = archive()
-    // An archived session is not reported at all; the row it had is cleared by
-    // `clearRows` below.
+    // An archived session that has gone idle is not reported; the row it had
+    // is cleared by `clearRows` below. One that is running or waiting stays.
     for (const id of [...sessions.keys()]) {
-      if (hidden.has(id)) sessions.delete(id)
+      if (hidden.has(id) && !live(sessions.get(id))) sessions.delete(id)
     }
     sync(hidden)
     for (const [id, state] of sessions) report(id, state)
@@ -139,9 +150,10 @@ export function apply(ctx) {
   // The archive set outlives any one process, so it drains a batch per flush
   // rather than asking berth to drop everything ever archived at once. A clear
   // is what removes the row a reporting pid would otherwise hold past the
-  // staleness window.
+  // staleness window. A session currently reported as running or waiting is
+  // not cleared.
   function clearRows(hidden) {
-    const queue = [...hidden].filter((id) => !cleared.has(id))
+    const queue = [...hidden].filter((id) => !cleared.has(id) && !sessions.has(id))
     for (const id of queue.slice(0, CLEAR_BATCH)) {
       cleared.add(id)
       report(id)
@@ -179,9 +191,6 @@ export function apply(ctx) {
     const id = session?.id
     if (typeof id !== "string" || !id) return
     if (!REPORTED.has(event?.type)) return
-    // Archiving with its work stops the session, and the turn end that follows
-    // must not bring the row back.
-    if (archive().has(id)) return
     const data = event?.data ?? {}
     const state = entry(id, session)
     switch (event?.type) {
@@ -205,6 +214,18 @@ export function apply(ctx) {
       default:
         return
     }
+    // An archived session stays out of the list once it is idle. A turn or an
+    // approval still shows, and the turn end that archiving stops clears the
+    // row instead of leaving it idle.
+    if (archive().has(id) && !live(state)) {
+      sessions.delete(id)
+      if (!cleared.has(id)) {
+        cleared.add(id)
+        report(id)
+      }
+      return
+    }
+    cleared.delete(id)
     schedule()
   })
 

@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -72,6 +72,12 @@ pub trait Provider: Integration + Focus + Messaging + Transcript + Sync {
 
     fn log(&self) -> Option<&dyn TranscriptLog> {
         None
+    }
+
+    /// Session ids hidden while idle or done. A running or waiting session is
+    /// still listed. DeepSeek Harness uses this for its workspace archive.
+    fn quiet_ids(&self, _ctx: &AppContext) -> BTreeSet<String> {
+        BTreeSet::new()
     }
 }
 

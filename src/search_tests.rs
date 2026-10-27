@@ -102,7 +102,7 @@ fn delegated_by_keeps_only_that_delegators_sessions_and_patterns_match_it() {
 }
 
 #[test]
-fn stored_sessions_include_closed_tabs_but_not_explicit_removals() {
+fn search_includes_closed_tabs_but_not_explicit_removals() {
     let mut store = Store::default();
     store
         .update(
@@ -119,7 +119,7 @@ fn stored_sessions_include_closed_tabs_but_not_explicit_removals() {
         .insert("closed".into());
     store.mark_removed("opencode", "removed");
     assert!(store.listed().is_empty());
-    let results = store.stored();
+    let results = filter(store.stored(), &[], None, None, 100);
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].session_id, "closed");
 }

@@ -22,6 +22,11 @@ pub enum Request {
     Remove {
         provider: String,
         session_id: String,
+        /// True for `rm`, which an idle or done report must not undo. False
+        /// when `resume` hides the row only until the next report; clients
+        /// older than this field send it for both.
+        #[serde(default)]
+        manual: bool,
     },
     /// An empty memo clears the session's note.
     Memo {

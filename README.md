@@ -86,7 +86,7 @@ uses [fzf](https://github.com/junegunn/fzf).
 | `agent-berth reply [--wait [--timeout 10m]] [--force] [--raw] "message"` | Send a message to the session that started this agent with `new`, exactly as `send` would |
 | `agent-berth wait <id> [--after N] [--timeout 10m]` | Wait for a session to end a turn; prints `done`, `waiting`, `gone`, or `timeout` with exit code 0, 2, 3, or 4 |
 | `agent-berth stop <id> [--force] [--dry-run]` | End a session by killing the tmux pane that shows it; refused when the pane also hosts other sessions unless `--force` |
-| `agent-berth rm [patterns...]` | Hide sessions so they are never resumed |
+| `agent-berth rm [patterns...]` | Hide sessions until they are running or waiting |
 | `agent-berth doctor` | Check server, service, and hook installation |
 | `agent-berth notify --provider <name>` | Report agent status (used by hooks) |
 
@@ -426,11 +426,14 @@ on a heartbeat. The DeepSeek Harness plugin is written to
 `$DSH_HOME/agent-berth/plugin.mjs` and inserted by a row in
 `$DSH_HOME/cordis.patch.yml`, the patch layer the Harness composes into every
 profile, so restart the app after `setup` for it to load. It reports the
-sessions the app lists: a session archived in the Harness is dropped from
-`list` too, whether the app or a terminal booted it. The server folds
-these events into per-session status and persists them in a redb database, so
-state survives restarts. Sessions are keyed by provider and session ID, with
-the working directory and command line needed to resume.
+sessions the app lists. A session archived in the Harness stays out of
+`list` while it is idle or done, and is shown again only while it is running
+or waiting, whether the app or a terminal booted it. `rm` is remembered the
+same way for every provider: an idle or done report, including a heartbeat,
+does not undo it, and the session hides again once that turn ends. The server
+folds hook and plugin reports into per-session status and persists them in a
+redb database, so state survives restarts. Sessions are keyed by provider and
+session ID, with the working directory and command line needed to resume.
 
 State lives in `$XDG_STATE_HOME/agent-berth` (`~/.local/state/agent-berth`,
 or `%LOCALAPPDATA%\agent-berth` on Windows). The IPC endpoint is

@@ -167,6 +167,7 @@ fn persist_all_drops_pruned_entries() {
     let loaded = load_from_path(&ctx).unwrap();
     assert!(loaded.snapshots.is_empty());
     assert!(loaded.is_removed("opencode", "s"));
+    assert!(loaded.is_manual_removal("opencode", "s"));
 }
 
 #[test]

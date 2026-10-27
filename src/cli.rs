@@ -274,7 +274,7 @@ enum Command {
         #[arg(long, conflicts_with = "text")]
         clear: bool,
     },
-    /// Remove sessions so they are hidden and never resumed
+    /// Remove sessions so they stay hidden until they are running or waiting
     #[command(alias = "remove")]
     Rm {
         /// Only consider sessions matching these terms

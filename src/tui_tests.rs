@@ -27,6 +27,7 @@ fn listed(provider: &str, session_id: &str, title: Option<&str>) -> ListedSessio
         turns_started: 0,
         turns_ended: 0,
         delegator: None,
+        hidden: false,
     }
 }
 

@@ -107,8 +107,9 @@ fn serve(ctx: &AppContext) -> Result<()> {
             Ok(stream) => {
                 let state = state.clone();
                 let db = db.clone();
+                let ctx = ctx.clone();
                 thread::spawn(move || {
-                    if let Err(err) = handle(stream, &state, &db) {
+                    if let Err(err) = handle(stream, &state, &db, &ctx) {
                         log(format_args!("connection: {err:#}"));
                     }
                 });
@@ -120,7 +121,7 @@ fn serve(ctx: &AppContext) -> Result<()> {
     Ok(())
 }
 
-fn handle(stream: Stream, state: &Mutex<Store>, db: &Database) -> Result<()> {
+fn handle(stream: Stream, state: &Mutex<Store>, db: &Database, ctx: &AppContext) -> Result<()> {
     let mut reader = BufReader::new(stream);
     let mut line = String::new();
     reader.read_line(&mut line)?;
@@ -128,6 +129,16 @@ fn handle(stream: Stream, state: &Mutex<Store>, db: &Database) -> Result<()> {
         return Ok(());
     }
     let request: Request = serde_json::from_str(&line)?;
+    let lists = matches!(
+        request,
+        Request::List { .. } | Request::ListAll | Request::ListStored | Request::Stats
+    );
+    if lists {
+        let quiet = crate::store::read_quiet(ctx);
+        if let Ok(mut store) = state.lock() {
+            store.quiet = quiet;
+        }
+    }
     let response = match request {
         Request::Ping => Response::ok(),
         Request::Notify { provider, payload } => match state.lock() {
@@ -169,9 +180,14 @@ fn handle(stream: Stream, state: &Mutex<Store>, db: &Database) -> Result<()> {
         Request::Remove {
             provider,
             session_id,
+            manual,
         } => match state.lock() {
             Ok(mut store) => {
-                let removed_at = store.mark_removed(&provider, &session_id);
+                let removed_at = if manual {
+                    store.mark_removed(&provider, &session_id)
+                } else {
+                    store.mark_resumed(&provider, &session_id)
+                };
                 match db::persist_removal(db, &provider, &session_id, removed_at) {
                     Ok(()) => Response::ok(),
                     Err(err) => Response::error(err.to_string()),

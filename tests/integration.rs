@@ -1232,6 +1232,56 @@ fn rm_hides_selected_sessions_until_they_report_again() {
             .any(|session| session["session_id"] == "drop-a"),
         "{sessions:?}"
     );
+
+    sandbox.hook("claude", "drop-a", "Stop", None);
+    let sessions = sandbox.sessions(false);
+    assert!(
+        !sessions
+            .iter()
+            .any(|session| session["session_id"] == "drop-a"),
+        "{sessions:?}"
+    );
+}
+
+#[test]
+fn plugin_idle_heartbeat_does_not_restore_a_removed_session() {
+    let mut sandbox = Sandbox::new();
+    sandbox.start();
+    sandbox.notify(
+        "dsh",
+        json!({
+            "id": "gone", "pid": 1, "cwd": "/work", "status": {"gone": "idle"}
+        }),
+    );
+    sandbox.env.insert("FIXTURE_FZF_PICK".into(), "gone".into());
+    success(sandbox.berth().args(["rm", "gone"]));
+    assert!(sandbox.sessions(false).is_empty());
+
+    sandbox.notify(
+        "dsh",
+        json!({
+            "id": "gone", "pid": 1, "cwd": "/work", "status": {"gone": "idle"}
+        }),
+    );
+    assert!(sandbox.sessions(false).is_empty());
+
+    sandbox.notify(
+        "dsh",
+        json!({
+            "id": "gone", "pid": 1, "cwd": "/work", "status": {"gone": "busy"}
+        }),
+    );
+    let sessions = sandbox.sessions(false);
+    assert_eq!(sessions.len(), 1, "{sessions:?}");
+    assert_eq!(sessions[0]["status"], "running");
+
+    sandbox.notify(
+        "dsh",
+        json!({
+            "id": "gone", "pid": 1, "cwd": "/work", "status": {"gone": "idle"}
+        }),
+    );
+    assert!(sandbox.sessions(false).is_empty());
 }
 
 #[test]

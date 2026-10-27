@@ -60,13 +60,17 @@ fn request_response_roundtrip() {
     let remove = Request::Remove {
         provider: "claude".into(),
         session_id: "s".into(),
+        manual: true,
     };
     let text = serde_json::to_string(&remove).unwrap();
     assert!(matches!(
         serde_json::from_str(&text).unwrap(),
-        Request::Remove { provider, session_id }
-            if provider == "claude" && session_id == "s"
+        Request::Remove { provider, session_id, manual }
+            if provider == "claude" && session_id == "s" && manual
     ));
+    let legacy: Request =
+        serde_json::from_str(r#"{"op":"remove","provider":"claude","session_id":"s"}"#).unwrap();
+    assert!(matches!(legacy, Request::Remove { manual: false, .. }));
 
     let memo = Request::Memo {
         provider: "claude".into(),

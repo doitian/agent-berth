@@ -236,13 +236,43 @@ test("archiving clears the row instead of leaving it idle", () => {
   assert.equal(app.reports.length, cleared)
 })
 
-test("the turn end that archiving stops does not bring the row back", () => {
+test("the turn end that archiving stops clears the row instead of leaving it idle", () => {
   const app = boot({ sessions: [session] })
   app.emit("turn/start", session, { turn: 1 })
   app.archive()
-  const before = app.reports.length
   app.emit("turn/end", session, { turn: 1 })
-  assert.equal(app.reports.length, before)
+  assert.deepEqual(app.reports.at(-1).status, {})
+  const cleared = app.reports.length
+  app.heartbeat()
+  assert.equal(app.reports.length, cleared)
+})
+
+test("an archived session that is running is still reported", () => {
+  const app = boot({
+    sessions: [session],
+    statuses: { [session.id]: "running" },
+    archived: [session.id],
+  })
+  app.heartbeat()
+  assert.deepEqual(app.reports.at(-1).status, { [session.id]: "busy" })
+})
+
+test("a turn on an archived session is reported until it ends", () => {
+  const app = boot({ sessions: [session], archived: [session.id] })
+  app.heartbeat()
+  app.emit("turn/start", session, { turn: 1 })
+  assert.deepEqual(app.reports.at(-1).status, { [session.id]: "busy" })
+  app.emit("turn/end", session, { turn: 1 })
+  assert.deepEqual(app.reports.at(-1).status, {})
+})
+
+test("an archived session waiting on approval is reported", () => {
+  const app = boot({ sessions: [session], archived: [session.id] })
+  app.emit("approval/asked", session, { id: "req-1" })
+  assert.deepEqual(app.reports.at(-1).blocking, [session.id])
+  assert.deepEqual(app.reports.at(-1).status, { [session.id]: "idle" })
+  app.emit("approval/decided", session, { id: "req-1" })
+  assert.deepEqual(app.reports.at(-1).status, {})
 })
 
 test("unarchiving reports the session again", () => {

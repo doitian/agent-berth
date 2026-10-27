@@ -88,10 +88,11 @@ pub fn stats(ctx: &AppContext) -> Result<Vec<crate::store::ProviderStats>> {
     }
 }
 
-pub fn remove(ctx: &AppContext, provider: &str, session_id: &str) -> Result<()> {
+pub fn remove(ctx: &AppContext, provider: &str, session_id: &str, manual: bool) -> Result<()> {
     let request = Request::Remove {
         provider: provider.to_string(),
         session_id: session_id.to_string(),
+        manual,
     };
     match send(ctx, &request)? {
         Response::Ok { .. } => Ok(()),

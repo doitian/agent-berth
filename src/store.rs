@@ -13,6 +13,21 @@ use crate::status::{
 
 pub const PLUGIN_STALE: Duration = Duration::from_secs(5);
 pub const SESSION_RETENTION: Duration = Duration::from_secs(7 * 24 * 60 * 60);
+/// High bit of a removal timestamp. Millisecond timestamps do not reach it.
+const MANUAL_REMOVAL: u64 = 1 << 63;
+
+pub fn pack_removal(at_ms: u64, manual: bool) -> u64 {
+    let at = at_ms & !MANUAL_REMOVAL;
+    if manual { at | MANUAL_REMOVAL } else { at }
+}
+
+fn removal_at(packed: u64) -> u64 {
+    packed & !MANUAL_REMOVAL
+}
+
+fn packed_manual(packed: u64) -> bool {
+    packed & MANUAL_REMOVAL != 0
+}
 
 #[derive(Debug, Clone)]
 pub enum Change {
@@ -100,8 +115,21 @@ pub struct Store {
     pub hooks: BTreeMap<String, BTreeMap<String, AgentSession>>,
     #[serde(default)]
     pub snapshots: BTreeMap<String, BTreeMap<String, PluginSnapshot>>,
+    /// Hidden session ids per provider. The value is a packed timestamp: the
+    /// high bit marks a user removal (`rm`), which stays so an idle or done
+    /// report cannot undo it. Without the bit, `resume` hid the row only until
+    /// the next report.
     #[serde(default)]
     pub removed: BTreeMap<String, BTreeMap<String, u64>>,
+    /// Session ids a provider hides while idle or done, such as archived
+    /// DeepSeek Harness sessions. Re-read from disk; not persisted.
+    #[serde(skip)]
+    pub(crate) quiet: BTreeMap<String, BTreeSet<String>>,
+    /// User removals that have been running or waiting since the removal.
+    /// Cleared when the session goes idle or done, so the row hides again
+    /// without forgetting that it was removed.
+    #[serde(skip)]
+    pub(crate) revived: BTreeMap<String, BTreeSet<String>>,
     /// Sessions that have ever been reported as a hosted tab, per provider.
     /// Once hosted, a session stays listed only while a live host tabs it or
     /// it is busy; closing the tab or the host hides it for good.
@@ -126,6 +154,8 @@ impl Default for Store {
             hooks: BTreeMap::new(),
             snapshots: BTreeMap::new(),
             removed: BTreeMap::new(),
+            quiet: BTreeMap::new(),
+            revived: BTreeMap::new(),
             hosted: BTreeMap::new(),
             memos: BTreeMap::new(),
             turns: BTreeMap::new(),
@@ -204,6 +234,10 @@ pub struct ListedSession {
     /// Stable id of the session that started this one with `new`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub delegator: Option<String>,
+    /// Hidden by `rm`, an archive, or a pending resume. Only `stored()`
+    /// returns these, so id lookups such as `wait` and `reply` still find them.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hidden: bool,
 }
 
 impl Store {
@@ -213,6 +247,31 @@ impl Store {
             self.previous_heartbeat_ms = Some(self.last_heartbeat_ms);
         }
         self.last_heartbeat_ms = now;
+        self.seed_revived();
+    }
+
+    /// `revived` is not persisted, and reloaded snapshots already read as busy,
+    /// so the next report would not count as a change into running. Treat a
+    /// removed session that is busy at startup as shown, matching `rm`'s
+    /// promise to list running and waiting sessions.
+    fn seed_revived(&mut self) {
+        let busy: Vec<(String, String)> = self
+            .removed
+            .iter()
+            .flat_map(|(provider, sessions)| {
+                sessions
+                    .iter()
+                    .filter(|(_, packed)| packed_manual(**packed))
+                    .map(move |(sid, _)| (provider.clone(), sid.clone()))
+            })
+            .filter(|(provider, sid)| {
+                self.hook_status(provider, sid).is_busy()
+                    || self.snapshot_status(provider, sid).is_busy()
+            })
+            .collect();
+        for (provider, sid) in busy {
+            self.revived.entry(provider).or_default().insert(sid);
+        }
     }
 
     pub fn heartbeat(&mut self) {
@@ -226,8 +285,12 @@ impl Store {
         if payload.get("hook_event_name").is_some() || payload.get("hookEventName").is_some() {
             let sid = crate::status::session_key(&payload);
             if let Some(sid) = &sid {
-                self.clear_removed(provider, sid);
+                self.clear_if_resumed(provider, sid);
             }
+            let before = sid
+                .as_deref()
+                .map(|sid| self.hook_status(provider, sid))
+                .unwrap_or_default();
             let bucket = self.hooks.entry(provider.to_string()).or_default();
             let previous_pid = sid
                 .as_ref()
@@ -244,10 +307,14 @@ impl Store {
                 session.status = AgentStatus::Done;
                 bucket.insert(sid.clone(), session);
             }
-            if let Some(sid) = sid
-                && let Some(session) = bucket.get_mut(&sid)
+            if let Some(sid) = &sid
+                && let Some(session) = bucket.get_mut(sid)
             {
                 touch_session(session, &payload, provider, previous_pid);
+            }
+            if let Some(sid) = &sid {
+                let after = self.hook_status(provider, sid);
+                self.note_revival(provider, sid, before, after);
             }
             return Ok(Change::Hooks {
                 provider: provider.to_string(),
@@ -275,7 +342,7 @@ impl Store {
             status.insert(sid.clone(), kind.to_string());
         }
         for sid in status.keys() {
-            self.clear_removed(provider, sid);
+            self.clear_if_resumed(provider, sid);
         }
         let blocking = match payload.get("blocking") {
             None => Vec::new(),
@@ -352,6 +419,10 @@ impl Store {
             })
             .collect();
         let hosted_tabs = tabs.clone();
+        let before: Vec<(String, AgentStatus)> = status
+            .keys()
+            .map(|sid| (sid.clone(), self.snapshot_status(provider, sid)))
+            .collect();
         let turns = self.turns.entry(provider.to_string()).or_default();
         for (sid, kind) in &status {
             let busy = blocking.contains(sid) || matches!(kind.as_str(), "busy" | "retry");
@@ -382,6 +453,10 @@ impl Store {
             .entry(provider.to_string())
             .or_default()
             .insert(instance.to_string(), snapshot);
+        for (sid, before) in before {
+            let after = self.snapshot_status(provider, &sid);
+            self.note_revival(provider, &sid, before, after);
+        }
         if let Some(tabs) = hosted_tabs {
             let hosted = self.hosted.entry(provider.to_string()).or_default();
             hosted.extend(tabs);
@@ -392,13 +467,31 @@ impl Store {
         })
     }
 
+    /// Hides a session the user removed. The mark stays, so a later idle or
+    /// done report cannot bring the row back; it is listed again only while
+    /// running or waiting.
     pub fn mark_removed(&mut self, provider: &str, session_id: &str) -> u64 {
-        let at = now_ms();
+        self.note_removal(provider, session_id, true)
+    }
+
+    /// Hides a session `resume` just launched, until its next report.
+    pub fn mark_resumed(&mut self, provider: &str, session_id: &str) -> u64 {
+        self.note_removal(provider, session_id, false)
+    }
+
+    fn note_removal(&mut self, provider: &str, session_id: &str, manual: bool) -> u64 {
+        let packed = pack_removal(now_ms(), manual);
         self.removed
             .entry(provider.to_string())
             .or_default()
-            .insert(session_id.to_string(), at);
-        at
+            .insert(session_id.to_string(), packed);
+        if manual && let Some(bucket) = self.revived.get_mut(provider) {
+            bucket.remove(session_id);
+            if bucket.is_empty() {
+                self.revived.remove(provider);
+            }
+        }
+        packed
     }
 
     pub fn clear_removed(&mut self, provider: &str, session_id: &str) {
@@ -407,10 +500,121 @@ impl Store {
         }
     }
 
+    /// A resume's hide is lifted by the next report. A user removal is not.
+    fn clear_if_resumed(&mut self, provider: &str, session_id: &str) {
+        if !self.is_manual_removal(provider, session_id) {
+            self.clear_removed(provider, session_id);
+        }
+    }
+
     pub fn is_removed(&self, provider: &str, session_id: &str) -> bool {
         self.removed
             .get(provider)
             .is_some_and(|bucket| bucket.contains_key(session_id))
+    }
+
+    pub fn is_manual_removal(&self, provider: &str, session_id: &str) -> bool {
+        self.removed.get(provider).is_some_and(|bucket| {
+            bucket
+                .get(session_id)
+                .is_some_and(|packed| packed_manual(*packed))
+        })
+    }
+
+    pub fn refresh_quiet(&mut self, ctx: &crate::paths::Context) {
+        self.quiet = read_quiet(ctx);
+    }
+
+    fn is_quiet(&self, provider: &str, session_id: &str) -> bool {
+        self.quiet
+            .get(provider)
+            .is_some_and(|ids| ids.contains(session_id))
+    }
+
+    /// User removals stay out until a later report shows them running or
+    /// waiting, then hide again once that ends. Quieted ids, such as archived
+    /// DeepSeek Harness sessions, follow the current status instead. A resume
+    /// hide stays out until its report clears it.
+    fn keep(&self, session: &ListedSession) -> bool {
+        if self.is_manual_removal(&session.provider, &session.session_id) {
+            return session.status.is_busy()
+                && self.is_revived(&session.provider, &session.session_id);
+        }
+        if self.is_quiet(&session.provider, &session.session_id) {
+            return session.status.is_busy();
+        }
+        !self.is_removed(&session.provider, &session.session_id)
+    }
+
+    fn is_revived(&self, provider: &str, session_id: &str) -> bool {
+        self.revived
+            .get(provider)
+            .is_some_and(|bucket| bucket.contains(session_id))
+    }
+
+    fn hook_status(&self, provider: &str, session_id: &str) -> AgentStatus {
+        self.hooks
+            .get(provider)
+            .and_then(|bucket| bucket.get(session_id))
+            .map(|session| session.status)
+            .unwrap_or_default()
+    }
+
+    /// Only live instances count; a crashed process's last snapshot can say
+    /// busy for days.
+    fn snapshot_status(&self, provider: &str, session_id: &str) -> AgentStatus {
+        let now = now_ms();
+        let live = self
+            .snapshots
+            .get(provider)
+            .into_iter()
+            .flat_map(|instances| instances.values())
+            .filter(|snapshot| {
+                now.saturating_sub(snapshot.last_report_ms) <= PLUGIN_STALE.as_millis() as u64
+            });
+        let mut status = AgentStatus::Idle;
+        for snapshot in live {
+            if snapshot.blocking.iter().any(|id| id == session_id) {
+                return AgentStatus::Waiting;
+            }
+            if snapshot
+                .status
+                .get(session_id)
+                .is_some_and(|kind| matches!(kind.as_str(), "busy" | "retry"))
+            {
+                status = AgentStatus::Running;
+            }
+        }
+        status
+    }
+
+    /// Reports repeat the state they already sent, such as tool hooks
+    /// mid-turn or plugin heartbeats, so only a change into running from
+    /// idle, or into waiting, brings a removed session back.
+    fn note_revival(
+        &mut self,
+        provider: &str,
+        session_id: &str,
+        before: AgentStatus,
+        after: AgentStatus,
+    ) {
+        if !self.is_manual_removal(provider, session_id) {
+            return;
+        }
+        let revives = match after {
+            AgentStatus::Waiting => before != AgentStatus::Waiting,
+            AgentStatus::Running => !before.is_busy(),
+            AgentStatus::Idle | AgentStatus::Done => false,
+        };
+        let bucket = self.revived.entry(provider.to_string()).or_default();
+        if revives {
+            bucket.insert(session_id.to_string());
+        } else if !after.is_busy() {
+            bucket.remove(session_id);
+        }
+        if bucket.is_empty() {
+            self.revived.remove(provider);
+        }
     }
 
     /// An empty or whitespace-only memo clears the session's note.
@@ -439,6 +643,7 @@ impl Store {
     }
 
     pub fn discover(&mut self, ctx: &crate::paths::Context) -> bool {
+        self.refresh_quiet(ctx);
         let mut changed = false;
         for provider in providers::all() {
             if let Some(discovery) = provider.discovery() {
@@ -490,6 +695,7 @@ impl Store {
                     turns_started: session.turns_started,
                     turns_ended: session.turns_ended,
                     delegator: session.delegator.clone(),
+                    hidden: false,
                 });
             }
         }
@@ -543,11 +749,15 @@ impl Store {
                         turns_started: counts.started,
                         turns_ended: counts.ended,
                         delegator: delegators.and_then(|bucket| bucket.get(sid)).cloned(),
+                        hidden: false,
                     });
                 }
             }
         }
-        out.retain(|session| !self.is_removed(&session.provider, &session.session_id));
+        for session in &mut out {
+            session.hidden = !self.keep(session);
+        }
+        out.retain(|session| include_closed || !session.hidden);
         let mut best: BTreeMap<(String, String, SessionKind), ListedSession> = BTreeMap::new();
         for mut session in out {
             let key = (
@@ -672,10 +882,32 @@ impl Store {
         }
         for (provider, bucket) in self.removed.iter_mut() {
             let before = bucket.len();
-            bucket.retain(|sid, _| live.contains(&(provider.clone(), sid.clone())));
+            bucket.retain(|sid, packed| {
+                if live.contains(&(provider.clone(), sid.clone())) {
+                    return true;
+                }
+                // A user removal outlives a row the plugin stopped reporting,
+                // such as an archived session that was cleared, so a later idle
+                // report still knows it was deleted. It ages out with the same
+                // retention as a dead session.
+                packed_manual(*packed) && removal_at(*packed) >= cutoff
+            });
             changed |= bucket.len() != before;
         }
         self.removed.retain(|_, bucket| !bucket.is_empty());
+        let kept: BTreeSet<(String, String)> = self
+            .removed
+            .iter()
+            .flat_map(|(provider, sessions)| {
+                sessions
+                    .keys()
+                    .map(move |sid| (provider.clone(), sid.clone()))
+            })
+            .collect();
+        self.revived.retain(|provider, bucket| {
+            bucket.retain(|sid| kept.contains(&(provider.clone(), sid.clone())));
+            !bucket.is_empty()
+        });
 
         for (provider, set) in self.hosted.iter_mut() {
             let before = set.len();
@@ -718,6 +950,20 @@ struct SessionHost {
     front: Option<String>,
     tabs: BTreeSet<String>,
     last_report_ms: u64,
+}
+
+/// Provider quiet sets, read from disk. The server reads them before listing,
+/// outside the store lock, so an archive written since the last heartbeat is
+/// already hidden.
+pub fn read_quiet(ctx: &crate::paths::Context) -> BTreeMap<String, BTreeSet<String>> {
+    let mut quiet = BTreeMap::new();
+    for provider in providers::all() {
+        let ids = provider.quiet_ids(ctx);
+        if !ids.is_empty() {
+            quiet.insert(provider.name().to_string(), ids);
+        }
+    }
+    quiet
 }
 
 fn reporting_hosts(
@@ -839,7 +1085,10 @@ impl ListedSession {
     }
 
     pub fn is_resumable(&self, store: &Store, now_ms: u64, idle: Option<Duration>) -> bool {
-        if self.parent_id.is_some() {
+        if self.parent_id.is_some()
+            || self.hidden
+            || store.is_manual_removal(&self.provider, &self.session_id)
+        {
             return false;
         }
         let tabbed = self.kind == SessionKind::Plugin

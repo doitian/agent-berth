@@ -27,6 +27,7 @@ fn listed() -> ListedSession {
         turns_started: 0,
         turns_ended: 0,
         delegator: None,
+        hidden: false,
     }
 }
 

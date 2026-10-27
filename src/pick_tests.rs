@@ -27,6 +27,7 @@ fn session(provider: &str, title: &str, cwd: &str) -> ListedSession {
         turns_started: 0,
         turns_ended: 0,
         delegator: None,
+        hidden: false,
     }
 }
 

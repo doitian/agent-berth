@@ -386,6 +386,34 @@ fn a_stale_plugin_is_outdated() {
 }
 
 #[test]
+fn archived_sessions_are_quiet_until_the_file_says_otherwise() {
+    let dir = tempdir().unwrap();
+    let ctx = AppContext::for_test(dir.path(), &dir.path().join("bin/agent-berth"));
+    assert!(Dsh.quiet_ids(&ctx).is_empty());
+
+    let store = ctx.dsh_home.join("storages");
+    std::fs::create_dir_all(&store).unwrap();
+    std::fs::write(
+        store.join("workspace.json"),
+        r#"{"global":{"archivedSessionIds":["session-old","session-new"]}}"#,
+    )
+    .unwrap();
+    assert_eq!(
+        Dsh.quiet_ids(&ctx),
+        ["session-new".to_string(), "session-old".to_string()]
+            .into_iter()
+            .collect()
+    );
+
+    // A torn write keeps the last set instead of flashing archived rows back.
+    std::fs::write(store.join("workspace.json"), "{").unwrap();
+    assert_eq!(Dsh.quiet_ids(&ctx).len(), 2);
+
+    std::fs::remove_file(store.join("workspace.json")).unwrap();
+    assert!(Dsh.quiet_ids(&ctx).is_empty());
+}
+
+#[test]
 fn the_log_lives_under_the_home_sessions_directory() {
     let dir = tempdir().unwrap();
     let ctx = AppContext::for_test(dir.path(), &dir.path().join("bin/agent-berth"));

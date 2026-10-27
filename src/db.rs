@@ -201,12 +201,21 @@ pub fn query_stats(ctx: &AppContext) -> Result<Vec<ProviderStats>> {
 }
 
 pub fn mark_removed(ctx: &AppContext, provider: &str, session_id: &str) -> Result<()> {
-    let removed_at = crate::store::now_ms();
-    if ipc::remove(ctx, provider, session_id).is_ok() {
+    note_removal(ctx, provider, session_id, true)
+}
+
+/// Hides a session `resume` just launched, until its next report.
+pub fn mark_resumed(ctx: &AppContext, provider: &str, session_id: &str) -> Result<()> {
+    note_removal(ctx, provider, session_id, false)
+}
+
+fn note_removal(ctx: &AppContext, provider: &str, session_id: &str, manual: bool) -> Result<()> {
+    if ipc::remove(ctx, provider, session_id, manual).is_ok() {
         return Ok(());
     }
     let db = open(ctx)?;
-    persist_removal(&db, provider, session_id, removed_at)
+    let packed = crate::store::pack_removal(crate::store::now_ms(), manual);
+    persist_removal(&db, provider, session_id, packed)
 }
 
 pub fn set_memo(ctx: &AppContext, provider: &str, session_id: &str, memo: &str) -> Result<()> {
