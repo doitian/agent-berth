@@ -17,6 +17,7 @@ pub struct Context {
     pub codebuddy_config_dir: PathBuf,
     pub codex_home: PathBuf,
     pub grok_home: PathBuf,
+    pub dsh_home: PathBuf,
     pub pi_dir: PathBuf,
     pub paseo_home: PathBuf,
     pub appdata: Option<PathBuf>,
@@ -49,6 +50,7 @@ impl Context {
                 .unwrap_or_else(|| home.join(".codebuddy")),
             codex_home: env_path("CODEX_HOME").unwrap_or_else(|| home.join(".codex")),
             grok_home: env_path("GROK_HOME").unwrap_or_else(|| home.join(".grok")),
+            dsh_home: env_path("DSH_HOME").unwrap_or_else(|| home.join(".dsh")),
             pi_dir: env_path("PI_CODING_AGENT_DIR")
                 .unwrap_or_else(|| home.join(".pi").join("agent")),
             paseo_home: env_path("PASEO_HOME").unwrap_or_else(|| home.join(".paseo")),
@@ -266,6 +268,7 @@ impl Context {
             codebuddy_config_dir: root.join("codebuddy"),
             codex_home: root.join("codex"),
             grok_home: root.join("grok"),
+            dsh_home: root.join("dsh"),
             pi_dir: root.join("pi"),
             paseo_home: root.join(".paseo"),
             appdata: Some(root.join("appdata")),

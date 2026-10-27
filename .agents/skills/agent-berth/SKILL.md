@@ -1,6 +1,6 @@
 ---
 name: agent-berth
-description: Start, monitor, message, and stop coding agents (Claude Code, Codex, Grok, OpenCode, Pi) running in tmux through the agent-berth CLI. Use when delegating a task to another agent, checking whether a delegated agent has finished, reading its output, sending it follow-up instructions, replying to the agent that delegated to you, or stopping a delegate.
+description: Start, monitor, message, and stop coding agents (Claude Code, Codex, Grok, OpenCode, Pi) running in tmux through the agent-berth CLI, and read the DeepSeek Harness sessions the app runs. Use when delegating a task to another agent, checking whether a delegated agent has finished, reading its output, sending it follow-up instructions, replying to the agent that delegated to you, or stopping a delegate.
 ---
 
 # Managing agents with agent-berth
@@ -48,6 +48,11 @@ id=$(agent-berth new --wait claude --permission-mode bypassPermissions "Fix the 
 - Codex and Grok report only after their first prompt is submitted, so
   `--wait` returns once the task is running. Claude Code may report earlier,
   as `idle`.
+- DeepSeek Harness sessions cannot be started with `new`: they run inside the
+  Harness app, which owns them. With its plugin installed by `agent-berth
+  setup`, they still appear in `list`, `search`, and `logs`; `send`, `stop`,
+  and `resume` do not reach the ones the app runs, so tell the user to
+  continue there. A `dsh tui` session in a tmux pane is reached like any other.
 
 ## 2. Wait for the turn to finish
 
@@ -160,7 +165,7 @@ reading:
 | --- | --- |
 | `id` | Stable session id that every command takes |
 | `status` | `running`, `waiting`, `done`, or `idle` |
-| `provider` | `claude`, `codex`, `grok`, `opencode`, or `pi` |
+| `provider` | `claude`, `codex`, `grok`, `opencode`, `pi`, or `dsh` |
 | `title`, `memo`, `cwd` | Detected title, user-set note, and working directory |
 | `tmux_pane` | `id`, `session`, `window`, `window_name`, `path`, and `pid` of the pane; absent when none shows the session |
 | `turns_ended` | Monotonic count of finished turns, which `wait` compares with `--after` |

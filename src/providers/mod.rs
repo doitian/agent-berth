@@ -15,6 +15,7 @@ use crate::transcript::{self, Conversation, Feed, Record};
 mod claude;
 mod codebuddy;
 mod codex;
+mod dsh;
 mod grok;
 mod opencode;
 mod pi;
@@ -22,10 +23,11 @@ mod pi;
 /// Every supported agent. Adding a provider means implementing [`Provider`]
 /// and its supertraits, overriding the hub defaults it supports natively, and
 /// listing it here.
-static ALL: [&dyn Provider; 6] = [
+static ALL: [&dyn Provider; 7] = [
     &claude::Claude,
     &codebuddy::CodeBuddy,
     &codex::Codex,
+    &dsh::Dsh,
     &grok::Grok,
     &opencode::Opencode,
     &pi::Pi,
@@ -147,6 +149,14 @@ pub trait TranscriptLog {
 
     fn is_session_file(&self, file_name: &str, session_id: &str) -> bool;
 
+    /// Whether `path` is this session's log. Providers that write the same file
+    /// name for every session, under a per-session directory, override this
+    /// instead of [`TranscriptLog::is_session_file`].
+    fn is_session_log(&self, path: &Path, session_id: &str) -> bool {
+        path.file_name()
+            .is_some_and(|name| self.is_session_file(&name.to_string_lossy(), session_id))
+    }
+
     /// The record proves the file belongs to the session, not to a parent or
     /// sibling with a similar name.
     fn is_session_record(&self, row: &Value, session_id: &str) -> bool;
@@ -159,6 +169,19 @@ pub trait TranscriptLog {
     /// is its identity.
     fn record_id<'a>(&self, _row: &'a Value) -> Option<&'a str> {
         None
+    }
+
+    /// Whether the log is a sequence of compressed frames, which
+    /// [`TranscriptLog::decode`] turns into text before it is split into rows.
+    fn compressed(&self) -> bool {
+        false
+    }
+
+    /// The text of the complete frames in `bytes`, stopping once at least
+    /// `limit` bytes are decoded, and how many bytes of `bytes` those frames
+    /// span. A frame still being written is left for the next read.
+    fn decode(&self, bytes: &[u8], _limit: usize) -> (Vec<u8>, usize) {
+        (bytes.to_vec(), bytes.len())
     }
 }
 

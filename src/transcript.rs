@@ -436,7 +436,16 @@ impl Reader {
         file.seek(SeekFrom::Start(self.offset))?;
         let mut bytes = Vec::new();
         (&mut file).take(READ_LIMIT).read_to_end(&mut bytes)?;
-        self.offset += bytes.len() as u64;
+        // A compressed log is appended a whole frame at a time, so it advances
+        // past the complete frames and leaves one still being written for the
+        // next read.
+        let (bytes, consumed) = if log.compressed() {
+            log.decode(&bytes, usize::MAX)
+        } else {
+            let len = bytes.len();
+            (bytes, len)
+        };
+        self.offset += consumed as u64;
         for chunk in bytes.split_inclusive(|byte| *byte == b'\n') {
             let complete = chunk.last() == Some(&b'\n');
             if !self.skipping {
@@ -529,20 +538,30 @@ pub(crate) fn full(source: &Source) -> Result<Conversation> {
             )
         })?,
     };
-    let file = File::open(&path).with_context(|| format!("open {}", path.display()))?;
+    let mut file = File::open(&path).with_context(|| format!("open {}", path.display()))?;
     let mut order: Vec<u64> = Vec::new();
     let mut records: HashMap<u64, Record> = HashMap::new();
-    for line in BufReader::new(file).lines() {
-        let line = line.with_context(|| format!("read {}", path.display()))?;
-        let Ok(row) = serde_json::from_str::<Value>(&line) else {
-            continue;
+    let mut add = |line: &[u8]| {
+        let Ok(row) = serde_json::from_slice::<Value>(line) else {
+            return;
         };
         let Some(record) = log.parse(&row) else {
-            continue;
+            return;
         };
         let key = record_key(log, &row);
         if records.insert(key, record).is_none() {
             order.push(key);
+        }
+    };
+    if log.compressed() {
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes)
+            .with_context(|| format!("read {}", path.display()))?;
+        let (text, _) = log.decode(&bytes, usize::MAX);
+        text.split(|byte| *byte == b'\n').for_each(&mut add);
+    } else {
+        for line in BufReader::new(file).split(b'\n') {
+            add(&line.with_context(|| format!("read {}", path.display()))?);
         }
     }
     Ok(Conversation::Turns(turns(
@@ -574,12 +593,11 @@ fn locate(source: &Source) -> Option<PathBuf> {
             };
             if kind.is_dir() && depth < 4 {
                 dirs.push((entry.path(), depth + 1));
-            } else if kind.is_file() {
-                let name = entry.file_name();
-                let name = name.to_string_lossy();
-                if log.is_session_file(&name, id) && belongs_to(log, &entry.path(), id) {
-                    return Some(entry.path());
-                }
+            } else if kind.is_file()
+                && log.is_session_log(&entry.path(), id)
+                && belongs_to(log, &entry.path(), id)
+            {
+                return Some(entry.path());
             }
         }
     }
@@ -598,6 +616,13 @@ fn belongs_to(log: &dyn TranscriptLog, path: &Path, session_id: &str) -> bool {
     {
         return false;
     }
+    // Only the first record identifies a compressed log, so stop decoding once
+    // it is complete instead of expanding the whole conversation.
+    let bytes = if log.compressed() {
+        log.decode(&bytes, RECORD_LIMIT).0
+    } else {
+        bytes
+    };
     bytes
         .split(|c| *c == b'\n')
         .filter_map(|line| serde_json::from_slice::<Value>(line).ok())
@@ -626,9 +651,9 @@ pub(crate) fn content(value: &Value, said: fn(String) -> Entry) -> Vec<Entry> {
                     name: block["name"].as_str().unwrap_or("call").to_string(),
                     input: block["input"].to_string(),
                 }),
-                Some("toolCall") => entries.push(Entry::ToolCall {
+                Some("toolCall" | "tool-call") => entries.push(Entry::ToolCall {
                     name: block["name"].as_str().unwrap_or("call").to_string(),
-                    input: block["arguments"].to_string(),
+                    input: tool_input(&block["arguments"]),
                 }),
                 Some("tool_result") => entries.extend(tool_result(&block["content"])),
                 Some("image" | "input_image") => entries.push(said("[image]".into())),
@@ -637,6 +662,15 @@ pub(crate) fn content(value: &Value, said: fn(String) -> Entry) -> Vec<Entry> {
         }
     }
     entries
+}
+
+/// A tool call's arguments: the text itself when the log keeps them as a JSON
+/// string, otherwise their compact JSON.
+fn tool_input(value: &Value) -> String {
+    match value {
+        Value::String(text) => text.clone(),
+        other => other.to_string(),
+    }
 }
 
 pub(crate) fn tool_result(value: &Value) -> Vec<Entry> {

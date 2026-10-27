@@ -201,6 +201,7 @@ fn resume_commands_match_providers() {
         ["opencode", "--session", "abc"]
     );
     assert_eq!(resume_cmd("pi", "abc"), ["pi", "--session", "abc"]);
+    assert_eq!(resume_cmd("dsh", "abc"), ["dsh", "tui", "--resume", "abc"]);
 }
 
 #[test]
@@ -233,6 +234,7 @@ fn log_roots_cover_local_providers_only() {
     );
     assert_eq!(root("codex"), Some(ctx.codex_home.join("sessions")));
     assert_eq!(root("pi"), Some(ctx.pi_dir.join("sessions")));
+    assert_eq!(root("dsh"), Some(ctx.dsh_home.join("sessions")));
     assert_eq!(root("opencode"), None);
     assert_eq!(root("grok"), None);
 }

@@ -3,10 +3,10 @@
 Monitor coding agents and resume their sessions.
 
 agent-berth runs a small background server that tracks the status of your AI
-coding agent sessions — Claude Code, CodeBuddy, Codex, Grok, OpenCode, and Pi
-— through hooks installed into each agent. When the server or the host restarts, it can
-resume the sessions you were working on, each in its own tmux window, grouped
-by working directory.
+coding agent sessions — Claude Code, CodeBuddy, Codex, DeepSeek Harness, Grok,
+OpenCode, and Pi — through hooks installed into each agent. When the server or
+the host restarts, it can resume the sessions you were working on, each in its
+own tmux window, grouped by working directory.
 
 ## Features
 
@@ -270,9 +270,9 @@ turns, each starting with a prompt and holding the agent's work on it:
   `final` reply, `complete` flag, and entries. A transcript read from a tmux
   pane has no turns and prints `"structured": false` with its text.
 
-Claude, CodeBuddy, Codex, Pi, and OpenCode transcripts have turns. A tmux pane
-capture does not, so there `--final` and `--turns` print its last 40 lines, or the
-last `--tail` lines, and say so on stderr.
+Claude, CodeBuddy, Codex, DeepSeek Harness, Pi, and OpenCode transcripts have
+turns. A tmux pane capture does not, so there `--final` and `--turns` print its
+last 40 lines, or the last `--tail` lines, and say so on stderr.
 
 ```sh
 agent-berth logs 4wqecx --final
@@ -281,8 +281,12 @@ agent-berth logs 4wqecx --final --json | jq -r '.turns[0].final'
 ```
 
 Claude, CodeBuddy, Codex, and Pi transcripts come from their local JSONL
-session files. OpenCode keeps sessions in a service-owned database with no log
-file, so `logs` runs `opencode session export <id>` and renders its messages. When no local or
+session files. DeepSeek Harness appends one too, under
+`$DSH_HOME/sessions/<cwd>/<session-id>/session.v4.jsonl.zstd`, compressed as a
+sequence of zstd frames, one per write; agent-berth decodes the frames in order
+and keeps the complete ones when the last is still being written. OpenCode
+keeps sessions in a service-owned database with no log file, so `logs` runs
+`opencode session export <id>` and renders its messages. When no local or
 exported transcript is available — an unsupported provider such as Grok or
 Paseo, a missing file, or an OpenCode server that is not running — and the
 session resolves to a tmux pane, `logs` falls back to capturing that pane's
@@ -306,7 +310,9 @@ Codex desktop sessions are reached like CLI ones when they share the local
 app-server. A Claude desktop session has no pane, so a fresh
 `claude --model sonnet -p` run delivers the message through the CLI's
 cross-session messaging, addressed by the session's name and Claude session
-ID.
+ID. A DeepSeek Harness session the app runs also has no pane and no command
+that takes a message, so `send` refuses it; type the message in the app. One
+started in a terminal, such as `dsh tui`, is reached through its pane.
 
 A session whose status is `waiting` is refused: it is showing a permission
 prompt or a question, so typed text and Enter would answer the dialog, and a
@@ -328,10 +334,10 @@ default is `10m`).
 Every session carries monotonic `turns_started` and `turns_ended` counts in
 `list --json`, `search --json`, and `self --json`. Hook providers (Claude,
 CodeBuddy, Codex, Grok) count a start when a turn becomes `running` or
-`waiting` and an end on each Stop hook; plugin providers (OpenCode, Pi) count
-the busy/idle edges between their reports. Unlike `status`, which only holds the latest
-level, the counts show a turn that began and ended between two looks, and
-they survive server restarts.
+`waiting` and an end on each Stop hook; plugin providers (DeepSeek Harness,
+OpenCode, Pi) count the busy/idle edges between their reports. Unlike `status`,
+which only holds the latest level, the counts show a turn that began and ended
+between two looks, and they survive server restarts.
 
 `wait` returns `done` once `turns_ended` exceeds a baseline: `--after N` when
 given, otherwise the count read when `wait` starts, so a turn that ended
@@ -414,9 +420,17 @@ would start.
 
 The hooks installed by `setup` call `agent-berth notify` on agent events
 (session start, prompt submit, tool use, permission requests, stop, session
-end). The server folds these events into per-session status and persists them
-in a redb database, so state survives restarts. Sessions are keyed by provider
-and session ID, with the working directory and command line needed to resume.
+end). Agents that load plugins instead of hooks — DeepSeek Harness, OpenCode,
+and Pi — get one installed the same way, and it reports each session's status
+on a heartbeat. The DeepSeek Harness plugin is written to
+`$DSH_HOME/agent-berth/plugin.mjs` and inserted by a row in
+`$DSH_HOME/cordis.patch.yml`, the patch layer the Harness composes into every
+profile, so restart the app after `setup` for it to load. It reports the
+sessions the app lists: a session archived in the Harness is dropped from
+`list` too, whether the app or a terminal booted it. The server folds
+these events into per-session status and persists them in a redb database, so
+state survives restarts. Sessions are keyed by provider and session ID, with
+the working directory and command line needed to resume.
 
 State lives in `$XDG_STATE_HOME/agent-berth` (`~/.local/state/agent-berth`,
 or `%LOCALAPPDATA%\agent-berth` on Windows). The IPC endpoint is
@@ -433,7 +447,7 @@ named pipe on Windows.
 | `AGENT_BERTH_TMUX_CONFIG` | Add `tmux -f <path>` to every tmux invocation |
 
 Provider config locations honor `CLAUDE_CONFIG_DIR`, `CODEBUDDY_CONFIG_DIR`,
-`CODEX_HOME`, `GROK_HOME`, and `PI_CODING_AGENT_DIR`.
+`CODEX_HOME`, `DSH_HOME`, `GROK_HOME`, and `PI_CODING_AGENT_DIR`.
 
 ## Development
 

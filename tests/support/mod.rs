@@ -101,6 +101,7 @@ impl Sandbox {
             ("CODEBUDDY_CONFIG_DIR", "codebuddy"),
             ("CODEX_HOME", "codex"),
             ("GROK_HOME", "grok"),
+            ("DSH_HOME", "dsh"),
             ("PI_CODING_AGENT_DIR", "pi"),
             ("PASEO_HOME", "paseo"),
             ("PSMUX_DATA_DIR", "psmux"),

@@ -1649,7 +1649,15 @@ fn cli_front_pane_keeps_pane_preview_over_conversation() {
 
 #[test]
 fn logos_cover_known_providers() {
-    for provider in ["claude", "codebuddy", "codex", "grok", "opencode", "pi"] {
+    for provider in [
+        "claude",
+        "codebuddy",
+        "codex",
+        "dsh",
+        "grok",
+        "opencode",
+        "pi",
+    ] {
         assert_ne!(logo(provider), logo("unknown"), "{provider}");
     }
 }

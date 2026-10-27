@@ -18,7 +18,7 @@ run = "cargo test --test integration"
 
 [tasks."test:plugins"]
 description = "Test plugin lifecycle events without agent clients or model calls"
-run = "node --test tests/opencode-v2.test.mjs"
+run = "node --test tests/opencode-v2.test.mjs tests/dsh.test.mjs"
 
 [tasks."test:tmux"]
 description = "Test resume with real tmux/psmux in a disposable namespace"

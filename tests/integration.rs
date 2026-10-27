@@ -791,6 +791,7 @@ fn setup_installs_all_hooks_in_disposable_client_homes() {
         ("codebuddy", "codebuddy/settings.json"),
         ("codex", "codex/hooks.json"),
         ("grok", "grok/hooks/agent-berth.json"),
+        ("dsh", "dsh/agent-berth/plugin.mjs"),
         ("opencode", "config/opencode/plugins/agent-berth.js"),
         ("pi", "pi/extensions/agent-berth.ts"),
     ] {
@@ -815,6 +816,10 @@ fn setup_installs_all_hooks_in_disposable_client_homes() {
             assert!(contents.contains(&format!("\"{provider}\"")));
         }
     }
+    // The Harness composes its machine-wide patch layer into every profile, so
+    // the plugin row reaches the app's own profile too.
+    let patch = fs::read_to_string(sandbox.root.path().join("dsh/cordis.patch.yml")).unwrap();
+    assert!(patch.contains("name: ./agent-berth/plugin.mjs"));
     assert!(
         !sandbox
             .root

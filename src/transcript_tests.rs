@@ -49,6 +49,47 @@ fn follows_complete_records_and_buffers_partial_utf8() {
     assert_eq!(reader.preview_log(&source), output);
 }
 
+/// `text` in one raw zstd block, framed the way DeepSeek Harness appends each
+/// write to its log.
+fn zstd_frame(text: &str) -> Vec<u8> {
+    let len = text.len();
+    assert!(len < 256, "a one-byte content size");
+    let block = (len << 3) | 1;
+    let mut frame = vec![0x28, 0xb5, 0x2f, 0xfd, 0x20, len as u8];
+    frame.extend_from_slice(&block.to_le_bytes()[..3]);
+    frame.extend_from_slice(text.as_bytes());
+    frame
+}
+
+#[test]
+fn follows_compressed_frames_and_waits_for_one_being_written() {
+    let row = |id: &str, text: &str| {
+        format!(
+            "{}\n",
+            json!({"type":"assistant/message","data":{"message":{"id":id,"content":[{"type":"text","text":text}]}}})
+        )
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("session.v4.jsonl.zstd");
+    std::fs::write(&path, zstd_frame(&row("m1", "First"))).unwrap();
+    let source = source(&path, "dsh");
+    let mut reader = Reader::default();
+    assert!(reader.preview_log(&source).contains("First"));
+
+    let next = zstd_frame(&row("m2", "Second"));
+    append_file(&path, &next[..10]);
+    let output = reader.preview_log(&source);
+    assert!(!output.contains("Second"));
+    assert!(!output.contains("malformed"));
+    let old_offset = reader.offset;
+
+    append_file(&path, &next[10..]);
+    let output = reader.preview_log(&source);
+    assert!(output.contains("Second"));
+    assert_eq!(output.matches("First").count(), 1);
+    assert!(reader.offset > old_offset);
+}
+
 #[test]
 fn replaces_duplicate_claude_records_and_skips_malformed_and_unknown_rows() {
     let dir = tempfile::tempdir().unwrap();
@@ -315,6 +356,7 @@ fn supports_covers_exactly_the_parseable_providers() {
     assert!(supports("codebuddy"));
     assert!(supports("codex"));
     assert!(supports("pi"));
+    assert!(supports("dsh"));
     for provider in ["grok", "opencode", "unknown"] {
         assert!(!supports(provider), "{provider}");
     }

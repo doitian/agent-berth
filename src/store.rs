@@ -55,6 +55,10 @@ pub struct PluginSnapshot {
     pub tabs: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub paseo_agent_id: Option<String>,
+    /// Whether the reporting process is the agent's desktop app. Its sessions
+    /// are focused in the app rather than resumed in a terminal.
+    #[serde(default)]
+    pub desktop: bool,
     /// When each reported session first appeared under the current host
     /// identity; a long-lived process can open sessions well after it starts.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -371,6 +375,7 @@ impl Store {
             front,
             tabs,
             paseo_agent_id,
+            desktop: payload.get("source").and_then(Value::as_str) == Some("desktop"),
             paseo_host_changed_ms,
         };
         self.snapshots
@@ -514,7 +519,11 @@ impl Store {
                         provider: provider.clone(),
                         session_id: sid.clone(),
                         status,
-                        source: Source::Cli,
+                        source: if snapshot.desktop {
+                            Source::Desktop
+                        } else {
+                            Source::Cli
+                        },
                         cwd: snapshot.cwd.clone(),
                         cmdline,
                         pid: snapshot.pid,
