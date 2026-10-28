@@ -175,7 +175,8 @@ The footer keeps a short hint line; press `?` for the full sheet.
 | `sa` | Sort by agent provider alphabetically |
 | `ss` | Sort by status: waiting, running, done, idle |
 | `sd` | Sort by working directory alphabetically, missing directories last |
-| `w` | Toggle group headers for the current sort (hidden by default) |
+| `wt` / `wr` / `wa` / `ws` / `wd` | Group headers by creation time, activity, agent provider, status, or working directory |
+| `wn` | Turn group headers off (default) |
 | `I` | In the resumable list, toggle idle sessions; asks for the idle window (default `20m`, prefilled) |
 | `=` | Toggle maximization of the tmux or conversation preview |
 | `␣gg` | Open lazygit in the selected session's working directory |
@@ -188,12 +189,13 @@ The footer keeps a short hint line; press `?` for the full sheet.
 | `?` | Show every shortcut in a popup; any key closes it |
 | `q` | Quit |
 
-Group headers use `1h`, `1d`, `7d`, and `>7d` for creation/activity sorting:
-up to one hour, over one hour through one day, over one day through seven
-days, and older than seven days. Other sorts group by agent name, status,
-or full working directory. Directory labels show the last two components
-with `/` separators, such as `codebase/agent-berth`; missing directories show
-`-`. Headers are skipped when moving between sessions.
+Group headers are independent of the sort order. They use `1h`, `1d`, `7d`, and
+`>7d` for creation/activity grouping: up to one hour, over one hour through one
+day, over one day through seven days, and older than seven days. Other group
+criteria group by agent name, status, or full working directory. Directory labels
+show the last two components with `/` separators, such as
+`codebase/agent-berth`; missing directories show `-`. Headers are skipped when
+moving between sessions.
 
 ### Search
 

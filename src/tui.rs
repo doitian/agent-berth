@@ -62,7 +62,10 @@ const HELP: &[(&str, &[(&str, &str)])] = &[
             ("j / k, ↓ / ↑", "move selection"),
             ("g a / g r", "active / resumable sessions"),
             ("/", "filter sessions (enter applies, esc clears)"),
-            ("w", "toggle group headers"),
+            (
+                "w t/r/a/s/d/n",
+                "group by created/activity/provider/status/directory (n off)",
+            ),
             (
                 "s t/r/a/s/d",
                 "sort by created/activity/provider/status/directory",
@@ -134,6 +137,7 @@ enum Input {
 enum Pending {
     G,
     S,
+    W,
     Space,
     SpaceG,
     B,
@@ -311,7 +315,7 @@ fn spawn_fetch(tx: &Sender<Fetched>, fetch: Fetch) {
 struct App {
     view: View,
     sort: Sort,
-    group_headers: bool,
+    group: Option<Sort>,
     sessions: Vec<ListedSession>,
     panes: Vec<Pane>,
     selected: usize,
@@ -360,7 +364,7 @@ impl App {
         Self {
             view: View::Active,
             sort: Sort::Created,
-            group_headers: false,
+            group: None,
             sessions: Vec::new(),
             panes: Vec::new(),
             selected: 0,
@@ -570,7 +574,7 @@ impl App {
         self.needs_redraw = true;
         self.panes = panes;
         self.sessions = sessions;
-        sort_sessions(&mut self.sessions, self.sort);
+        sort_sessions(&mut self.sessions, self.sort, self.group);
         self.restore_selection(keep);
         if self.has_preview() && self.preview_in_flight.is_none() {
             self.preview_pending_since.get_or_insert_with(Instant::now);
@@ -755,11 +759,20 @@ impl App {
     }
 
     fn set_sort(&mut self, sort: Sort) {
+        self.sort = sort;
+        self.resort();
+    }
+
+    fn set_group(&mut self, group: Option<Sort>) {
+        self.group = group;
+        self.resort();
+    }
+
+    fn resort(&mut self) {
         let keep = self
             .selected_session()
             .map(|session| (session.provider.clone(), session.session_id.clone()));
-        self.sort = sort;
-        sort_sessions(&mut self.sessions, sort);
+        sort_sessions(&mut self.sessions, self.sort, self.group);
         self.restore_selection(keep);
     }
 
@@ -793,6 +806,12 @@ impl App {
                 (Pending::S, KeyCode::Char('a')) => self.set_sort(Sort::Provider),
                 (Pending::S, KeyCode::Char('s')) => self.set_sort(Sort::Status),
                 (Pending::S, KeyCode::Char('d')) => self.set_sort(Sort::Directory),
+                (Pending::W, KeyCode::Char('t')) => self.set_group(Some(Sort::Created)),
+                (Pending::W, KeyCode::Char('r')) => self.set_group(Some(Sort::Activity)),
+                (Pending::W, KeyCode::Char('a')) => self.set_group(Some(Sort::Provider)),
+                (Pending::W, KeyCode::Char('s')) => self.set_group(Some(Sort::Status)),
+                (Pending::W, KeyCode::Char('d')) => self.set_group(Some(Sort::Directory)),
+                (Pending::W, KeyCode::Char('n')) => self.set_group(None),
                 (Pending::Space, KeyCode::Char('g')) => self.pending = Some(Pending::SpaceG),
                 (Pending::SpaceG, KeyCode::Char('g')) => return self.open_lazygit(),
                 (Pending::B, KeyCode::Char('r')) => return self.browse_selected(Browse::Repo),
@@ -830,7 +849,7 @@ impl App {
                 Effect::None
             }
             KeyCode::Char('w') => {
-                self.group_headers = !self.group_headers;
+                self.pending = Some(Pending::W);
                 Effect::None
             }
             KeyCode::Char(' ') => {
@@ -1446,10 +1465,10 @@ fn render_list(frame: &mut Frame, app: &App, area: Rect) {
     let mut previous_group = None;
     let mut selected_row = None;
     for (index, session) in sessions.iter().enumerate() {
-        if app.group_headers {
-            let group = session_group(session, app.sort, now);
+        if let Some(group_by) = app.group {
+            let group = session_group(session, group_by, now);
             if previous_group.as_ref() != Some(&group) {
-                let label = if app.sort == Sort::Directory {
+                let label = if group_by == Sort::Directory {
                     crate::paths::worktree_label(&group)
                 } else {
                     group.clone()
@@ -1507,22 +1526,22 @@ fn render_list(frame: &mut Frame, app: &App, area: Rect) {
     if !app.filter.is_empty() {
         title = format!("{}· /{} ", title.trim_end(), app.filter);
     }
+    let mut footer = format!(" sort: {} ", app.sort.label());
+    if let Some(group) = app.group {
+        footer = format!("{}· group: {} ", footer, group.label());
+    }
     let list_widget = List::new(items)
-        .block(
-            Block::bordered()
-                .title(title)
-                .title_bottom(format!(" sort: {} ", app.sort.label())),
-        )
+        .block(Block::bordered().title(title).title_bottom(footer))
         .highlight_style(Style::default().bg(latte::SURFACE0));
     let mut state = ListState::default();
     state.select(selected_row);
     frame.render_stateful_widget(list_widget, area, &mut state);
 }
 
-fn session_group(session: &ListedSession, sort: Sort, now: u64) -> String {
-    match sort {
+fn session_group(session: &ListedSession, group: Sort, now: u64) -> String {
+    match group {
         Sort::Created | Sort::Activity => {
-            let timestamp = if sort == Sort::Created {
+            let timestamp = if group == Sort::Created {
                 session.created_ms
             } else {
                 session.last_report_ms
@@ -1771,6 +1790,10 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
                     "s — t creation · r recent activity · a agent provider · s status · d directory"
                         .to_string()
                 }
+                Some(Pending::W) => {
+                    "w — t creation · r recent activity · a agent provider · s status · d directory · n off"
+                        .to_string()
+                }
                 Some(Pending::Space) | Some(Pending::SpaceG) => "␣g — g open lazygit".to_string(),
                 Some(Pending::B) => "b — r repo in browser · p pr in browser".to_string(),
                 None => app.message.clone().unwrap_or_else(|| HINTS.into()),
@@ -1780,35 +1803,51 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
     }
 }
 
-fn sort_sessions(sessions: &mut [ListedSession], sort: Sort) {
+fn sort_sessions(sessions: &mut [ListedSession], sort: Sort, group: Option<Sort>) {
     let home = (sort == Sort::Directory)
         .then(|| crate::paths::home_dir().ok())
         .flatten();
+    let group_home = (group == Some(Sort::Directory))
+        .then(|| crate::paths::home_dir().ok())
+        .flatten();
     sessions.sort_by(|a, b| {
-        let order = match sort {
-            Sort::Created => b.created_ms.cmp(&a.created_ms),
-            Sort::Activity => b.last_report_ms.cmp(&a.last_report_ms),
-            Sort::Provider => a.provider.cmp(&b.provider),
-            Sort::Status => a.status.rank().cmp(&b.status.rank()),
-            Sort::Directory => (
-                a.cwd.is_none(),
-                a.cwd
-                    .as_deref()
-                    .map(|dir| crate::paths::worktree_label_with_home(dir, home.as_deref())),
-                &a.cwd,
-            )
-                .cmp(&(
-                    b.cwd.is_none(),
-                    b.cwd
-                        .as_deref()
-                        .map(|dir| crate::paths::worktree_label_with_home(dir, home.as_deref())),
-                    &b.cwd,
-                )),
+        let group_order = match group {
+            Some(criterion) => compare_sessions(a, b, criterion, group_home.as_deref()),
+            None => std::cmp::Ordering::Equal,
         };
-        order
+        group_order
+            .then_with(|| compare_sessions(a, b, sort, home.as_deref()))
             .then_with(|| b.created_ms.cmp(&a.created_ms))
             .then_with(|| (&a.provider, &a.session_id).cmp(&(&b.provider, &b.session_id)))
     });
+}
+
+fn compare_sessions(
+    a: &ListedSession,
+    b: &ListedSession,
+    criterion: Sort,
+    home: Option<&Path>,
+) -> std::cmp::Ordering {
+    match criterion {
+        Sort::Created => b.created_ms.cmp(&a.created_ms),
+        Sort::Activity => b.last_report_ms.cmp(&a.last_report_ms),
+        Sort::Provider => a.provider.cmp(&b.provider),
+        Sort::Status => a.status.rank().cmp(&b.status.rank()),
+        Sort::Directory => (
+            a.cwd.is_none(),
+            a.cwd
+                .as_deref()
+                .map(|dir| crate::paths::worktree_label_with_home(dir, home)),
+            &a.cwd,
+        )
+            .cmp(&(
+                b.cwd.is_none(),
+                b.cwd
+                    .as_deref()
+                    .map(|dir| crate::paths::worktree_label_with_home(dir, home)),
+                &b.cwd,
+            )),
+    }
 }
 
 fn status_style(status: AgentStatus) -> Style {

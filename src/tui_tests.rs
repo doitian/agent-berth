@@ -843,26 +843,36 @@ fn d_without_sessions_shows_message() {
 }
 
 #[test]
-fn w_toggles_group_headers_without_changing_selection() {
+fn w_sets_grouping_independently_of_sort_without_changing_selection() {
     let mut app = app_with_sessions();
     app.selected = 1;
-    assert!(!app.group_headers);
+    assert_eq!(app.group, None);
     app.needs_redraw = false;
-    app.handle_key(char_key('w'));
-    assert!(app.group_headers);
+    assert!(matches!(app.handle_key(char_key('w')), Effect::None));
+    assert_eq!(app.pending, Some(Pending::W));
+    assert!(matches!(app.handle_key(char_key('s')), Effect::None));
+    assert_eq!(app.pending, None);
+    assert_eq!(app.group, Some(Sort::Status));
+    assert_eq!(app.sort, Sort::Created);
     assert!(app.needs_redraw);
     assert_eq!(app.selected_session().unwrap().session_id, "def");
+    app.handle_key(char_key('s'));
+    app.handle_key(char_key('a'));
+    assert_eq!(app.sort, Sort::Provider);
+    assert_eq!(app.group, Some(Sort::Status));
     app.handle_key(char_key('j'));
     assert_eq!(app.selected_session().unwrap().session_id, "ghi");
     app.handle_key(char_key('k'));
     assert_eq!(app.selected_session().unwrap().session_id, "def");
     app.handle_key(char_key('w'));
-    assert!(!app.group_headers);
+    app.handle_key(char_key('n'));
+    assert_eq!(app.group, None);
+    assert_eq!(app.sort, Sort::Provider);
     assert_eq!(app.selected_session().unwrap().session_id, "def");
     app.handle_key(char_key('/'));
     app.handle_key(char_key('w'));
     assert_eq!(app.filter, "w");
-    assert!(!app.group_headers);
+    assert_eq!(app.group, None);
 }
 
 #[test]
@@ -892,7 +902,6 @@ fn time_groups_use_sort_timestamp_and_exact_bucket_boundaries() {
 #[test]
 fn directory_headers_normalize_git_worktrees() {
     let mut app = app_with_sessions();
-    app.group_headers = true;
     for (session, cwd) in app.sessions.iter_mut().zip([
         Some("/home/me/codebase/acme-platform"),
         Some("/home/me/codebase/acme-platform.worktrees/feature-x"),
@@ -901,6 +910,7 @@ fn directory_headers_normalize_git_worktrees() {
         session.cwd = cwd.map(str::to_string);
     }
     app.set_sort(Sort::Directory);
+    app.set_group(Some(Sort::Directory));
     assert_eq!(
         group_headers(&list_buffer(&app, 12)),
         [
@@ -934,9 +944,9 @@ fn group_headers(buffer: &ratatui::buffer::Buffer) -> Vec<String> {
 }
 
 #[test]
-fn list_groups_follow_sort_and_filter_without_selecting_headers() {
+fn list_groups_follow_group_criterion_and_filter_without_selecting_headers() {
     let mut app = app_with_sessions();
-    app.group_headers = true;
+    app.set_group(Some(Sort::Created));
     app.sessions[1].status = AgentStatus::Waiting;
     app.sessions[2].status = AgentStatus::Done;
     let now = crate::store::now_ms();
@@ -944,18 +954,20 @@ fn list_groups_follow_sort_and_filter_without_selecting_headers() {
         session.created_ms = now - [1_000, 7_200_000, 172_800_000][i];
         session.last_report_ms = now - [700_000_000, 172_800_000, 7_200_000][i];
     }
-    for (sort, expected) in [
+    for (group, expected) in [
         (Sort::Created, vec!["1h", "1d", "7d"]),
         (Sort::Activity, vec!["1d", "7d", ">7d"]),
         (Sort::Provider, vec!["claude", "codex", "pi"]),
         (Sort::Status, vec!["waiting", "running", "done"]),
         (Sort::Directory, vec!["project"]),
     ] {
-        app.set_sort(sort);
+        app.set_sort(group);
+        app.set_group(Some(group));
         assert_eq!(group_headers(&list_buffer(&app, 12)), expected);
         assert_eq!(app.selected_session().unwrap().session_id, "abc");
     }
     app.set_sort(Sort::Provider);
+    app.set_group(Some(Sort::Provider));
     app.selected = 1;
     let buffer = list_buffer(&app, 12);
     assert_eq!(buffer[(1, 3)].bg, latte::MANTLE);
@@ -986,16 +998,17 @@ fn selection_leaves_the_logo_glyph_weight_untouched() {
 #[test]
 fn directory_groups_do_not_merge_paths_with_identical_short_labels() {
     let mut app = app_with_sessions();
-    app.group_headers = true;
     app.sessions[0].cwd = Some("/a/codebase/project".into());
     app.sessions[1].cwd = Some("/b/codebase/project".into());
     app.sessions[2].cwd = None;
     app.set_sort(Sort::Directory);
+    app.set_group(Some(Sort::Directory));
     assert_eq!(
         group_headers(&list_buffer(&app, 12)),
         ["project", "project", "-"]
     );
     app.handle_key(char_key('w'));
+    app.handle_key(char_key('n'));
     assert!(group_headers(&list_buffer(&app, 12)).is_empty());
 }
 
@@ -1010,9 +1023,35 @@ fn sort_sessions_orders_newest_first_with_stable_ties() {
     let mut d = listed("claude", "d", None);
     d.created_ms = 200;
     let mut sessions = vec![a, b, c, d];
-    sort_sessions(&mut sessions, Sort::Created);
+    sort_sessions(&mut sessions, Sort::Created, None);
     let order: Vec<&str> = sessions.iter().map(|s| s.session_id.as_str()).collect();
     assert_eq!(order, ["b", "d", "c", "a"]);
+}
+
+#[test]
+fn grouping_orders_by_group_before_sort_without_repeating_headers() {
+    let mut app = App::new(&test_ctx());
+    for (provider, id, created) in [
+        ("pi", "a", 400),
+        ("claude", "b", 300),
+        ("pi", "c", 200),
+        ("claude", "d", 100),
+    ] {
+        let mut session = listed(provider, id, None);
+        session.created_ms = created;
+        app.sessions.push(session);
+    }
+    app.set_sort(Sort::Created);
+    app.handle_key(char_key('w'));
+    app.handle_key(char_key('a'));
+    assert_eq!(app.group, Some(Sort::Provider));
+    let order: Vec<&str> = app
+        .filtered()
+        .iter()
+        .map(|s| s.session_id.as_str())
+        .collect();
+    assert_eq!(order, ["b", "d", "a", "c"]);
+    assert_eq!(group_headers(&list_buffer(&app, 12)), ["claude", "pi"]);
 }
 
 #[test]
