@@ -413,6 +413,93 @@ fn q_and_ctrl_c_quit() {
 }
 
 #[test]
+fn question_mark_opens_help_and_any_key_closes_it() {
+    let mut app = app_with_sessions();
+    assert!(matches!(app.handle_key(shift_char_key('?')), Effect::None));
+    assert_eq!(app.input, Input::Help);
+    assert!(matches!(app.handle_key(char_key('j')), Effect::None));
+    assert_eq!(app.input, Input::Normal);
+    assert_eq!(app.selected, 0);
+    app.handle_key(shift_char_key('?'));
+    assert!(matches!(app.handle_key(key(KeyCode::Esc)), Effect::None));
+    assert_eq!(app.input, Input::Normal);
+    let ctrl_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+    assert!(matches!(app.handle_key(ctrl_c), Effect::Quit));
+}
+
+fn screen_text(app: &App, width: u16, height: u16) -> String {
+    let mut terminal =
+        ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
+    terminal.draw(|frame| render(frame, app)).unwrap();
+    terminal
+        .backend()
+        .buffer()
+        .content
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect()
+}
+
+#[test]
+fn footer_keeps_one_short_hint_and_help_sheet_holds_the_rest() {
+    let mut app = app_with_sessions();
+    let footer = screen_text(&app, 100, 30);
+    assert!(!footer.contains("lazygit"), "{footer}");
+    assert!(!footer.contains("resume"), "{footer}");
+    app.input = Input::Help;
+    let help = screen_text(&app, 100, 30);
+    assert!(help.contains("Keyboard shortcuts"), "{help}");
+    for hint in [
+        "active / resumable sessions",
+        "attach or focus",
+        "resume in tmux",
+        "open lazygit",
+        "open repo / pr in browser",
+        "toggle this help",
+        "quit",
+    ] {
+        assert!(help.contains(hint), "missing {hint:?} in {help}");
+    }
+}
+
+#[test]
+fn question_mark_is_literal_while_filtering() {
+    let mut app = app_with_sessions();
+    app.handle_key(char_key('/'));
+    assert!(matches!(app.handle_key(shift_char_key('?')), Effect::None));
+    assert_eq!(app.input, Input::Filter);
+    assert_eq!(app.filter, "?");
+}
+
+#[test]
+fn help_sheet_overlays_a_maximized_preview() {
+    let mut app = app_with_sessions();
+    app.pane_shows_session = true;
+    app.select_preview(Some(preview_pane("%1")));
+    app.preview = Some("pane output".into());
+    app.handle_key(char_key('='));
+    assert!(app.preview_maximized);
+    let maximized = screen_text(&app, 100, 30);
+    assert!(maximized.contains("pane output"), "{maximized}");
+    assert!(!maximized.contains("Keyboard shortcuts"), "{maximized}");
+    app.handle_key(shift_char_key('?'));
+    let help = screen_text(&app, 100, 30);
+    assert!(help.contains("Keyboard shortcuts"), "{help}");
+    assert!(help.contains("open lazygit"), "{help}");
+    assert_eq!(app.input, Input::Help);
+    assert!(app.preview_maximized);
+}
+
+#[test]
+fn help_sheet_does_not_panic_on_small_terminals() {
+    let mut app = app_with_sessions();
+    app.input = Input::Help;
+    for (width, height) in [(80, 20), (20, 5), (1, 1)] {
+        screen_text(&app, width, height);
+    }
+}
+
+#[test]
 fn idle_toggle_requires_resumable_view() {
     let mut app = app_with_sessions();
     app.handle_key(shift_char_key('I'));

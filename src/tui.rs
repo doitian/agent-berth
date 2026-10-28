@@ -16,7 +16,7 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, List, ListItem, ListState, Paragraph, Wrap};
+use ratatui::widgets::{Block, Clear, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::{Frame, Terminal};
 
 use crate::duration::{format_duration, parse_duration};
@@ -53,7 +53,44 @@ mod latte {
     pub const BLUE: Color = Color::Rgb(30, 102, 245);
 }
 
-const HINTS: &str = "q quit · j/k move · / filter · ga/gr view · s sort · w groups · a attach/focus · r resume · d delete · m memo · M message · I idle · = zoom · ␣gg lazygit · br/bp browse";
+const HINTS: &str = "? help · j/k move · / filter · q quit";
+
+const HELP: &[(&str, &[(&str, &str)])] = &[
+    (
+        "List",
+        &[
+            ("j / k, ↓ / ↑", "move selection"),
+            ("g a / g r", "active / resumable sessions"),
+            ("/", "filter sessions (enter applies, esc clears)"),
+            ("w", "toggle group headers"),
+            (
+                "s t/r/a/s/d",
+                "sort by created/activity/provider/status/directory",
+            ),
+        ],
+    ),
+    (
+        "Session",
+        &[
+            ("a", "attach or focus"),
+            ("r", "resume in tmux"),
+            ("d", "delete (y confirms)"),
+            ("m", "edit memo"),
+            ("M", "message the session"),
+            ("I", "toggle idle filter (resumable)"),
+        ],
+    ),
+    (
+        "View",
+        &[
+            ("=", "zoom preview"),
+            ("␣ g g", "open lazygit"),
+            ("b r / b p", "open repo / pr in browser"),
+            ("?", "toggle this help"),
+            ("q / ctrl-c", "quit"),
+        ],
+    ),
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Sort {
@@ -90,6 +127,7 @@ enum Input {
     Memo,
     Message,
     Confirm,
+    Help,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -740,6 +778,10 @@ impl App {
             Input::Memo => return self.handle_memo_key(key),
             Input::Message => return self.handle_message_key(key),
             Input::Confirm => return self.handle_confirm_key(key),
+            Input::Help => {
+                self.input = Input::Normal;
+                return Effect::None;
+            }
             Input::Normal => {}
         }
         if let Some(pending) = self.pending.take() {
@@ -816,6 +858,10 @@ impl App {
             KeyCode::Char('d') => self.confirm_remove(),
             KeyCode::Char('m') => self.edit_memo(),
             KeyCode::Char('M') => self.compose_message(),
+            KeyCode::Char('?') => {
+                self.input = Input::Help;
+                Effect::None
+            }
             _ => Effect::None,
         }
     }
@@ -1314,21 +1360,80 @@ fn render(frame: &mut Frame, app: &App) {
     );
     if app.preview_maximized && app.has_preview() {
         render_preview(frame, app, area);
-        return;
-    }
-    let rows = Layout::vertical([Constraint::Min(3), Constraint::Length(1)]).split(area);
-    let cols =
-        Layout::horizontal([Constraint::Percentage(35), Constraint::Percentage(65)]).split(rows[0]);
-    render_list(frame, app, cols[0]);
-    if app.has_preview() {
-        let right = Layout::vertical([Constraint::Percentage(40), Constraint::Percentage(60)])
-            .split(cols[1]);
-        render_details(frame, app, right[0]);
-        render_preview(frame, app, right[1]);
     } else {
-        render_details(frame, app, cols[1]);
+        let rows = Layout::vertical([Constraint::Min(3), Constraint::Length(1)]).split(area);
+        let cols = Layout::horizontal([Constraint::Percentage(35), Constraint::Percentage(65)])
+            .split(rows[0]);
+        render_list(frame, app, cols[0]);
+        if app.has_preview() {
+            let right = Layout::vertical([Constraint::Percentage(40), Constraint::Percentage(60)])
+                .split(cols[1]);
+            render_details(frame, app, right[0]);
+            render_preview(frame, app, right[1]);
+        } else {
+            render_details(frame, app, cols[1]);
+        }
+        render_footer(frame, app, rows[1]);
     }
-    render_footer(frame, app, rows[1]);
+    if app.input == Input::Help {
+        render_help(frame, area);
+    }
+}
+
+fn help_lines() -> Vec<Line<'static>> {
+    let key_width = HELP
+        .iter()
+        .flat_map(|(_, rows)| rows.iter().map(|(keys, _)| keys.chars().count()))
+        .max()
+        .unwrap_or(0);
+    let mut lines = Vec::new();
+    for (index, (section, rows)) in HELP.iter().enumerate() {
+        if index > 0 {
+            lines.push(Line::default());
+        }
+        lines.push(Line::from(Span::styled(
+            *section,
+            Style::default()
+                .fg(latte::MAUVE)
+                .add_modifier(Modifier::BOLD),
+        )));
+        for (keys, description) in *rows {
+            lines.push(Line::from(vec![
+                Span::styled(
+                    format!("  {keys:<key_width$}  "),
+                    Style::default().fg(latte::YELLOW),
+                ),
+                Span::styled(*description, Style::default().fg(latte::TEXT)),
+            ]));
+        }
+    }
+    lines
+}
+
+fn render_help(frame: &mut Frame, area: Rect) {
+    let lines = help_lines();
+    let width = lines
+        .iter()
+        .map(Line::width)
+        .max()
+        .unwrap_or(0)
+        .saturating_add(2) as u16;
+    let height = (lines.len() as u16).saturating_add(2);
+    let popup = Rect {
+        x: area.x + area.width.saturating_sub(width) / 2,
+        y: area.y + area.height.saturating_sub(height) / 2,
+        width: width.min(area.width),
+        height: height.min(area.height),
+    };
+    frame.render_widget(Clear, popup);
+    frame.render_widget(
+        Paragraph::new(lines).block(
+            Block::bordered()
+                .title(" Keyboard shortcuts ")
+                .style(Style::default().bg(latte::MANTLE)),
+        ),
+        popup,
+    );
 }
 
 fn render_list(frame: &mut Frame, app: &App, area: Rect) {
@@ -1659,7 +1764,7 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
                 area,
             );
         }
-        Input::Normal => {
+        Input::Normal | Input::Help => {
             let text = match app.pending {
                 Some(Pending::G) => "g — a active sessions · r resumable sessions".to_string(),
                 Some(Pending::S) => {

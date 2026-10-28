@@ -163,6 +163,8 @@ green `+` for staged changes, and `?` for untracked files. Tracking status uses
 the local upstream tracking ref. Branches without an upstream omit the tracking
 symbol. Clean repositories without an upstream show only the branch name.
 
+The footer keeps a short hint line; press `?` for the full sheet.
+
 | Key | Action |
 | --- | --- |
 | `j`/`k` | Move the selection |
@@ -176,11 +178,14 @@ symbol. Clean repositories without an upstream show only the branch name.
 | `w` | Toggle group headers for the current sort (hidden by default) |
 | `I` | In the resumable list, toggle idle sessions; asks for the idle window (default `20m`, prefilled) |
 | `=` | Toggle maximization of the tmux or conversation preview |
+| `␣gg` | Open lazygit in the selected session's working directory |
+| `br` / `bp` | Open the repository / pull request in a browser |
 | `a` | Focus a Paseo, Claude Desktop, or Codex desktop session, or attach to its tmux pane: switch-client inside tmux, attach outside; detaching returns to the TUI |
 | `r` | Resume the selected resumable session in tmux and attach to it |
 | `d` | Delete the selected session after confirming with `y` |
 | `m` | Edit the selected session's memo, shown instead of its detected title; submit an empty memo to clear it |
 | `M` | Type a message and send it to the selected active session, like `send` |
+| `?` | Show every shortcut in a popup; any key closes it |
 | `q` | Quit |
 
 Group headers use `1h`, `1d`, `7d`, and `>7d` for creation/activity sorting:
