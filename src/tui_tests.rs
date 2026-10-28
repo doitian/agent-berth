@@ -883,6 +883,19 @@ fn list_groups_follow_sort_and_filter_without_selecting_headers() {
 }
 
 #[test]
+fn selection_leaves_the_logo_glyph_weight_untouched() {
+    let mut app = app_with_sessions();
+    app.selected = 1;
+    let buffer = list_buffer(&app, 12);
+    assert_eq!(buffer[(2, 1)].symbol(), "✻");
+    assert_eq!(buffer[(2, 2)].symbol(), "⌘");
+    assert!(!buffer[(2, 1)].modifier.contains(Modifier::BOLD));
+    assert!(!buffer[(2, 2)].modifier.contains(Modifier::BOLD));
+    assert!(!buffer[(4, 1)].modifier.contains(Modifier::BOLD));
+    assert!(buffer[(4, 2)].modifier.contains(Modifier::BOLD));
+}
+
+#[test]
 fn directory_groups_do_not_merge_paths_with_identical_short_labels() {
     let mut app = app_with_sessions();
     app.group_headers = true;

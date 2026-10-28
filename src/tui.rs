@@ -1361,20 +1361,29 @@ fn render_list(frame: &mut Frame, app: &App, area: Rect) {
                 previous_group = Some(group);
             }
         }
-        if index == app.selected {
+        let selected = index == app.selected;
+        if selected {
             selected_row = Some(items.len());
         }
         let title = list::truncate(session.display_title().unwrap_or("-"), title_width);
+        // The highlight only paints the row background; bolding the logo glyph
+        // would make terminals pick a bold fallback font for it, which draws
+        // the glyph at a different offset than the regular one.
+        let emphasis = if selected {
+            Style::default().add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
         items.push(ListItem::new(Line::from(vec![
             Span::raw(" "),
             Span::styled(logo(&session.provider), Style::default().fg(latte::MAUVE)),
             Span::raw(" "),
             Span::styled(
                 session.status.as_str()[..1].to_ascii_uppercase(),
-                status_style(session.status),
+                status_style(session.status).patch(emphasis),
             ),
             Span::raw(" "),
-            Span::raw(title),
+            Span::styled(title, emphasis),
             Span::raw(" "),
         ])));
     }
@@ -1399,11 +1408,7 @@ fn render_list(frame: &mut Frame, app: &App, area: Rect) {
                 .title(title)
                 .title_bottom(format!(" sort: {} ", app.sort.label())),
         )
-        .highlight_style(
-            Style::default()
-                .bg(latte::SURFACE0)
-                .add_modifier(Modifier::BOLD),
-        );
+        .highlight_style(Style::default().bg(latte::SURFACE0));
     let mut state = ListState::default();
     state.select(selected_row);
     frame.render_stateful_widget(list_widget, area, &mut state);
