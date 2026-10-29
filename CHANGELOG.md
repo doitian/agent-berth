@@ -2,6 +2,25 @@
 
 All notable changes to this project are documented in this file.
 
+## [4.0.0](https://github.com/doitian/agent-berth/releases/tag/v4.0.0) - 2026-10-29
+
+### Added
+
+- Add help popup with the full keyboard shortcut sheet ([775fc8d](https://github.com/doitian/agent-berth/commit/775fc8d6cbf49d05367a9f355ba2a7edced4cd9d))
+- Add clues and a toggle for tool and thinking details ([ab837ea](https://github.com/doitian/agent-berth/commit/ab837ea37088a73e643d5edfce0d816c2fc48e7e))
+
+### Changed
+
+- Rework tui grouping to use its own criterion ([f96d5b5](https://github.com/doitian/agent-berth/commit/f96d5b54148bd3aa56ee08048f68da0b1beef849))
+
+### Fixed
+
+- Fix tui logo shifting when a session is selected ([ca513bd](https://github.com/doitian/agent-berth/commit/ca513bddb944ec5b57b04be04c1fffacc6d001f4))
+
+### ⚠️ Breaking Changes
+
+- Drop paseo support ([38a82f1](https://github.com/doitian/agent-berth/commit/38a82f18b4e58fab4d97181bd4ca9d2356b9fbed))
+
 ## [3.5.0](https://github.com/doitian/agent-berth/releases/tag/v3.5.0) - 2026-10-27
 
 ### Added
