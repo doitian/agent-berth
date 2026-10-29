@@ -190,6 +190,9 @@ fn assistant_messages_carry_text_and_tool_calls() {
     assert_eq!(
         record.entries,
         vec![
+            Entry::Thinking {
+                text: "private".into()
+            },
             said("Running it".into()),
             Entry::ToolCall {
                 name: "pwsh".into(),

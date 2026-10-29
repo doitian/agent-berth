@@ -43,6 +43,10 @@ pub(crate) enum Entry {
     Text {
         text: String,
     },
+    /// The agent's private reasoning, shown only when details are asked for.
+    Thinking {
+        text: String,
+    },
     ToolCall {
         name: String,
         input: String,
@@ -123,7 +127,12 @@ impl Turn {
         let entries: Vec<&Entry> = self.entries().collect();
         let start = entries
             .iter()
-            .rposition(|entry| !matches!(entry, Entry::ToolCall { .. } | Entry::Context { .. }))
+            .rposition(|entry| {
+                !matches!(
+                    entry,
+                    Entry::ToolCall { .. } | Entry::Context { .. } | Entry::Thinking { .. }
+                )
+            })
             .map_or(0, |index| index + 1);
         entries[start..]
             .iter()
@@ -166,13 +175,30 @@ pub(crate) struct Style {
     pub tools: Tools,
     /// Show text the harness injected on the user's side.
     pub context: bool,
+    /// Show the agent's reasoning in full.
+    pub details: bool,
+    /// Leave a one-line clue for hidden tools and reasoning.
+    pub clue: bool,
 }
 
 impl Style {
+    #[cfg(test)]
     pub const FULL: Self = Self {
         tools: Tools::Full,
         context: true,
+        details: false,
+        clue: false,
     };
+
+    /// A conversation preview: a clue by default, full details when asked.
+    pub fn conversation(details: bool) -> Self {
+        Self {
+            tools: if details { Tools::Full } else { Tools::None },
+            context: true,
+            details,
+            clue: !details,
+        }
+    }
 }
 
 const BRIEF_LIMIT: usize = 120;
@@ -269,6 +295,7 @@ pub(crate) fn turns(records: impl IntoIterator<Item = Record>) -> Vec<Turn> {
 
 /// Renders entries with the labels `You`, `Assistant`, `Tool`, `Input`, and
 /// `Result`, cutting the text at `limit` characters in total.
+#[cfg(test)]
 pub(crate) fn render(entries: &[Entry], limit: usize) -> String {
     render_styled(entries.iter(), limit, Style::FULL, &[])
 }
@@ -290,6 +317,11 @@ pub(crate) fn render_styled<'a>(
             Entry::Context { text } if style.context => append(&mut output, "You", text, limit),
             Entry::Context { .. } => {}
             Entry::Text { text } => append(&mut output, "Assistant", text, limit),
+            Entry::Thinking { text } if style.details => {
+                append(&mut output, "Thinking", text, limit)
+            }
+            Entry::Thinking { .. } if style.clue => append(&mut output, "Thinking", "…", limit),
+            Entry::Thinking { .. } => {}
             Entry::ToolCall { name, input } => match tools {
                 Tools::Full => {
                     append(&mut output, "Tool", name, limit);
@@ -299,6 +331,7 @@ pub(crate) fn render_styled<'a>(
                     let call = format!("{name} {}", brief_input(input));
                     append(&mut output, "Tool", call.trim_end(), limit);
                 }
+                Tools::None if style.clue => append(&mut output, "Tool", name, limit),
                 Tools::None => {}
             },
             Entry::ToolResult { text } => match tools {
@@ -332,7 +365,7 @@ pub(crate) struct Reader {
     offset: u64,
     pending: Vec<u8>,
     skipping: bool,
-    entries: VecDeque<(u64, String)>,
+    entries: VecDeque<(u64, Vec<Entry>)>,
     checkpoint: Vec<u8>,
     modified: Option<SystemTime>,
     identity: Option<FileIdentity>,
@@ -365,17 +398,34 @@ impl FileIdentity {
 }
 
 impl Reader {
-    pub fn preview(&mut self, feed: &Feed) -> String {
+    pub fn preview(&mut self, feed: &Feed, style: Style) -> String {
         match feed {
-            Feed::Log(source) => self.preview_log(source),
+            Feed::Log(source) => self.preview_log_styled(source, style),
             Feed::Paseo { agent_id, home } => self
                 .paseo
                 .get_or_insert_with(|| crate::hubs::paseo::Stream::new(agent_id, home))
-                .preview(),
+                .preview(style.tools != Tools::None),
         }
     }
 
+    /// The current preview content without reading the source again, for when
+    /// only the style changes.
+    pub fn render_cached(&self, feed: &Feed, style: Style) -> Option<String> {
+        match feed {
+            Feed::Log(_) => self.resolved.as_ref().map(|_| self.render(style)),
+            Feed::Paseo { .. } => self
+                .paseo
+                .as_ref()
+                .map(|stream| stream.preview(style.tools != Tools::None)),
+        }
+    }
+
+    #[cfg(test)]
     fn preview_log(&mut self, source: &Source) -> String {
+        self.preview_log_styled(source, Style::FULL)
+    }
+
+    fn preview_log_styled(&mut self, source: &Source, style: Style) -> String {
         let Some(log) = log(&source.provider) else {
             return format!("{} sessions have no local transcript", source.provider);
         };
@@ -391,7 +441,7 @@ impl Reader {
         match self.read(&path, log) {
             Ok(()) => {
                 self.resolved = Some(path);
-                self.render()
+                self.render(style)
             }
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
                 self.resolved = None;
@@ -478,14 +528,14 @@ impl Reader {
             return;
         };
         // Turn markers render to nothing and must not use up the entry budget.
-        let Some(text) = parse(log, &row) else {
+        let Some(entries) = parse_entries(log, &row) else {
             return;
         };
         let key = record_key(log, &row);
         if let Some((_, existing)) = self.entries.iter_mut().find(|(id, _)| *id == key) {
-            *existing = text;
+            *existing = entries;
         } else {
-            self.entries.push_back((key, text));
+            self.entries.push_back((key, entries));
             if self.entries.len() > ENTRY_LIMIT {
                 self.entries.pop_front();
                 self.omitted = true;
@@ -493,15 +543,24 @@ impl Reader {
         }
     }
 
-    fn render(&self) -> String {
+    fn render(&self, style: Style) -> String {
         let mut text = if self.omitted {
             "[Showing recent content; older, oversized, or malformed records omitted]\n\n".into()
         } else {
             String::new()
         };
-        for (_, entry) in &self.entries {
-            text.push_str(entry);
-            text.push_str("\n\n");
+        let all: Vec<&Entry> = self
+            .entries
+            .iter()
+            .flat_map(|(_, entries)| entries)
+            .collect();
+        let pending = trailing_calls(&all);
+        for (_, entries) in &self.entries {
+            let rendered = render_styled(entries.iter(), TEXT_LIMIT, style, &pending);
+            if !rendered.is_empty() {
+                text.push_str(&rendered);
+                text.push_str("\n\n");
+            }
         }
         if self.entries.is_empty() {
             text.push_str("No conversation messages yet.");
@@ -629,6 +688,41 @@ fn belongs_to(log: &dyn TranscriptLog, path: &Path, session_id: &str) -> bool {
         .any(|row| log.is_session_record(&row, session_id))
 }
 
+fn trailing_calls<'a>(entries: &[&'a Entry]) -> Vec<&'a Entry> {
+    let start = entries
+        .iter()
+        .rposition(|entry| {
+            !matches!(
+                entry,
+                Entry::ToolCall { .. } | Entry::Context { .. } | Entry::Thinking { .. }
+            )
+        })
+        .map_or(0, |index| index + 1);
+    entries[start..]
+        .iter()
+        .copied()
+        .filter(|entry| matches!(entry, Entry::ToolCall { .. }))
+        .collect()
+}
+
+fn parse_entries(log: &dyn TranscriptLog, row: &Value) -> Option<Vec<Entry>> {
+    let record = log.parse(row)?;
+    let entries: Vec<Entry> = record
+        .entries
+        .into_iter()
+        .filter(|entry| match entry {
+            Entry::Prompt { text }
+            | Entry::Context { text }
+            | Entry::Text { text }
+            | Entry::Thinking { text }
+            | Entry::ToolResult { text } => !text.is_empty(),
+            Entry::ToolCall { name, .. } => !name.is_empty(),
+        })
+        .collect();
+    (!entries.is_empty()).then_some(entries)
+}
+
+#[cfg(test)]
 fn parse(log: &dyn TranscriptLog, row: &Value) -> Option<String> {
     let record = log.parse(row)?;
     Some(render(&record.entries, TEXT_LIMIT)).filter(|output| !output.is_empty())
@@ -656,12 +750,41 @@ pub(crate) fn content(value: &Value, said: fn(String) -> Entry) -> Vec<Entry> {
                     input: tool_input(&block["arguments"]),
                 }),
                 Some("tool_result") => entries.extend(tool_result(&block["content"])),
+                Some("thinking") => {
+                    if let Some(thinking) = thinking(block) {
+                        entries.push(thinking);
+                    }
+                }
+                Some("reasoning") => {
+                    if let Some(thinking) = thinking(block) {
+                        entries.push(thinking);
+                    }
+                }
                 Some("image" | "input_image") => entries.push(said("[image]".into())),
                 _ => {}
             }
         }
     }
     entries
+}
+
+/// A reasoning block's text, from the field its harness uses or its content
+/// blocks.
+pub(crate) fn thinking(value: &Value) -> Option<Entry> {
+    let direct = value["thinking"]
+        .as_str()
+        .or_else(|| value["text"].as_str())
+        .or_else(|| value["reasoning"].as_str());
+    let text = direct.map(str::to_string).unwrap_or_else(|| {
+        ["content", "summary"]
+            .iter()
+            .filter_map(|key| value[key].as_array())
+            .flat_map(|parts| parts.iter())
+            .filter_map(|part| part["text"].as_str())
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    });
+    (!text.is_empty()).then_some(Entry::Thinking { text })
 }
 
 /// A tool call's arguments: the text itself when the log keeps them as a JSON

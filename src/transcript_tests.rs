@@ -114,6 +114,72 @@ fn replaces_duplicate_claude_records_and_skips_malformed_and_unknown_rows() {
 }
 
 #[test]
+fn preview_keeps_clues_until_details_are_asked() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("session.jsonl");
+    let tool_call = json!({"type":"assistant","uuid":"2","message":{"content":[
+        {"type":"thinking","thinking":"private reasoning"},
+        {"type":"tool_use","name":"Read","input":{"file_path":"src/main.rs"}}
+    ]}});
+    let tool_result = json!({"type":"user","message":{"content":[
+        {"type":"tool_result","content":[{"type":"text","text":"file contents"}]}
+    ]}});
+    std::fs::write(
+        &path,
+        format!(
+            "{}{}\n{}\n",
+            message("1", "Checking"),
+            tool_call,
+            tool_result
+        ),
+    )
+    .unwrap();
+    let source = source(&path, "claude");
+    let mut reader = Reader::default();
+    let concise = reader.preview_log_styled(&source, Style::conversation(false));
+    assert!(concise.contains("Assistant: Checking"));
+    assert!(concise.contains("Tool: Read"));
+    assert!(concise.contains("Thinking: …"));
+    assert!(!concise.contains("private reasoning"));
+    assert!(!concise.contains("src/main.rs"));
+    assert!(!concise.contains("file contents"));
+    let detailed = reader.preview_log_styled(&source, Style::conversation(true));
+    assert!(detailed.contains("Thinking: private reasoning"));
+    assert!(detailed.contains("Tool: Read"));
+    assert!(detailed.contains("Result: file contents"));
+    let cached = reader
+        .render_cached(&Feed::Log(source.clone()), Style::conversation(false))
+        .unwrap();
+    assert!(cached.contains("Tool: Read"));
+    assert!(cached.contains("Thinking: …"));
+    assert_eq!(
+        reader.render_cached(&Feed::Log(source), Style::conversation(true)),
+        Some(detailed)
+    );
+}
+
+#[test]
+fn preview_shows_a_pending_tool_call_even_without_details() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("session.jsonl");
+    std::fs::write(
+        &path,
+        format!(
+            "{}{}\n",
+            message("1", "Checking"),
+            json!({"type":"assistant","uuid":"2","message":{"content":[
+                {"type":"tool_use","name":"Bash","input":{"command":"ls -la"}}
+            ]}})
+        ),
+    )
+    .unwrap();
+    let source = source(&path, "claude");
+    let mut reader = Reader::default();
+    let concise = reader.preview_log_styled(&source, Style::conversation(false));
+    assert!(concise.contains("Tool: Bash ls -la"));
+}
+
+#[test]
 fn parses_claude_tools_images_and_omits_thinking() {
     let row = json!({"type":"assistant","message":{"content":[
         {"type":"thinking","thinking":"private reasoning"},
@@ -167,6 +233,19 @@ fn codex_uses_response_items_without_event_mirrors_or_instructions() {
             Some("Result: ok")
         );
     }
+    let reasoning = log("codex")
+        .unwrap()
+        .parse(&json!({"type":"response_item","payload":{
+            "type":"reasoning",
+            "summary":[{"type":"summary_text","text":"private reasoning"}]
+        }}))
+        .unwrap();
+    assert_eq!(
+        reasoning.entries,
+        [Entry::Thinking {
+            text: "private reasoning".into()
+        }]
+    );
 }
 
 #[test]
@@ -460,6 +539,7 @@ fn claude_groups_a_prompt_and_its_work_into_one_complete_turn() {
             Entry::Prompt { .. } => "prompt",
             Entry::Context { .. } => "context",
             Entry::Text { .. } => "text",
+            Entry::Thinking { .. } => "thinking",
             Entry::ToolCall { .. } => "call",
             Entry::ToolResult { .. } => "result",
         })

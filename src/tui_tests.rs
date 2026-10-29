@@ -1528,6 +1528,7 @@ fn transcript_completion(app: &mut App, content: &str) -> Fetched {
     let Some(Fetch::Transcript {
         source,
         reader,
+        details,
         generation,
     }) = app.next_preview_fetch(now)
     else {
@@ -1536,9 +1537,41 @@ fn transcript_completion(app: &mut App, content: &str) -> Fetched {
     Fetched::Transcript {
         source,
         reader,
+        details,
         generation,
         content: content.into(),
     }
+}
+
+#[test]
+fn t_toggles_conversation_details_and_requests_a_new_preview() {
+    let mut app = desktop_app();
+    let first = transcript_completion(&mut app, "Assistant: hi");
+    app.handle_fetched(first);
+    assert!(!app.show_details);
+    assert_eq!(app.preview.as_deref(), Some("Assistant: hi"));
+
+    app.handle_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE));
+    assert!(app.show_details);
+    assert!(app.preview_pending_since.is_some());
+    assert!(app.preview.is_none());
+    let detailed = transcript_completion(&mut app, "Tool: Read\n\nAssistant: hi");
+    assert!(matches!(
+        detailed,
+        Fetched::Transcript { details: true, .. }
+    ));
+    app.handle_fetched(detailed);
+    assert_eq!(app.preview.as_deref(), Some("Tool: Read\n\nAssistant: hi"));
+
+    app.handle_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE));
+    assert!(!app.show_details);
+    let concise = transcript_completion(&mut app, "Assistant: hi");
+    assert!(matches!(
+        concise,
+        Fetched::Transcript { details: false, .. }
+    ));
+    app.handle_fetched(concise);
+    assert_eq!(app.preview.as_deref(), Some("Assistant: hi"));
 }
 
 #[test]
@@ -1571,7 +1604,10 @@ fn background_transcript_results_warm_cache_without_overwriting_newer_results() 
     let mut app = desktop_app();
     let first = transcript_completion(&mut app, "first session");
     let Fetched::Transcript {
-        source, generation, ..
+        source,
+        details,
+        generation,
+        ..
     } = &first
     else {
         unreachable!()
@@ -1580,6 +1616,7 @@ fn background_transcript_results_warm_cache_without_overwriting_newer_results() 
         source: source.clone(),
         reader: Box::default(),
         content: "outdated first session".into(),
+        details: *details,
         generation: *generation,
     };
     app.selected = 1;
@@ -1675,15 +1712,17 @@ fn desktop_without_path_shows_unavailable_state_and_accepts_later_hook() {
     let Some(Fetch::Transcript {
         source,
         mut reader,
+        details,
         generation,
     }) = app.next_preview_fetch(now)
     else {
         panic!("expected transcript fetch");
     };
-    let content = reader.preview(&source);
+    let content = reader.preview(&source, crate::transcript::Style::conversation(details));
     app.handle_fetched(Fetched::Transcript {
         source,
         reader,
+        details,
         generation,
         content,
     });

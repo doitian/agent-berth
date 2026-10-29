@@ -18,7 +18,7 @@ use crate::status::{
 };
 use crate::store::ListedSession;
 use crate::transcript::{
-    Conversation, Entry, Record, content, context, first_text, prompt, said, tool_result,
+    Conversation, Entry, Record, content, context, first_text, prompt, said, thinking, tool_result,
 };
 
 /// User messages that Codex adds itself: the environment, instruction files,
@@ -208,6 +208,7 @@ impl TranscriptLog for Codex {
                     "function_call_output" | "custom_tool_call_output" => {
                         tool_result(&item["output"])
                     }
+                    "reasoning" => thinking(item).into_iter().collect(),
                     _ => return None,
                 };
                 let starts_turn = entries

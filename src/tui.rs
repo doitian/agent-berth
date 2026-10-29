@@ -86,6 +86,7 @@ const HELP: &[(&str, &[(&str, &str)])] = &[
     (
         "View",
         &[
+            ("t", "expand tool and reasoning details"),
             ("=", "zoom preview"),
             ("␣ g g", "open lazygit"),
             ("b r / b p", "open repo / pr in browser"),
@@ -185,6 +186,7 @@ enum Fetch {
     Transcript {
         source: Feed,
         reader: Box<transcript::Reader>,
+        details: bool,
         generation: u64,
     },
     Git {
@@ -208,6 +210,7 @@ struct CachedGit {
 
 struct CachedTranscript {
     generation: u64,
+    details: bool,
     content: String,
 }
 
@@ -221,6 +224,7 @@ enum Fetched {
         source: Feed,
         reader: Box<transcript::Reader>,
         content: String,
+        details: bool,
         generation: u64,
     },
     Refresh {
@@ -286,13 +290,15 @@ fn spawn_fetch(tx: &Sender<Fetched>, fetch: Fetch) {
             Fetch::Transcript {
                 source,
                 mut reader,
+                details,
                 generation,
             } => {
-                let content = reader.preview(&source);
+                let content = reader.preview(&source, transcript::Style::conversation(details));
                 Fetched::Transcript {
                     source,
                     reader,
                     content,
+                    details,
                     generation,
                 }
             }
@@ -330,6 +336,8 @@ struct App {
     preview_pending_since: Option<Instant>,
     preview_in_flight: Option<u64>,
     preview_maximized: bool,
+    /// Show tool calls and reasoning in conversation previews.
+    show_details: bool,
     filter: String,
     input: Input,
     idle_enabled: bool,
@@ -379,6 +387,7 @@ impl App {
             preview_pending_since: None,
             preview_in_flight: None,
             preview_maximized: false,
+            show_details: false,
             filter: String::new(),
             input: Input::Normal,
             idle_enabled: false,
@@ -464,8 +473,20 @@ impl App {
                 source,
                 reader,
                 content,
+                details,
                 generation,
             } => {
+                // A style change makes an older result stale, but its reader
+                // still holds the stream or log position to continue from.
+                if details != self.show_details {
+                    if self.selected_transcript.as_ref() == Some(&source) {
+                        self.transcript_reader = reader;
+                    }
+                    if self.preview_in_flight == Some(generation) {
+                        self.preview_in_flight = None;
+                    }
+                    return;
+                }
                 // A fetch finishing after navigation can still warm the cache,
                 // but must not replace a newer result for the same source.
                 if self
@@ -482,6 +503,7 @@ impl App {
                         source.clone(),
                         CachedTranscript {
                             generation,
+                            details,
                             content: content.clone(),
                         },
                     );
@@ -637,6 +659,7 @@ impl App {
                 .and_then(|source| {
                     self.transcript_previews
                         .get(source)
+                        .filter(|cached| cached.details == self.show_details)
                         .map(|cached| cached.content.clone())
                 })
                 .or_else(|| {
@@ -706,6 +729,7 @@ impl App {
             return Some(Fetch::Transcript {
                 source: source.clone(),
                 reader: std::mem::take(&mut self.transcript_reader),
+                details: self.show_details,
                 generation: self.preview_generation,
             });
         }
@@ -868,6 +892,10 @@ impl App {
                 self.toggle_idle();
                 Effect::None
             }
+            KeyCode::Char('t') => {
+                self.toggle_details();
+                Effect::None
+            }
             KeyCode::Char('=') => {
                 self.toggle_maximized();
                 Effect::None
@@ -1020,6 +1048,21 @@ impl App {
             return;
         }
         self.preview_maximized = !self.preview_maximized;
+    }
+
+    fn toggle_details(&mut self) {
+        self.show_details = !self.show_details;
+        self.transcript_previews.clear();
+        if let Some(source) = &self.selected_transcript {
+            let style = transcript::Style::conversation(self.show_details);
+            self.preview = self.transcript_reader.render_cached(source, style);
+            self.preview_pending_since = Some(Instant::now());
+        }
+        self.message = Some(if self.show_details {
+            "showing tool and thinking details".into()
+        } else {
+            "hiding tool and thinking details".into()
+        });
     }
 
     fn attach_selected(&mut self) -> Effect {

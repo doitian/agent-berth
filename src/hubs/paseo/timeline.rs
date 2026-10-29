@@ -18,6 +18,8 @@ struct Entry {
     key: Option<String>,
     turn: Option<String>,
     text: String,
+    /// Tool use and reasoning, hidden unless the preview asks for details.
+    detail: bool,
 }
 
 impl Timeline {
@@ -66,16 +68,18 @@ impl Timeline {
         if seq.is_some() {
             self.last_seq = seq;
         }
-        let (label, text, key) = match item["type"].as_str() {
+        let (label, text, key, detail) = match item["type"].as_str() {
             Some("user_message") => (
                 "User",
                 item["text"].as_str().unwrap_or("").to_string(),
                 None,
+                false,
             ),
             Some("assistant_message") => (
                 "Assistant",
                 item["text"].as_str().unwrap_or("").to_string(),
                 item["messageId"].as_str().map(str::to_string),
+                false,
             ),
             Some("tool_call") => (
                 "Tool",
@@ -85,16 +89,25 @@ impl Timeline {
                     item["status"].as_str().unwrap_or("running")
                 ),
                 item["callId"].as_str().map(str::to_string),
+                true,
+            ),
+            Some("reasoning") => (
+                "Thinking",
+                item["text"].as_str().unwrap_or("").to_string(),
+                None,
+                true,
             ),
             Some("error") => (
                 "Error",
                 item["message"].as_str().unwrap_or("").to_string(),
                 None,
+                false,
             ),
             Some("notification") => (
                 "Notice",
                 item["message"].as_str().unwrap_or("").to_string(),
                 None,
+                false,
             ),
             _ => return,
         };
@@ -122,6 +135,7 @@ impl Timeline {
                 key,
                 turn: turn.map(str::to_string),
                 text,
+                detail,
             });
         }
         while self.entries.len() > ENTRY_LIMIT
@@ -136,13 +150,20 @@ impl Timeline {
         }
     }
 
-    pub fn render(&self) -> String {
+    pub fn render(&self, details: bool) -> String {
         if self.entries.is_empty() {
             return "No conversation messages yet.".into();
         }
         self.entries
             .iter()
-            .map(|entry| format!("{}: {}\n\n", entry.label, entry.text))
+            .map(|entry| {
+                let text = if entry.detail && !details && entry.label == "Thinking" {
+                    "…"
+                } else {
+                    entry.text.as_str()
+                };
+                format!("{}: {}\n\n", entry.label, text)
+            })
             .collect()
     }
 }

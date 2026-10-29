@@ -254,17 +254,17 @@ impl Stream {
         Self { state, cancel }
     }
 
-    pub fn preview(&mut self) -> String {
+    pub fn preview(&self, details: bool) -> String {
         let Ok(state) = self.state.lock() else {
             return "Paseo stream unavailable".into();
         };
         if let Some(error) = &state.error {
-            return format!("{}\n{error}", state.timeline.render());
+            return format!("{}\n{error}", state.timeline.render(details));
         }
         if !state.connected {
             return "Connecting to Paseo session…".into();
         }
-        state.timeline.render()
+        state.timeline.render(details)
     }
 }
 

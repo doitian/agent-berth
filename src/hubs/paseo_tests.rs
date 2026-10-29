@@ -107,9 +107,9 @@ fn api_stream_merges_chunks_deduplicates_history_and_closes_on_drop() {
     let root = tempfile::tempdir().unwrap();
     let ctx = context(root.path());
     let mock = MockPaseo::new(&ctx.paseo_home, Options::default());
-    let mut stream = Stream::new("paseo-agent", &ctx.paseo_home);
-    wait(|| stream.preview().contains("Hello streamed"));
-    let content = stream.preview();
+    let stream = Stream::new("paseo-agent", &ctx.paseo_home);
+    wait(|| stream.preview(false).contains("Hello streamed"));
+    let content = stream.preview(false);
     assert_eq!(content.matches("Hello").count(), 1);
     assert!(!content.contains("WRONG"));
     drop(stream);
@@ -139,9 +139,9 @@ fn replacement_refetches_history_and_discards_the_previous_epoch() {
             ..Options::default()
         },
     );
-    let mut stream = Stream::new("paseo-agent", &ctx.paseo_home);
-    wait(|| stream.preview().contains("replacement history"));
-    assert!(!stream.preview().contains("Hello"));
+    let stream = Stream::new("paseo-agent", &ctx.paseo_home);
+    wait(|| stream.preview(false).contains("replacement history"));
+    assert!(!stream.preview(false).contains("Hello"));
 }
 
 #[test]
@@ -155,7 +155,7 @@ fn stream_reconnects_and_refreshes_history_with_a_new_client_identity() {
             ..Options::default()
         },
     );
-    let mut stream = Stream::new("paseo-agent", &ctx.paseo_home);
+    let stream = Stream::new("paseo-agent", &ctx.paseo_home);
     // Connections are counted on accept, before the reconnect's hello arrives.
     let hellos = || {
         mock.received
@@ -168,7 +168,7 @@ fn stream_reconnects_and_refreshes_history_with_a_new_client_identity() {
     wait(|| {
         mock.connections.load(Ordering::Relaxed) >= 2
             && hellos() >= 2
-            && stream.preview().contains("Hello streamed")
+            && stream.preview(false).contains("Hello streamed")
     });
     let frames = mock.received.lock().unwrap();
     let clients: Vec<_> = frames
@@ -177,7 +177,7 @@ fn stream_reconnects_and_refreshes_history_with_a_new_client_identity() {
         .map(|frame| &frame["clientId"])
         .collect();
     assert_ne!(clients[0], clients[1]);
-    assert_eq!(stream.preview().matches("Hello").count(), 1);
+    assert_eq!(stream.preview(false).matches("Hello").count(), 1);
 }
 
 #[test]
@@ -322,7 +322,7 @@ fn invalid_ids_and_nonlocal_endpoints_are_rejected() {
 }
 
 #[test]
-fn timeline_is_bounded_and_omits_reasoning_and_terminal_controls() {
+fn timeline_clues_at_reasoning_until_details_are_shown() {
     let mut timeline = timeline::Timeline::default();
     timeline.history(&json!({"epoch":"e", "entries":[]}));
     for seq in 0..60 {
@@ -331,10 +331,23 @@ fn timeline_is_bounded_and_omits_reasoning_and_terminal_controls() {
         }}}));
     }
     timeline.event(&json!({"seq":61, "event":{"type":"timeline", "item":{"type":"reasoning", "text":"hidden reasoning"}}}));
-    let content = timeline.render();
+    let content = timeline.render(false);
     assert!(content.len() < 70 * 1024);
     assert!(content.chars().all(|ch| !ch.is_control() || ch == '\n'));
+    assert!(content.contains("Thinking: …"));
     assert!(!content.contains("hidden reasoning"));
+    assert!(timeline.render(true).contains("Thinking: hidden reasoning"));
+}
+
+#[test]
+fn timeline_keeps_a_tool_clue_without_details() {
+    let mut timeline = timeline::Timeline::default();
+    timeline.event(&json!({"event":{"type":"timeline","item":{"type":"assistant_message","messageId":"m","text":"Checking"}}}));
+    timeline.event(&json!({"event":{"type":"timeline","item":{"type":"tool_call","callId":"c","name":"bash","status":"running"}}}));
+    let concise = timeline.render(false);
+    assert!(concise.contains("Assistant: Checking"));
+    assert!(concise.contains("Tool: bash · running"));
+    assert!(timeline.render(true).contains("Tool: bash · running"));
 }
 
 #[test]
@@ -351,7 +364,7 @@ fn growing_tool_updates_stay_within_the_total_limit() {
             "type":"tool_call", "callId":format!("call-{call}"), "name":"x".repeat(8192)
         }}}));
     }
-    assert!(timeline.render().len() < 70 * 1024);
+    assert!(timeline.render(true).len() < 70 * 1024);
 }
 
 #[test]
@@ -359,7 +372,7 @@ fn failed_and_canceled_turns_are_labeled_by_their_event() {
     let mut timeline = timeline::Timeline::default();
     timeline.event(&json!({"event":{"type":"turn_failed"}}));
     timeline.event(&json!({"event":{"type":"turn_canceled"}}));
-    let content = timeline.render();
+    let content = timeline.render(false);
     assert!(content.contains("Error: Turn failed"));
     assert!(content.contains("Error: Turn canceled"));
 }

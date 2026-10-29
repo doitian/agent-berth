@@ -100,7 +100,9 @@ used one outside tmux — and attached. The left column lists sessions with the 
 right column shows session details, plus a live tmux pane preview when the
 selected session runs in tmux. Local Claude Code sessions in Claude Desktop
 and Codex desktop sessions show a live conversation preview instead, with
-user messages, assistant responses, and concise tool activity. CLI sessions
+user messages and assistant responses. Tool calls and reasoning are summarized
+to a one-line clue (`Tool: Read`, `Thinking: …`); press `t` for full details.
+CLI sessions
 fall back to the same conversation preview when no front tmux pane shows
 their output — no pane at all, or the pane hosts the session only as a
 background tab — if the provider supports transcripts (Claude, CodeBuddy,
@@ -124,6 +126,8 @@ ordinary Claude chats or remote/cloud sessions. Claude's optional
 
 Sessions hosted in [Paseo](https://paseo.sh) show a live conversation stream
 through its daemon API, including providers without local transcript support.
+The same `t` shortcut expands those one-line tool and reasoning clues into
+full details.
 Press `a` to focus that session by passing a `paseo://` deep link directly to
 the Paseo Desktop executable, without relying on an OS URL handler.
 The CLI `attach` command lists only tmux panes and skips Paseo sessions.
@@ -178,6 +182,7 @@ The footer keeps a short hint line; press `?` for the full sheet.
 | `wt` / `wr` / `wa` / `ws` / `wd` | Group headers by creation time, activity, agent provider, status, or working directory |
 | `wn` | Turn group headers off (default) |
 | `I` | In the resumable list, toggle idle sessions; asks for the idle window (default `20m`, prefilled) |
+| `t` | Expand or collapse tool calls and reasoning in the conversation preview (a one-line clue stays visible) |
 | `=` | Toggle maximization of the tmux or conversation preview |
 | `␣gg` | Open lazygit in the selected session's working directory |
 | `br` / `bp` | Open the repository / pull request in a browser |

@@ -167,6 +167,8 @@ fn render_turns(turns: &[Turn], options: Options) -> String {
         // A whole transcript stays as it was; picked turns show only what
         // the user and the agent said.
         context: options.select == Select::All,
+        details: false,
+        clue: false,
     };
     let last = turns.len().saturating_sub(1);
     selected(turns, options.select)
@@ -219,6 +221,7 @@ fn turns_json(turns: &[Turn], session: &ListedSession, options: Options) -> Valu
                 let context = options.select == Select::All;
                 item["entries"] = turn
                     .entries()
+                    .filter(|entry| !matches!(entry, Entry::Thinking { .. }))
                     .filter(|entry| context || !matches!(entry, Entry::Context { .. }))
                     .filter_map(|entry| {
                         let tools = transcript::shown_tools(options.tools, entry, &pending);
