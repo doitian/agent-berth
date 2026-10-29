@@ -69,8 +69,6 @@ fn no_pane(session: &ListedSession) -> String {
     let name = format!("{} {}", session.provider, session.id());
     if session.exited {
         format!("{name} has already exited")
-    } else if session.paseo_agent_id.is_some() {
-        format!("{name} runs in Paseo, not in a tmux pane")
     } else if session.source == Source::Desktop {
         format!("{name} is a desktop session, not in a tmux pane")
     } else {

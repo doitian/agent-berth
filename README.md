@@ -15,8 +15,7 @@ own tmux window, grouped by working directory.
 - **Session resume** — restart sessions that were interrupted by a reboot or
   server restart, each in its own tmux window via the agent's native resume
   command (`claude --resume`, `codex resume`, …).
-- **Attach** — fuzzy-find a running agent with fzf and jump to its tmux pane
-  or focus its session in Paseo.
+- **Attach** — fuzzy-find a running agent with fzf and jump to its tmux pane.
 - **Session search** — find stored sessions across agents by keywords and
   creation time, even when they are no longer active.
 - **Persistent state** — sessions survive server and host restarts (redb
@@ -80,7 +79,7 @@ uses [fzf](https://github.com/junegunn/fzf).
 | `agent-berth stats [--json]` | Aggregate active session counts by status and provider |
 | `agent-berth new [--wait [--timeout 2m]] [--delegator ID \| --no-delegator] <command> [args...]` | Start an agent in a new window of the current directory's tmux session, the one `resume` uses, creating it when missing, and print the new pane id; for example `agent-berth new claude --model opus`. With `--wait`, print the stable session id once the agent first reports (exit 4 on timeout, exit 1 when the pane closes first). The window gets `AGENT_BERTH_DELEGATOR` set to the caller's id |
 | `agent-berth resume [pattern] [--idle 20m] [--here] [--dry-run]` | Resume sessions in tmux |
-| `agent-berth attach [query] [--preview] [--session] [--dry-run]` | Select an agent running in a tmux pane with fzf and attach to it; Paseo and desktop sessions are only reachable from the TUI |
+| `agent-berth attach [query] [--preview] [--session] [--dry-run]` | Select an agent running in a tmux pane with fzf and attach to it; desktop sessions are only reachable from the TUI |
 | `agent-berth memo [pattern] [text...]` | Set a note for the selected session, shown instead of its detected title and matched by search; no text prints the current note, `--clear` removes it |
 | `agent-berth send [--wait [--timeout 10m]] [--force] [--raw] <id> "message"` | Send a message to a session through the agent's CLI, or into its tmux pane; `--wait` then waits for the turn it starts to end, as `wait` does; a `waiting` session is refused without `--force`; `--raw` drops the sender line |
 | `agent-berth reply [--wait [--timeout 10m]] [--force] [--raw] "message"` | Send a message to the session that started this agent with `new`, exactly as `send` would |
@@ -124,35 +123,6 @@ are retried automatically. These previews cover local Code sessions, not
 ordinary Claude chats or remote/cloud sessions. Claude's optional
 `MessageDisplay` hook is not required or installed.
 
-Sessions hosted in [Paseo](https://paseo.sh) show a live conversation stream
-through its daemon API, including providers without local transcript support.
-The same `t` shortcut expands those one-line tool and reasoning clues into
-full details.
-Press `a` to focus that session by passing a `paseo://` deep link directly to
-the Paseo Desktop executable, without relying on an OS URL handler.
-The CLI `attach` command lists only tmux panes and skips Paseo sessions.
-No Paseo CLI is required; the local daemon must be running. Focusing
-looks for Desktop in standard installation locations and Windows Scoop
-(`~/scoop/apps/paseo/current/Paseo.exe`). Set `PASEO_DESKTOP_BIN` to its executable
-path for a custom installation. Linux launches `Paseo` or `Paseo.AppImage` with
-the URL argument; macOS launches the app bundle using `open --args`.
-
-Paseo identity is forwarded from `PASEO_AGENT_ID` in the hook/plugin environment.
-For already-running sessions, agent-berth also matches the native session ID to
-local records under `$PASEO_HOME/agents` (default `~/.paseo/agents`). This only
-routes sessions already monitored by agent-berth; it does not add sessions or
-change their status tracking or resume behavior. A later native host report
-clears an older Paseo association, while a newer Paseo import routes the same
-session back to Paseo. Host changes, rather than repeated heartbeats, determine
-the route; preview and focus switch on refresh. Before focusing or streaming,
-agent-berth verifies the session through the API. It reads the daemon endpoint
-from `$PASEO_HOME/paseo.pid` rather than assuming a port, supporting loopback TCP,
-Unix sockets, and Windows named pipes. Authentication uses
-`$PASEO_HOME/local-credential` or `PASEO_PASSWORD` if set. This integration targets
-the local daemon in `PASEO_HOME`, not remote `PASEO_HOST` connections. The stream
-is bounded, stops when you leave the session or quit, and reconnects after
-interruption.
-
 Press `a` on a Claude or Codex desktop session to open it in the app.
 Codex uses `codex://threads/<session-id>` to select the session and raise the
 desktop app. For Claude on Linux under niri, agent-berth first tries to raise
@@ -186,7 +156,7 @@ The footer keeps a short hint line; press `?` for the full sheet.
 | `=` | Toggle maximization of the tmux or conversation preview |
 | `␣gg` | Open lazygit in the selected session's working directory |
 | `br` / `bp` | Open the repository / pull request in a browser |
-| `a` | Focus a Paseo, Claude Desktop, or Codex desktop session, or attach to its tmux pane: switch-client inside tmux, attach outside; detaching returns to the TUI |
+| `a` | Focus a Claude Desktop or Codex desktop session, or attach to its tmux pane: switch-client inside tmux, attach outside; detaching returns to the TUI |
 | `r` | Resume the selected resumable session in tmux and attach to it |
 | `d` | Delete the selected session after confirming with `y` |
 | `m` | Edit the selected session's memo, shown instead of its detected title; submit an empty memo to clear it |
@@ -241,7 +211,7 @@ its hooks report.
 Sessions running in a tmux pane also carry `tmux_pane` in `list --json` and
 `search --json`: the pane `id` (such as `%7`), its tmux `session`, `window`
 index, `window_name`, current `path`, and `pid`. The field is omitted for
-sessions outside tmux, such as desktop and Paseo sessions or ones whose
+sessions outside tmux, such as desktop sessions or ones whose
 process has ended.
 
 `search --tmux-pane <pane-id>` finds the agent a pane shows right now, such as
@@ -299,8 +269,8 @@ sequence of zstd frames, one per write; agent-berth decodes the frames in order
 and keeps the complete ones when the last is still being written. OpenCode
 keeps sessions in a service-owned database with no log file, so `logs` runs
 `opencode session export <id>` and renders its messages. When no local or
-exported transcript is available — an unsupported provider such as Grok or
-Paseo, a missing file, or an OpenCode server that is not running — and the
+exported transcript is available — an unsupported provider such as Grok, a
+missing file, or an OpenCode server that is not running — and the
 session resolves to a tmux pane, `logs` falls back to capturing that pane's
 scrollback as plain text.
 
@@ -408,7 +378,7 @@ identity, so their messages carry no header.
 
 `agent-berth stop <id>` ends a session by killing the tmux pane that shows
 it (`tmux kill-pane`). It refuses a session that no pane shows — a desktop
-or Paseo session, one that already exited, or a tab in the background of an
+session, one that already exited, or a tab in the background of an
 OpenCode TUI — and, without `--force`, a pane whose process also shows or
 hosts other sessions, since they would end with it. `--dry-run` prints what
 would be killed. The session stays stored and searchable, its transcript
@@ -456,7 +426,6 @@ named pipe on Windows.
 
 | Variable | Effect |
 | --- | --- |
-| `PASEO_HOME` | Override the local Paseo directory used for routing, streaming, and focus (default `~/.paseo`) |
 | `AGENT_BERTH_SOCK` | Override the IPC endpoint (socket path or pipe name) |
 | `AGENT_BERTH_TMUX_SOCKET` | Add `tmux -L <name>` to every tmux invocation |
 | `AGENT_BERTH_TMUX_CONFIG` | Add `tmux -f <path>` to every tmux invocation |

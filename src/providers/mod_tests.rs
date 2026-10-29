@@ -291,7 +291,7 @@ fn desktop_app_focuses_only_desktop_sessions_the_hub_does_not_host() {
     let never = || -> Result<()> { panic!("the desktop app must not open") };
     for (hub, source) in [
         (Failing { hosts: false }, "cli"),
-        // A Paseo route wins over the app, and its failure is reported.
+        // A hosting hub owns focus, and its failure is reported.
         (Failing { hosts: true }, "desktop"),
     ] {
         let error = focus_or_desktop(&ctx, &hub, &listed(source), never).unwrap_err();

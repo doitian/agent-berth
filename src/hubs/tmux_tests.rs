@@ -16,8 +16,6 @@ fn listed() -> ListedSession {
         kind: SessionKind::Hook,
         parent_id: None,
         transcript_path: None,
-        paseo_agent_id: None,
-        paseo_host_changed_ms: None,
         exited: false,
         title: None,
         pane_pid: None,

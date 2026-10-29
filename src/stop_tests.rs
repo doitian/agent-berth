@@ -64,9 +64,6 @@ fn refuses_sessions_outside_a_pane_with_the_reason() {
     let mut exited = session("claude", "s", me);
     exited.exited = true;
     assert!(alone(&exited).contains("already exited"));
-    let mut paseo = session("claude", "s", me);
-    paseo.paseo_agent_id = Some("agent".into());
-    assert!(alone(&paseo).contains("Paseo"));
     let mut desktop = session("claude", "s", me);
     desktop.source = Source::Desktop;
     assert!(alone(&desktop).contains("desktop"));

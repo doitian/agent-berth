@@ -136,24 +136,22 @@ fn preview_keeps_clues_until_details_are_asked() {
     .unwrap();
     let source = source(&path, "claude");
     let mut reader = Reader::default();
-    let concise = reader.preview_log_styled(&source, Style::conversation(false));
+    let concise = reader.preview(&source, Style::conversation(false));
     assert!(concise.contains("Assistant: Checking"));
     assert!(concise.contains("Tool: Read"));
     assert!(concise.contains("Thinking: …"));
     assert!(!concise.contains("private reasoning"));
     assert!(!concise.contains("src/main.rs"));
     assert!(!concise.contains("file contents"));
-    let detailed = reader.preview_log_styled(&source, Style::conversation(true));
+    let detailed = reader.preview(&source, Style::conversation(true));
     assert!(detailed.contains("Thinking: private reasoning"));
     assert!(detailed.contains("Tool: Read"));
     assert!(detailed.contains("Result: file contents"));
-    let cached = reader
-        .render_cached(&Feed::Log(source.clone()), Style::conversation(false))
-        .unwrap();
+    let cached = reader.render_cached(Style::conversation(false)).unwrap();
     assert!(cached.contains("Tool: Read"));
     assert!(cached.contains("Thinking: …"));
     assert_eq!(
-        reader.render_cached(&Feed::Log(source), Style::conversation(true)),
+        reader.render_cached(Style::conversation(true)),
         Some(detailed)
     );
 }
@@ -175,7 +173,7 @@ fn preview_shows_a_pending_tool_call_even_without_details() {
     .unwrap();
     let source = source(&path, "claude");
     let mut reader = Reader::default();
-    let concise = reader.preview_log_styled(&source, Style::conversation(false));
+    let concise = reader.preview(&source, Style::conversation(false));
     assert!(concise.contains("Tool: Bash ls -la"));
 }
 

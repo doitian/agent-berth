@@ -128,10 +128,6 @@ pub struct AgentSession {
     pub title: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transcript_path: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub paseo_agent_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub paseo_host_changed_ms: Option<u64>,
     /// Turns seen starting: every move from an idle or done status into a
     /// busy one. Monotonic, so a poller can tell a short turn from none.
     #[serde(default)]
@@ -163,8 +159,6 @@ impl Default for AgentSession {
             hooked: false,
             title: None,
             transcript_path: None,
-            paseo_agent_id: None,
-            paseo_host_changed_ms: None,
             turns_started: 0,
             turns_ended: 0,
             delegator: None,

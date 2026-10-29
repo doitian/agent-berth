@@ -10,7 +10,7 @@ use crate::hubs::{Hub, Preview};
 use crate::paths::{self, Context as AppContext};
 use crate::status::{AgentSession, Source};
 use crate::store::ListedSession;
-use crate::transcript::{self, Conversation, Feed, Record};
+use crate::transcript::{self, Conversation, Record};
 
 mod claude;
 mod codebuddy;
@@ -264,8 +264,7 @@ pub fn preview(ctx: &AppContext, hub: &dyn Hub, session: &ListedSession) -> Opti
     }
 }
 
-/// Focuses a desktop session in its app only when the hub does not host it,
-/// so a Paseo route still wins over the app that first opened the session.
+/// Focuses a desktop session in its app when the hub does not host it.
 fn focus_or_desktop(
     ctx: &AppContext,
     hub: &dyn Hub,
@@ -331,7 +330,7 @@ fn log_preview(
     session: &ListedSession,
 ) -> Option<Preview> {
     hub.preview(ctx, session)
-        .or_else(|| Some(Preview::Feed(Feed::Log(log_source(log, ctx, session)))))
+        .or_else(|| Some(Preview::Log(log_source(log, ctx, session))))
 }
 
 /// Falls back to the hub's transcript, reporting both failures when it also

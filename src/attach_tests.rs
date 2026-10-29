@@ -17,8 +17,6 @@ fn listed(cwd: Option<&str>, title: Option<&str>) -> ListedSession {
         kind: SessionKind::Hook,
         parent_id: None,
         transcript_path: None,
-        paseo_agent_id: None,
-        paseo_host_changed_ms: None,
         exited: false,
         title: title.map(str::to_string),
         pane_pid: None,
@@ -129,18 +127,14 @@ fn only_tmux_cli_sessions_are_candidates() {
     let panes = [pane("%1", me, "/work")];
     let mut native = listed(Some("/work"), Some("Native"));
     native.pid = Some(me);
-    let mut paseo = native.clone();
-    paseo.session_id = "paseo".into();
-    paseo.paseo_agent_id = Some("paseo-agent".into());
     let mut desktop = native.clone();
     desktop.session_id = "desktop".into();
     desktop.source = Source::Desktop;
 
-    let candidates = collect(&[paseo.clone(), desktop.clone(), native], &panes);
+    let candidates = collect(&[desktop.clone(), native], &panes);
     assert_eq!(candidates.len(), 1);
     assert_eq!(candidates[0].session.session_id, "abc");
-    assert!(collect(&[paseo, desktop], &panes).is_empty());
-    assert!(!fzf_args(None, true).iter().any(|arg| arg.contains("paseo")));
+    assert!(collect(&[desktop], &panes).is_empty());
 }
 
 #[test]

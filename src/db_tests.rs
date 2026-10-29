@@ -124,25 +124,22 @@ fn load_skips_snapshots_from_incompatible_schema() {
     {
         let mut table = txn.open_table(SNAPSHOTS).unwrap();
         table
-            .insert(
-                "paseo\0old",
-                br#"{"paseo_host_changed_ms":1791207380441}"#.as_slice(),
-            )
+            .insert("plugin\0old", br#"{"status":"retired"}"#.as_slice())
             .unwrap();
         table
-            .insert("paseo\0new", br#"{"cwd":"/proj"}"#.as_slice())
+            .insert("plugin\0new", br#"{"cwd":"/proj"}"#.as_slice())
             .unwrap();
     }
     txn.commit().unwrap();
 
     let loaded = load(&db).unwrap();
-    let bucket = &loaded.snapshots["paseo"];
+    let bucket = &loaded.snapshots["plugin"];
     assert!(!bucket.contains_key("old"));
     assert_eq!(bucket["new"].cwd.as_deref(), Some("/proj"));
 
     persist_all(&db, &loaded).unwrap();
     drop(db);
-    assert!(!load_from_path(&ctx).unwrap().snapshots["paseo"].contains_key("old"));
+    assert!(!load_from_path(&ctx).unwrap().snapshots["plugin"].contains_key("old"));
 }
 
 #[test]

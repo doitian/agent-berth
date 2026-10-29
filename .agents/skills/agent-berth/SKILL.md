@@ -151,7 +151,7 @@ agent-berth stop "$id"
 ```
 
 It kills the tmux pane showing the session, and refuses when no pane shows
-it (exited, desktop, Paseo, or a background tab) or when the pane also hosts
+it (exited, desktop, or a background tab) or when the pane also hosts
 other sessions, which would end with it. The session stays stored and
 searchable, `logs` still reads its transcript, and `agent-berth rm "$id"`
 hides it.

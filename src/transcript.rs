@@ -19,6 +19,7 @@ const RECORD_LIMIT: usize = 256 * 1024;
 const ENTRY_LIMIT: usize = 48;
 const TEXT_LIMIT: usize = 1024;
 
+/// The provider log a conversation is read from.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct Source {
     pub provider: String,
@@ -348,13 +349,6 @@ fn log(provider: &str) -> Option<&'static dyn TranscriptLog> {
     crate::providers::lookup(provider)?.log()
 }
 
-/// A live conversation the TUI previews.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub(crate) enum Feed {
-    Log(Source),
-    Paseo { agent_id: String, home: PathBuf },
-}
-
 /// Whether `Reader` can parse and locate this provider's conversation logs.
 pub(crate) fn supports(provider: &str) -> bool {
     log(provider).is_some()
@@ -371,7 +365,6 @@ pub(crate) struct Reader {
     identity: Option<FileIdentity>,
     omitted: bool,
     resolved: Option<PathBuf>,
-    paseo: Option<crate::hubs::paseo::Stream>,
 }
 
 #[derive(PartialEq, Eq)]
@@ -398,34 +391,7 @@ impl FileIdentity {
 }
 
 impl Reader {
-    pub fn preview(&mut self, feed: &Feed, style: Style) -> String {
-        match feed {
-            Feed::Log(source) => self.preview_log_styled(source, style),
-            Feed::Paseo { agent_id, home } => self
-                .paseo
-                .get_or_insert_with(|| crate::hubs::paseo::Stream::new(agent_id, home))
-                .preview(style.tools != Tools::None),
-        }
-    }
-
-    /// The current preview content without reading the source again, for when
-    /// only the style changes.
-    pub fn render_cached(&self, feed: &Feed, style: Style) -> Option<String> {
-        match feed {
-            Feed::Log(_) => self.resolved.as_ref().map(|_| self.render(style)),
-            Feed::Paseo { .. } => self
-                .paseo
-                .as_ref()
-                .map(|stream| stream.preview(style.tools != Tools::None)),
-        }
-    }
-
-    #[cfg(test)]
-    fn preview_log(&mut self, source: &Source) -> String {
-        self.preview_log_styled(source, Style::FULL)
-    }
-
-    fn preview_log_styled(&mut self, source: &Source, style: Style) -> String {
+    pub fn preview(&mut self, source: &Source, style: Style) -> String {
         let Some(log) = log(&source.provider) else {
             return format!("{} sessions have no local transcript", source.provider);
         };
@@ -449,6 +415,17 @@ impl Reader {
             }
             Err(error) => format!("Unable to read transcript ({}). Retrying…", error.kind()),
         }
+    }
+
+    /// The current preview content without reading the source again, for when
+    /// only the style changes.
+    pub fn render_cached(&self, style: Style) -> Option<String> {
+        self.resolved.as_ref().map(|_| self.render(style))
+    }
+
+    #[cfg(test)]
+    fn preview_log(&mut self, source: &Source) -> String {
+        self.preview(source, Style::FULL)
     }
 
     fn read(&mut self, path: &Path, log: &dyn TranscriptLog) -> io::Result<()> {

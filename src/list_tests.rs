@@ -33,12 +33,10 @@ fn json_names_the_pane_a_live_cli_session_runs_in() {
 #[test]
 fn json_omits_the_pane_for_desktop_and_ended_sessions() {
     let me = std::process::id();
-    let mut paseo = session("cli", "hook", me);
-    paseo.paseo_agent_id = Some("agent".into());
     // The pane still runs the client binary in the same directory, so only
     // the ended process keeps it from being attributed to this session.
     let ended = session("cli", "hook", u32::MAX);
-    for session in [session("desktop", "hook", me), paseo, ended] {
+    for session in [session("desktop", "hook", me), ended] {
         let values = json_values(&[session], &[pane(me)], 0).unwrap();
         assert!(values[0].get("tmux_pane").is_none(), "{}", values[0]);
     }

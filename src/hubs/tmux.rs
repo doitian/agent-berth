@@ -1,5 +1,5 @@
-//! Sessions running in tmux panes. Every session outside Paseo falls back to
-//! this hub, which reaches it only when a pane runs it.
+//! Sessions running in tmux panes. Every session falls back to this hub, which
+//! reaches it only when a pane runs it.
 use std::sync::OnceLock;
 
 use anyhow::{Context as _, Result, anyhow, bail};
@@ -139,7 +139,7 @@ impl Hub for Tmux {
     }
 }
 
-/// Pane a live session runs in. Paseo and desktop sessions are not in tmux,
+/// Pane a live session runs in. Desktop sessions are not in tmux,
 /// and a session whose process ended no longer runs in any pane, even one
 /// where another session of the same agent now runs.
 pub(crate) fn running_pane(session: &ListedSession, panes: &[Pane], me: u32) -> Option<Pane> {
@@ -189,7 +189,7 @@ pub(crate) fn resolve_session_pane<'a>(
     session: &ListedSession,
     me: u32,
 ) -> Option<SessionPane<'a>> {
-    if session.source != Source::Cli || session.paseo_agent_id.is_some() {
+    if session.source != Source::Cli {
         return None;
     }
     // A shared reporter process can itself descend from a tmux pane while

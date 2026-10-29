@@ -103,7 +103,6 @@ impl Sandbox {
             ("GROK_HOME", "grok"),
             ("DSH_HOME", "dsh"),
             ("PI_CODING_AGENT_DIR", "pi"),
-            ("PASEO_HOME", "paseo"),
             ("PSMUX_DATA_DIR", "psmux"),
             ("TEMP", "tmp"),
             ("TMP", "tmp"),

@@ -9,12 +9,10 @@ use crate::paths::Context as AppContext;
 use crate::status::Source;
 use crate::store::ListedSession;
 use crate::tmux::Pane;
-use crate::transcript::{Conversation, Feed};
+use crate::transcript::{self, Conversation};
 
-pub(crate) mod paseo;
 pub(crate) mod tmux;
 
-pub use paseo::Paseo;
 pub use tmux::Tmux;
 
 pub trait Hub: Debug + Send + Sync {
@@ -42,18 +40,18 @@ pub trait Hub: Debug + Send + Sync {
 pub enum Preview {
     /// The pane shows the session's own output.
     Pane(Pane),
-    Feed(Feed),
+    /// The session's conversation, read from its transcript log.
+    Log(transcript::Source),
 }
 
-/// Hub hosting `session`: Paseo when it routes the session, otherwise tmux,
-/// which `tmux` builds only when needed.
+/// Hub hosting `session`: tmux, which `tmux` builds only when needed.
 ///
 /// Only CLI sessions run in a tmux pane, so a desktop session's tmux hub never
 /// hosts it and its provider focuses it in the desktop app instead.
 pub fn resolve(session: &ListedSession, tmux: impl FnOnce() -> Tmux) -> Box<dyn Hub> {
-    match &session.paseo_agent_id {
-        Some(agent_id) => Box::new(Paseo::new(agent_id)),
-        None if session.source == Source::Cli => Box::new(tmux()),
-        None => Box::new(Tmux::new(None, false)),
+    if session.source == Source::Cli {
+        Box::new(tmux())
+    } else {
+        Box::new(Tmux::new(None, false))
     }
 }

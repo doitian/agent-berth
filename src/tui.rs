@@ -27,7 +27,6 @@ use crate::providers::{self, logo};
 use crate::status::{AgentStatus, Source};
 use crate::store::ListedSession;
 use crate::tmux::{self, Pane};
-use crate::transcript::Feed;
 use crate::{db, git, list, pick, process, resume, transcript};
 
 const TICK: Duration = Duration::from_millis(200);
@@ -184,7 +183,7 @@ enum Fetch {
         generation: u64,
     },
     Transcript {
-        source: Feed,
+        source: transcript::Source,
         reader: Box<transcript::Reader>,
         details: bool,
         generation: u64,
@@ -221,7 +220,7 @@ enum Fetched {
         result: Result<()>,
     },
     Transcript {
-        source: Feed,
+        source: transcript::Source,
         reader: Box<transcript::Reader>,
         content: String,
         details: bool,
@@ -329,7 +328,7 @@ struct App {
     /// The selected pane shows the selected session's own output. False when
     /// the pane only hosts the session as a background tab.
     pane_shows_session: bool,
-    selected_transcript: Option<Feed>,
+    selected_transcript: Option<transcript::Source>,
     transcript_reader: Box<transcript::Reader>,
     ctx: Context,
     preview: Option<String>,
@@ -362,7 +361,7 @@ struct App {
     preview_generation: u64,
     git_generation: u64,
     previews: HashMap<String, String>,
-    transcript_previews: HashMap<Feed, CachedTranscript>,
+    transcript_previews: HashMap<transcript::Source, CachedTranscript>,
     gits: HashMap<String, CachedGit>,
 }
 
@@ -644,7 +643,7 @@ impl App {
         self.pane_shows_session = matches!(preview, Some(Preview::Pane(_)));
         self.select_preview(resolved.map(|(pane, _)| pane));
         let transcript = match preview {
-            Some(Preview::Feed(feed)) => Some(feed),
+            Some(Preview::Log(source)) => Some(source),
             _ => None,
         };
         if transcript != self.selected_transcript {
@@ -1053,9 +1052,9 @@ impl App {
     fn toggle_details(&mut self) {
         self.show_details = !self.show_details;
         self.transcript_previews.clear();
-        if let Some(source) = &self.selected_transcript {
+        if self.selected_transcript.is_some() {
             let style = transcript::Style::conversation(self.show_details);
-            self.preview = self.transcript_reader.render_cached(source, style);
+            self.preview = self.transcript_reader.render_cached(style);
             self.preview_pending_since = Some(Instant::now());
         }
         self.message = Some(if self.show_details {
@@ -1744,8 +1743,7 @@ fn render_preview(frame: &mut Frame, app: &App, area: Rect) {
     // A selected transcript always provides the content, even when the
     // session's pane exists but only hosts it as a background tab.
     let title = match (&app.selected_transcript, &app.selected_pane) {
-        (Some(Feed::Paseo { .. }), _) => " Conversation · Paseo stream ".into(),
-        (Some(Feed::Log(_)), _) => " Conversation · live transcript ".into(),
+        (Some(_), _) => " Conversation · live transcript ".into(),
         (None, Some(pane)) => format!(" {}:{} ({}) ", pane.session, pane.window_name, pane.id),
         (None, None) => " Preview ".into(),
     };
